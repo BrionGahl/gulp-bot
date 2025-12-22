@@ -1,0 +1,12 @@
+[package]
+name = "yuh-bot"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.21.2", features = ["macros", "rt-multi-thread"] }
+log = "0.4.29"
+tracing-subscriber = "0.3.22"
+poise = "0.6.1"
+reqwest = { version = "0.12.26", features = ["json"] }
+serde = "1.0.228"
