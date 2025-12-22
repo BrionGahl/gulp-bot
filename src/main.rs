@@ -47,6 +47,8 @@ async fn main() {
             commands::utilities::source(),
             commands::utilities::help(),
             commands::utilities::register(),
+            commands::gambling::roll(),
+            commands::gambling::start_death_roll(),
         ],
         // Call to the event handler
         event_handler: |ctx, event, framework, data| {
@@ -63,13 +65,7 @@ async fn main() {
                     .await
                     .unwrap_or_else(|_| "<unknown>".to_owned());
                 let author = &ctx.author().name;
-
-                info!(
-						"{} in {} used slash command '{}'",
-						author,
-						channel_name,
-						&ctx.invoked_command_name()
-					);
+                info!("{} in {} used slash command '{}'", author, channel_name, &ctx.invoked_command_name());
             })
         },
         // This code is run after a command if it was successful (returned Ok)

@@ -33,6 +33,7 @@ pub async fn help(ctx: Context<'_>) -> Result<(), Error> {
     slash_command,
     category = "Utilities",
     hide_in_help,
+    check = "crate::checks::check_is_moderator"
 )]
 pub async fn register(ctx: Context<'_>) -> Result<(), Error> {
     poise::builtins::register_application_commands_buttons(ctx).await?;
