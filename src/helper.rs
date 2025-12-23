@@ -1,0 +1,1 @@
+pub const COLOUR: u32 = 0xAF69EE;

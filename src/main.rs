@@ -2,6 +2,7 @@ mod commands;
 mod types;
 mod config;
 mod checks;
+mod helper;
 
 use poise::serenity_prelude::{self as serenity, GatewayIntents, GuildId, RoleId};
 
@@ -42,8 +43,11 @@ async fn main() {
 
     let options = poise::FrameworkOptions {
         commands: vec![
-            commands::wow_audit::get_upcoming_raids(),
-            commands::wow_audit::get_upcoming_absences(),
+            commands::wow_guild::get_upcoming_raids(),
+            commands::wow_guild::get_upcoming_absences(),
+            commands::wow_guild::get_liquid_info(),
+            commands::wow_guild::get_better_resources(),
+            commands::wow_guild::class_discords(),
             commands::utilities::source(),
             commands::utilities::help(),
             commands::utilities::register(),

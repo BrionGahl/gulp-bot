@@ -1,6 +1,6 @@
 use std::env;
 
-use poise::serenity_prelude::{RoleId};
+use poise::serenity_prelude::{Colour, RoleId};
 
 #[derive(Debug)]
 pub struct Config {
@@ -8,6 +8,7 @@ pub struct Config {
     pub wow_audit_token: String,
     pub bot_name: String,
     pub mod_role_id: RoleId,
+    pub bart_token: String,
 }
 
 impl Config {
@@ -23,6 +24,8 @@ impl Config {
                 .expect("Missing `MOD_ROLE_ID` env variable.")
                 .parse::<u64>()
                 .expect("Failed to parse `MOD_ROLE_ID env variable")),
+            bart_token: env::var("BART_TOKEN")
+                .unwrap_or(String::from("")),
         }
     }
 }

@@ -21,13 +21,10 @@ pub async fn roll(ctx: Context<'_>, #[description = "Max number that can be roll
     let embed = CreateEmbed::default()
         .author(CreateEmbedAuthor::new(&ctx.data().config.bot_name))
         .title(format!("{} has rolled!", &ctx.author().name))
-        .footer(CreateEmbedFooter::new(
-            "All rights reserved to Kail-Area52",
-        ))
-        .colour(Colour::from_rgb(255, 0, 255))
+        .footer(CreateEmbedFooter::new("All rights reserved to Kail"))
+        .colour(Colour::from(crate::helper::COLOUR))
         .field("", format!("{}", roll), false);
     ctx.send(CreateReply::default().embed(embed)).await?;
-    ctx.
     Ok(())
 }
 
@@ -45,10 +42,8 @@ pub async fn start_death_roll(ctx: Context<'_>, #[description = "Max number that
     let embed = CreateEmbed::default()
         .author(CreateEmbedAuthor::new(&ctx.data().config.bot_name))
         .title(format!("{} has started a new death roll!", ctx.author().name))
-        .footer(CreateEmbedFooter::new(
-            "All rights reserved to Kail-Area52",
-        ))
-        .colour(Colour::from_rgb(255, 0, 255))
+        .footer(CreateEmbedFooter::new("All rights reserved to Kail"))
+        .colour(Colour::from(crate::helper::COLOUR))
         .field(format!("Starting roll is {}", max_roll), "React below to enter!", true);
     ctx.send(CreateReply::default().embed(embed)).await?;
 
