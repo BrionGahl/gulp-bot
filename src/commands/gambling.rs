@@ -18,11 +18,8 @@ pub async fn roll(ctx: Context<'_>, #[description = "Max number that can be roll
         rng.random_range(1..max_roll)
     };
 
-    let embed = CreateEmbed::default()
-        .author(CreateEmbedAuthor::new(&ctx.data().config.bot_name))
+    let embed = crate::helper::create_base_embed(&ctx)
         .title(format!("{} has rolled!", &ctx.author().name))
-        .footer(CreateEmbedFooter::new("All rights reserved to Kail"))
-        .colour(Colour::from(crate::helper::COLOUR))
         .field("", format!("{}", roll), false);
     ctx.send(CreateReply::default().embed(embed)).await?;
     Ok(())
@@ -39,11 +36,8 @@ pub async fn start_death_roll(ctx: Context<'_>, #[description = "Max number that
 
     // TODO: Need to find a way to implement this.
 
-    let embed = CreateEmbed::default()
-        .author(CreateEmbedAuthor::new(&ctx.data().config.bot_name))
+    let embed = crate::helper::create_base_embed(&ctx)
         .title(format!("{} has started a new death roll!", ctx.author().name))
-        .footer(CreateEmbedFooter::new("All rights reserved to Kail"))
-        .colour(Colour::from(crate::helper::COLOUR))
         .field(format!("Starting roll is {}", max_roll), "React below to enter!", true);
     ctx.send(CreateReply::default().embed(embed)).await?;
 

@@ -18,8 +18,8 @@ async fn main() {
     // Logging tracer
     tracing_subscriber::fmt::init();
 
-    let config = Config::from_env();
-    let token = config.discord_token.clone();
+    let data = Data::new();
+    let token = data.config.discord_token.clone();
 
     let intents = GatewayIntents::non_privileged()
         | GatewayIntents::MESSAGE_CONTENT
@@ -89,7 +89,7 @@ async fn main() {
             Box::pin(async move {
                 info!("Logged in as {}", _ready.user.name);
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
-                Ok(Data { config })
+                Ok(data)
             })
         })
         .options(options)
