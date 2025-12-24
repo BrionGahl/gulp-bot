@@ -15,7 +15,7 @@ const IMG: &str = "https://data.wowaudit.com/img/new-logo.svg";
     slash_command,
     ephemeral,
     category = "WoW Guild",
-    discard_spare_arguments
+    check = "crate::checks::check_is_raider",
 )]
 pub async fn get_liquid_info(ctx: Context<'_>) -> Result<(), Error> {
     let bart_token = &ctx.data().config.bart_token;
@@ -117,6 +117,7 @@ pub async fn class_discords(ctx: Context<'_>) -> Result<(), Error> {
     slash_command,
     ephemeral,
     category = "WoW Guild",
+    check = "crate::checks::check_is_raider",
 )]
 pub async fn get_upcoming_raids(ctx: Context<'_>, #[description = "Number of raids to show"] #[min = 1] #[max = 8] count: Option<usize>) -> Result<(), Error> {
     // For API requests, gives extra time on replies
@@ -143,7 +144,8 @@ pub async fn get_upcoming_raids(ctx: Context<'_>, #[description = "Number of rai
     prefix_command,
     slash_command,
     category = "WoW Guild",
-    discard_spare_arguments
+    discard_spare_arguments,
+    check = "crate::checks::check_is_moderator",
 )]
 pub async fn get_upcoming_absences(ctx: Context<'_>, #[description = "Number of raids to show"] #[min = 1] #[max = 8] count: Option<usize>) -> Result<(), Error> {
     // For API requests, gives extra time on replies

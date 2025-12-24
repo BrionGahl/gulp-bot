@@ -72,7 +72,7 @@ async fn run_lobby<'a>(ctx: Context<'a>, max_roll: u32) -> Result<(HashSet<UserI
         CreateButton::new(&join_button_id)
             .label("Join / Leave Session")
             .style(ButtonStyle::Success)
-            .emoji('🎲'),
+            .emoji('✔'),
     ])];
 
     let reply = ctx.send(
