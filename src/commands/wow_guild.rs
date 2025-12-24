@@ -10,6 +10,7 @@ use crate::types::raids::{Raid, Raids};
 const URL: &str = "https://wowaudit.com/v1/";
 const IMG: &str = "https://data.wowaudit.com/img/new-logo.svg";
 
+/// Fetches Liquid WeakAura / Addon info if you have a raider role.
 #[poise::command(
     prefix_command,
     slash_command,
@@ -39,6 +40,7 @@ pub async fn get_liquid_info(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
+/// Fetches some #GBR resources
 #[poise::command(
     prefix_command,
     slash_command,
@@ -83,6 +85,7 @@ pub async fn get_better_resources(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
+/// Shows links to all the class Discord servers
 #[poise::command(
     prefix_command,
     slash_command,
@@ -112,6 +115,7 @@ pub async fn class_discords(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
+/// Fetches upcoming raids if you have a raider role
 #[poise::command(
     prefix_command,
     slash_command,
@@ -140,6 +144,8 @@ pub async fn get_upcoming_raids(ctx: Context<'_>, #[description = "Number of rai
     Ok(())
 }
 
+
+/// Fetches upcoming absences if you have a moderator role
 #[poise::command(
     prefix_command,
     slash_command,
@@ -192,6 +198,7 @@ pub async fn get_upcoming_absences(ctx: Context<'_>, #[description = "Number of 
     Ok(())
 }
 
+/// Gets all upcoming raids
 async fn get_raids(http: &reqwest::Client, token: &str) -> Result<Vec<Raid>, Error> {
     let url = format!("{}raids?include_past=false", URL);
     let found_raids = get_response(http, token, &url)
@@ -202,6 +209,7 @@ async fn get_raids(http: &reqwest::Client, token: &str) -> Result<Vec<Raid>, Err
     Ok(found_raids.raids)
 }
 
+/// Gets a specific raid based on a raid ID
 async fn get_raid(http: &reqwest::Client, token: &str, id: u32) -> Result<Raid, Error> {
     let url = format!("{}raids/{}", URL, id);
     let found_raid = get_response(http, token, &url)
@@ -212,6 +220,8 @@ async fn get_raid(http: &reqwest::Client, token: &str, id: u32) -> Result<Raid, 
     Ok(found_raid)
 }
 
+
+/// Makes a GET request to a specific WoWAudit URL and returns the response
 async fn get_response(http: &reqwest::Client, token: &str, url: &str) -> Result<Response, reqwest::Error> {
     info!("Attempting GET on URL: {}", url);
     http.get(url)

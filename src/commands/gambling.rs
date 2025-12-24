@@ -56,6 +56,7 @@ pub async fn gamble(ctx: Context<'_>, #[description = "Max number that can be ro
     Ok(())
 }
 
+/// Creates the lobby embeds and handles updating the embed for the lobby prior to the game starting
 async fn run_lobby<'a>(ctx: Context<'a>, max_roll: u32) -> Result<(HashSet<UserId>, ReplyHandle<'a>), Error> {
     let join_button_id = format!("session-join-{}", ctx.id());
     let start_button_id = format!("session-start-{}", ctx.id());
@@ -125,6 +126,7 @@ async fn run_lobby<'a>(ctx: Context<'a>, max_roll: u32) -> Result<(HashSet<UserI
     Ok((players, reply))
 }
 
+/// Creates the actual rolling session embeds and handles listening for roll button clicks
 async fn run_game<'a>(ctx: Context<'a>, reply: ReplyHandle<'a>, players: HashSet<UserId>, max_roll: u32) -> Result<(HashMap<UserId, u32>, ReplyHandle<'a>), Error> {
     let roll_button_id = format!("game-{}", ctx.id());
 
@@ -192,6 +194,7 @@ async fn run_game<'a>(ctx: Context<'a>, reply: ReplyHandle<'a>, players: HashSet
     Ok((scores, reply))
 }
 
+/// Shows the results of a gambling session
 async fn show_results<'a>(ctx: Context<'a>, reply: ReplyHandle<'a>, scores: HashMap<UserId, u32>) -> Result<(), Error> {
     let mut sorted_scores: Vec<_> = scores.iter().collect();
     sorted_scores.sort_by(|a, b| b.1.cmp(a.1));
@@ -215,6 +218,7 @@ async fn show_results<'a>(ctx: Context<'a>, reply: ReplyHandle<'a>, scores: Hash
     Ok(())
 }
 
+/// Creates the lobby embed format
 fn create_lobby_embed(ctx: &Context<'_>, players: &HashSet<UserId>, max_roll: u32) -> CreateEmbed {
     let player_list = if players.is_empty() {
         "No players".to_string()
@@ -231,6 +235,7 @@ fn create_lobby_embed(ctx: &Context<'_>, players: &HashSet<UserId>, max_roll: u3
         .field(format!("Current Players ({})", players.len()), player_list, true)
 }
 
+/// Creates the game embed format
 fn create_game_embed(ctx: &Context<'_>, players: &HashSet<UserId>, scores: &HashMap<UserId, u32>, max_roll: u32) -> CreateEmbed {
     // Sort scores for display
     let mut sorted: Vec<_> = scores.iter().collect();
@@ -252,6 +257,7 @@ fn create_game_embed(ctx: &Context<'_>, players: &HashSet<UserId>, scores: &Hash
         .fields(mapping)
 }
 
+/// Rolls a die up to a max value or to 100 by default
 fn get_inclusive_roll(max: u32) -> u32 {
     let mut rng = rand::rng();
     rng.random_range(1..=max)
