@@ -19,13 +19,13 @@ impl Config {
             wow_audit_token: env::var("WOWAUDIT_TOKEN")
                 .expect("Missing `WOWAUDIT_TOKEN` env variable."),
             bot_name: env::var("BOT_NAME")
-                .unwrap_or(String::from("yuh-bot")),
+                .unwrap_or("yuh-bot".to_string()),
             mod_role_id: RoleId::from(env::var("MOD_ROLE_ID")
                 .expect("Missing `MOD_ROLE_ID` env variable.")
                 .parse::<u64>()
                 .expect("Failed to parse `MOD_ROLE_ID env variable")),
             bart_token: env::var("BART_TOKEN")
-                .unwrap_or(String::from("")),
+                .unwrap_or("".to_string()),
         }
     }
 }

@@ -27,7 +27,7 @@ async fn main() {
         | GatewayIntents::GUILDS;
 
     let prefix = poise::PrefixFrameworkOptions {
-        prefix: Some(String::from("?")),
+        prefix: Some("?".to_string()),
         additional_prefixes: vec![
             poise::Prefix::Regex(
                 "(yo |hey )?(mommy|kail),? can you (please |pwease )?"
@@ -52,7 +52,7 @@ async fn main() {
             commands::utilities::help(),
             commands::utilities::register(),
             commands::gambling::roll(),
-            commands::gambling::start_gambling_game(),
+            commands::gambling::gamble(),
         ],
         // Call to the event handler
         event_handler: |ctx, event, framework, data| {
