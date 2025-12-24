@@ -8,6 +8,7 @@ pub struct Config {
     pub wow_audit_token: String,
     pub bot_name: String,
     pub mod_role_id: RoleId,
+    pub raider_role_id: RoleId,
     pub bart_token: String,
 }
 
@@ -24,6 +25,10 @@ impl Config {
                 .expect("Missing `MOD_ROLE_ID` env variable.")
                 .parse::<u64>()
                 .expect("Failed to parse `MOD_ROLE_ID env variable")),
+            raider_role_id: RoleId::from(env::var("RAIDER_ROLE_ID")
+                .expect("Missing `RAIDER_ROLE_ID` env variable.")
+                .parse::<u64>()
+                .expect("Failed to parse `RAIDER_ROLE_ID env variable")),
             bart_token: env::var("BART_TOKEN")
                 .unwrap_or("".to_string()),
         }

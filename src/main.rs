@@ -4,7 +4,7 @@ mod config;
 mod checks;
 mod helper;
 
-use poise::serenity_prelude::{self as serenity, GatewayIntents, GuildId, RoleId};
+use poise::serenity_prelude::{self as serenity, GatewayIntents};
 
 use std::env;
 use std::sync::Arc;

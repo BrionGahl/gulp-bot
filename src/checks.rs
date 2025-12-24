@@ -1,6 +1,6 @@
 use crate::types::bot::{Context, Error};
 
-pub fn is_moderator(ctx: Context<'_>) -> bool {
+fn is_moderator(ctx: Context<'_>) -> bool {
     let mod_role_id = &ctx.data().config.mod_role_id;
     match ctx {
         Context::Application(app_context) => {

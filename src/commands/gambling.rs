@@ -89,8 +89,8 @@ async fn run_lobby<'a>(ctx: Context<'a>, max_roll: u32) -> Result<(HashSet<UserI
     while let Some(press) = collector.next().await {
         let user_id = press.user.id;
 
-        if (press.data.custom_id == start_button_id) {
-            if (user_id == ctx.author().id) {
+        if press.data.custom_id == start_button_id {
+            if user_id == ctx.author().id {
                 press.create_response(ctx, CreateInteractionResponse::Message(
                     CreateInteractionResponseMessage::new().content("Starting game!.").ephemeral(true)
                 )).await?;
