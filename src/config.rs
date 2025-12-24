@@ -1,6 +1,6 @@
 use std::env;
 
-use poise::serenity_prelude::{Colour, RoleId};
+use poise::serenity_prelude::{RoleId};
 
 #[derive(Debug)]
 pub struct Config {

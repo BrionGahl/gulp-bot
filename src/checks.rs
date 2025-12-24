@@ -1,4 +1,3 @@
-use poise::serenity_prelude::RoleId;
 use crate::types::bot::{Context, Error};
 
 pub fn is_moderator(ctx: Context<'_>) -> bool {

@@ -1,7 +1,7 @@
 use log::{info, warn};
 use poise::CreateReply;
 use poise::futures_util::future::join_all;
-use poise::serenity_prelude::{Colour, CreateEmbedAuthor, CreateEmbedFooter, CreateMessage};
+use poise::serenity_prelude::{CreateMessage};
 use reqwest::Response;
 
 use crate::types::bot::{Context, Error};
@@ -24,7 +24,7 @@ pub async fn get_liquid_info(ctx: Context<'_>) -> Result<(), Error> {
         .title("Liquid Addon Information")
         .field("This is your tier 2 personal (permanent) access token. It is valid for the duration of our Patreon subscription.",
                format!("```plaintext\n{}\n```", bart_token), true)
-        .field("", "Please do not share this token publicly.", false)
+        .description("Please do not share this token publicly.")
         .field("Install Instructions",
                "- Install WowUp with CurseForge from https://wowup.io/\
                \n- Open up the WowUp app, and navigate to Options > Addons\
@@ -92,21 +92,20 @@ pub async fn get_better_resources(ctx: Context<'_>) -> Result<(), Error> {
 pub async fn class_discords(ctx: Context<'_>) -> Result<(), Error> {
     let embed = crate::helper::create_base_embed(&ctx)
         .title("Class Discords")
-        .field("",
-               "Death Knight - https://discord.gg/acherus\n\
-               Demon Hunter - https://discord.gg/felhammer\n\
-               Druid - https://discord.gg/dreamgrove\n\
-               Evoker - https://discord.gg/evoker\n\
-               Hunter - https://discord.gg/trueshot\n\
-               Mage - https://discord.gg/makGfZA\n\
-               Monk - https://discord.gg/peakofserenity\n\
-               Paladin - https://discord.gg/hammerofwrath\n\
-               Priest - https://discord.gg/WarcraftPriests\n\
-               Rogue - https://discord.gg/ravenholdt\n\
-               Shaman - https://discord.gg/earthshrine\n\
-               Warlock - https://discord.gg/BlackHarvest\n\
-               Warrior - https://discord.gg/SkyHold",
-               true
+        .description(
+            "Death Knight - https://discord.gg/acherus\n\
+            Demon Hunter - https://discord.gg/felhammer\n\
+            Druid - https://discord.gg/dreamgrove\n\
+            Evoker - https://discord.gg/evoker\n\
+            Hunter - https://discord.gg/trueshot\n\
+            Mage - https://discord.gg/makGfZA\n\
+            Monk - https://discord.gg/peakofserenity\n\
+            Paladin - https://discord.gg/hammerofwrath\n\
+            Priest - https://discord.gg/WarcraftPriests\n\
+            Rogue - https://discord.gg/ravenholdt\n\
+            Shaman - https://discord.gg/earthshrine\n\
+            Warlock - https://discord.gg/BlackHarvest\n\
+            Warrior - https://discord.gg/SkyHold"
         );
 
     ctx.send(CreateReply::default().embed(embed)).await?;

@@ -52,7 +52,7 @@ async fn main() {
             commands::utilities::help(),
             commands::utilities::register(),
             commands::gambling::roll(),
-            commands::gambling::start_death_roll(),
+            commands::gambling::start_gambling_game(),
         ],
         // Call to the event handler
         event_handler: |ctx, event, framework, data| {
