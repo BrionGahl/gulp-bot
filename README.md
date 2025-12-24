@@ -1,5 +1,4 @@
 <h1 color="#000000" size="100px" align="center"> yuh-bot </h1>
----
 
 ## Goal / Purpose
 
