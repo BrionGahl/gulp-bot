@@ -45,8 +45,6 @@ async fn main() {
         commands: vec![
             commands::wow_guild::get_upcoming_raids(),
             commands::wow_guild::get_upcoming_absences(),
-            commands::wow_guild::get_liquid_info(),
-            commands::wow_guild::get_better_resources(),
             commands::wow_guild::class_discords(),
             commands::utilities::source(),
             commands::utilities::help(),

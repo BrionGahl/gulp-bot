@@ -1,6 +1,6 @@
 use std::env;
 
-use poise::serenity_prelude::{RoleId};
+use poise::serenity_prelude::{RoleId, UserId};
 
 #[derive(Debug)]
 pub struct Config {
@@ -9,7 +9,9 @@ pub struct Config {
     pub bot_name: String,
     pub mod_role_id: RoleId,
     pub raider_role_id: RoleId,
-    pub bart_token: String,
+    pub twitter_token: String,
+    pub twitter_user_ids: Vec<String>,
+    pub tweet_target_channel_id: u64,
 }
 
 impl Config {
@@ -20,7 +22,7 @@ impl Config {
             wow_audit_token: env::var("WOWAUDIT_TOKEN")
                 .expect("Missing `WOWAUDIT_TOKEN` env variable."),
             bot_name: env::var("BOT_NAME")
-                .unwrap_or("yuh-bot".to_string()),
+                .unwrap_or("gulp-bot".to_string()),
             mod_role_id: RoleId::from(env::var("MOD_ROLE_ID")
                 .expect("Missing `MOD_ROLE_ID` env variable.")
                 .parse::<u64>()
@@ -28,9 +30,19 @@ impl Config {
             raider_role_id: RoleId::from(env::var("RAIDER_ROLE_ID")
                 .expect("Missing `RAIDER_ROLE_ID` env variable.")
                 .parse::<u64>()
-                .expect("Failed to parse `RAIDER_ROLE_ID env variable")),
-            bart_token: env::var("BART_TOKEN")
-                .unwrap_or("".to_string()),
+                .expect("Failed to parse `RAIDER_ROLE_ID env variable.")),
+            twitter_token: env::var("TWITTER_TOKEN")
+                .expect("Missing `TWITTER_TOKEN` env variable."),
+            twitter_user_ids: env::var("TWITTER_USER_IDS")
+                .unwrap_or_default()
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect(),
+            tweet_target_channel_id: env::var("TWEET_CHANNEL_ID")
+                .expect("Missing `TWEET_CHANNEL_ID` env variable.")
+                .parse::<u64>()
+                .expect("Failed to parse `TWEET_CHANNEL_ID env variable.")
         }
     }
 }
