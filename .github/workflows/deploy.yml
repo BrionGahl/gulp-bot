@@ -5,7 +5,7 @@ on:
     branches: [master]
 
 env:
-  IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/yuh-bot/yuh-bot
+  IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/gulp-bot/gulp-bot
 
 jobs:
   build-and-deploy:
