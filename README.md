@@ -8,18 +8,40 @@ The ideas behind the creation of this bot are listed below:
 
 The bot is written with the `poise` crate and uses a few others for requests / logging sinks.
 
+## Features
 
+- **WoW Guild** — fetches upcoming raids and absences via the WoWAudit API
+- **Gambling** — multiplayer roll sessions with a lobby and results embed
+- **Twitter/X feed** — polls a Nitter RSS instance and posts new tweets (with images and video links) to a configured Discord channel
+
+## Deployment
+
+The bot is packaged as a Docker image and deployed via GitHub Actions to a Compute Engine instance on GCP.
+
+On every push to `master`, the workflow:
+1. Builds the image using a multi-stage Rust build with `cargo-chef` for dependency caching
+2. Pushes it to Google Artifact Registry
+3. Runs `gcloud compute instances update-container` to redeploy the instance
+
+See `.github/workflows/deploy.yml` for the full workflow.
 
 ## Using the bot
 
 ### Environment Variables
 
-These will likely change version to version quite frequently.
-Eventually I would prefer to shift to storing the role information on some database for specific guilds to assign via commands.
 ```shell
-DISCORD_TOKEN=<Bot token>
-BART_TOKEN=<Personal access token to Bart\'s patreon> 
+# Discord
+DISCORD_TOKEN=<bot token>
+BOT_NAME=<display name used in embeds>
 MOD_ROLE_ID=<Discord role ID>
 RAIDER_ROLE_ID=<Discord role ID>
-WOWAUDIT_TOKEN=<Personal guild WoW Audit API token>
+
+# WoW Audit
+WOWAUDIT_TOKEN=<WoWAudit API token>
+
+# Twitter/X feed (via Nitter)
+NITTER_BASE_URL=<base URL of your Nitter instance, e.g. https://nitter.example.com>
+TWITTER_USER_IDS=<comma-separated list of Twitter usernames to track, e.g. user1,user2>
+TWEET_CHANNEL_ID=<Discord channel ID to post tweets into>
+TWEET_POLL_TIME=<poll interval in seconds, e.g. 60>
 ```

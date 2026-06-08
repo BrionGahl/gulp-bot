@@ -10,6 +10,7 @@ pub struct Config {
     pub mod_role_id: RoleId,
     pub raider_role_id: RoleId,
     pub nitter_base_url: String,
+    pub x_base_url: String,
     pub twitter_user_ids: Vec<String>,
     pub tweet_target_channel_id: u64,
     pub tweet_poll_time: u64
@@ -33,7 +34,9 @@ impl Config {
                 .parse::<u64>()
                 .expect("Failed to parse `RAIDER_ROLE_ID env variable.")),
             nitter_base_url: env::var("NITTER_BASE_URL")
-                .expect("Missing `NITTER_BASE_URL` env variable."),
+                .unwrap_or_else(|_| "https://nitter.net".to_owned()),
+            x_base_url: env::var("X_BASE_URL")
+                .unwrap_or_else(|_| "https://x.com".to_string()),
             twitter_user_ids: env::var("TWITTER_USER_IDS")
                 .unwrap_or_default()
                 .split(',')

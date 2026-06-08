@@ -23,6 +23,7 @@ async fn main() {
     let token = data.config.discord_token.clone();
     let poll_http = data.http.clone();
     let nitter_base_url = data.config.nitter_base_url.clone();
+    let x_base_url = data.config.x_base_url.clone();
     let usernames = data.config.twitter_user_ids.clone();
     let channel_id = data.config.tweet_target_channel_id;
     let poll_time = data.config.tweet_poll_time;
@@ -105,7 +106,7 @@ async fn main() {
         .unwrap();
 
     let serenity_http = Arc::clone(&client.http);
-    tokio::spawn(twitter::poll_task(serenity_http, poll_http, nitter_base_url, usernames, channel_id, poll_time));
+    tokio::spawn(twitter::poll_task(serenity_http, poll_http, nitter_base_url, x_base_url, usernames, channel_id, poll_time));
 
     client.start().await.unwrap()
 }

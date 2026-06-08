@@ -11,6 +11,7 @@ pub async fn poll_task(
     http: Arc<Http>,
     client: reqwest::Client,
     nitter_base_url: String,
+    x_base_url: String,
     usernames: Vec<String>,
     channel_id: u64,
     poll_time: u64
@@ -23,7 +24,7 @@ pub async fn poll_task(
         interval.tick().await;
 
         for username in &usernames {
-            match feed::fetch_feed(&client, &nitter_base_url, username).await {
+            match feed::fetch_feed(&client, &nitter_base_url, &x_base_url, username).await {
                 Ok(tweets) => {
                     for tweet in tweets {
                         if seen_ids.insert(tweet.id.clone()) && !first_run {
