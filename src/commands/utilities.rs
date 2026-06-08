@@ -8,7 +8,7 @@ use crate::types::bot::{Context, Error};
     category = "Utilities",
 )]
 pub async fn source(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.say("https://github.com/BrionGahl/yuh-bot")
+    ctx.say("https://github.com/BrionGahl/gulp-bot")
         .await?;
     Ok(())
 }
