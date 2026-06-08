@@ -3,6 +3,7 @@ mod types;
 mod config;
 mod checks;
 mod helper;
+mod twitter;
 
 use poise::serenity_prelude::{self as serenity, GatewayIntents};
 
@@ -20,6 +21,11 @@ async fn main() {
 
     let data = Data::new();
     let token = data.config.discord_token.clone();
+    let poll_http = data.http.clone();
+    let nitter_base_url = data.config.nitter_base_url.clone();
+    let usernames = data.config.twitter_user_ids.clone();
+    let channel_id = data.config.tweet_target_channel_id;
+    let poll_time = data.config.tweet_poll_time;
 
     let intents = GatewayIntents::non_privileged()
         | GatewayIntents::MESSAGE_CONTENT
@@ -30,7 +36,7 @@ async fn main() {
         prefix: Some("?".to_string()),
         additional_prefixes: vec![
             poise::Prefix::Regex(
-                "(yo |hey )?(mommy|kail),? can you (please |pwease )?"
+                "(yo |hey )?kail,? can you (please |pwease )?"
                     .parse()
                     .unwrap(),
             )
@@ -93,11 +99,15 @@ async fn main() {
         .options(options)
         .build();
 
-    let client = serenity::ClientBuilder::new(token, intents)
+    let mut client = serenity::ClientBuilder::new(token, intents)
         .framework(framework)
-        .await;
+        .await
+        .unwrap();
 
-    client.unwrap().start().await.unwrap()
+    let serenity_http = Arc::clone(&client.http);
+    tokio::spawn(twitter::poll_task(serenity_http, poll_http, nitter_base_url, usernames, channel_id, poll_time));
+
+    client.start().await.unwrap()
 }
 
 async fn event_handler(

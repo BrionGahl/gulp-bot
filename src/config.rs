@@ -9,9 +9,10 @@ pub struct Config {
     pub bot_name: String,
     pub mod_role_id: RoleId,
     pub raider_role_id: RoleId,
-    pub twitter_token: String,
+    pub nitter_base_url: String,
     pub twitter_user_ids: Vec<String>,
     pub tweet_target_channel_id: u64,
+    pub tweet_poll_time: u64
 }
 
 impl Config {
@@ -31,8 +32,8 @@ impl Config {
                 .expect("Missing `RAIDER_ROLE_ID` env variable.")
                 .parse::<u64>()
                 .expect("Failed to parse `RAIDER_ROLE_ID env variable.")),
-            twitter_token: env::var("TWITTER_TOKEN")
-                .expect("Missing `TWITTER_TOKEN` env variable."),
+            nitter_base_url: env::var("NITTER_BASE_URL")
+                .expect("Missing `NITTER_BASE_URL` env variable."),
             twitter_user_ids: env::var("TWITTER_USER_IDS")
                 .unwrap_or_default()
                 .split(',')
@@ -42,7 +43,11 @@ impl Config {
             tweet_target_channel_id: env::var("TWEET_CHANNEL_ID")
                 .expect("Missing `TWEET_CHANNEL_ID` env variable.")
                 .parse::<u64>()
-                .expect("Failed to parse `TWEET_CHANNEL_ID env variable.")
+                .expect("Failed to parse `TWEET_CHANNEL_ID env variable."),
+            tweet_poll_time: env::var("TWEET_POLL_TIME")
+                .expect("Missing `TWEET_POLL_TIME` env variable.")
+                .parse::<u64>()
+                .expect("Failed to parse `TWEET_POLL_TIME env variable."),
         }
     }
 }
