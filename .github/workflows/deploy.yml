@@ -34,7 +34,7 @@ jobs:
         with:
           registry: ${{ vars.GCP_REGION }}-docker.pkg.dev
           username: oauth2accesstoken
-          password: ${{ steps.auth.outputs.auth_token }}
+          password: ${{ steps.auth.outputs.access_token }}
 
       - name: Build and push
         uses: docker/build-push-action@v5
@@ -54,4 +54,5 @@ jobs:
         run: |
           gcloud compute instances update-container ${{ vars.GCE_INSTANCE }} \
             --container-image=${{ env.IMAGE }}:${{ github.sha }} \
-            --zone=${{ vars.GCE_ZONE }}
+            --zone=${{ vars.GCE_ZONE }} \
+            --project=${{ vars.GCP_PROJECT_ID }}
