@@ -6,6 +6,7 @@ mod helper;
 mod twitter;
 
 use poise::serenity_prelude::{self as serenity, GatewayIntents};
+use tracing_subscriber::prelude::*;
 
 use std::env;
 use std::sync::Arc;
@@ -16,12 +17,15 @@ use crate::types::bot::{Error, Data, Context};
 
 #[tokio::main]
 async fn main() {
-    // Logging tracer
-    tracing_subscriber::fmt::init();
-
     let data = Data::new();
+
+    tracing_subscriber::registry()
+        .with(data.config.log_level)
+        .with(tracing_stackdriver::layer())
+        .init();
     let token = data.config.discord_token.clone();
-    let poll_http = data.http.clone();
+
+    let poll_http = data.http_client.clone();
     let nitter_base_url = data.config.nitter_base_url.clone();
     let x_base_url = data.config.x_base_url.clone();
     let usernames = data.config.twitter_user_ids.clone();
@@ -37,7 +41,7 @@ async fn main() {
         prefix: Some("?".to_string()),
         additional_prefixes: vec![
             poise::Prefix::Regex(
-                "(yo |hey )?kail,? can you (please |pwease )?"
+                "(yo |hey )? kail, can you (please |pwease )?"
                     .parse()
                     .unwrap(),
             )
@@ -52,6 +56,7 @@ async fn main() {
         commands: vec![
             commands::wow_guild::get_upcoming_raids(),
             commands::wow_guild::get_upcoming_absences(),
+            commands::wow_guild::get_liquid_info(),
             commands::wow_guild::class_discords(),
             commands::utilities::source(),
             commands::utilities::help(),

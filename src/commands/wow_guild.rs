@@ -10,6 +10,36 @@ use crate::types::raids::{Raid, Raids};
 const URL: &str = "https://wowaudit.com/v1/";
 const IMG: &str = "https://data.wowaudit.com/img/new-logo.svg";
 
+/// Fetches Liquid WeakAura / Addon info if you have a raider role.
+#[poise::command(
+    prefix_command,
+    slash_command,
+    ephemeral,
+    category = "WoW Guild",
+    check = "crate::checks::check_is_raider",
+)]
+pub async fn get_liquid_info(ctx: Context<'_>) -> Result<(), Error> {
+    let bart_token = &ctx.data().config.bart_token;
+
+    let embed = crate::helper::create_base_embed(&ctx)
+        .title("Bart Timeline Reminders Addon Information")
+        .field("This is your tier 2 personal (permanent) access token. It is valid for the duration of our Patreon subscription.",
+               format!("```plaintext\n{}\n```", bart_token), true)
+        .description("Please do not share this token publicly.")
+        .field("Install Instructions",
+               "- Install WowUp with CurseForge from https://wowup.io/\
+               \n- Open up the WowUp app, and navigate to Options > Addons\
+               \n- In the bottom right, where it says \"Personal Access Token\", input the above token.\
+               \n- Navigate to Get Addons (sidebar) > Install from URL (top right)\
+               \n- Paste https://github.com/bart-dev-wow/AuraUpdater and click Import\
+               \n- You should then see the addon, click install\"\
+               \n- Repeat the previous step for https://github.com/bart-dev-wow/TimelineReminders", false
+        );
+
+    ctx.send(CreateReply::default().embed(embed)).await?;
+    Ok(())
+}
+
 /// Shows links to all the class Discord servers
 #[poise::command(
     prefix_command,
@@ -53,7 +83,7 @@ pub async fn get_upcoming_raids(ctx: Context<'_>, #[description = "Number of rai
     ctx.defer_ephemeral().await?;
 
     let wow_audit_token = &ctx.data().config.wow_audit_token;
-    let http = &ctx.data().http;
+    let http = &ctx.data().http_client;
 
     let count = count.unwrap_or(4);
     let raids = get_raids(http, wow_audit_token).await?;
@@ -84,7 +114,7 @@ pub async fn get_upcoming_absences(ctx: Context<'_>, #[description = "Number of 
     let count = count.unwrap_or(2);
 
     let wow_audit_token = &ctx.data().config.wow_audit_token;
-    let http = &ctx.data().http;
+    let http = &ctx.data().http_client;
 
     let raids = get_raids(http, wow_audit_token).await?;
     let raids_to_search = raids.iter().take(count);

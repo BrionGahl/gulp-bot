@@ -28,6 +28,7 @@ pub async fn poll_task(
                 Ok(tweets) => {
                     for tweet in tweets {
                         if seen_ids.insert(tweet.id.clone()) && !first_run {
+                            info!("New tweet from @{}: {}", username, tweet.url);
                             if let Err(e) = poster::post_tweet(&http, channel_id, &tweet).await {
                                 error!("Failed to post tweet from @{}: {}", username, e);
                             }
