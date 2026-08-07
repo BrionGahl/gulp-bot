@@ -20,7 +20,6 @@ use crate::types::bot::{Error, Data, Context};
 async fn main() {
     let data = Data::new();
 
-    tracing_log::LogTracer::init().expect("Failed to set logger");
     tracing_subscriber::registry()
         .with(data.config.log_level)
         .with(tracing_stackdriver::layer())
@@ -51,6 +50,7 @@ async fn main() {
         commands: vec![
             commands::wow_guild::get_liquid_info(),
             commands::wow_guild::class_discords(),
+            commands::wow_utils::submit_droptimizer(),
             commands::utilities::source(),
             commands::utilities::help(),
             commands::utilities::register(),

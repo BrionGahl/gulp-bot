@@ -11,6 +11,8 @@ pub struct Config {
     pub mod_role_id: RoleId,
     pub raider_role_id: RoleId,
     pub bart_token: String,
+    pub wowutils_token: String,
+    pub wowutils_group_id: String,
     pub clips_channel_ids: HashSet<ChannelId>,
     pub log_level: LevelFilter,
 }
@@ -32,6 +34,10 @@ impl Config {
                 .expect("Failed to parse `RAIDER_ROLE_ID env variable.")),
             bart_token: env::var("BART_TOKEN")
                 .unwrap_or("".to_string()),
+            wowutils_token: env::var("WOWUTILS_TOKEN")
+                .expect("Missing `WOWUTILS_TOKEN` env variable."),
+            wowutils_group_id: env::var("WOWUTILS_GROUP_ID")
+                .expect("Missing `WOWUTILS_GROUP_ID` env variable."),
             clips_channel_ids: env::var("CLIPS_CHANNEL_IDS")
                 .unwrap_or_default()
                 .split(',')
