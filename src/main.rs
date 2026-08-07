@@ -4,6 +4,7 @@ mod config;
 mod checks;
 mod helper;
 mod clips;
+mod health;
 
 use poise::serenity_prelude::{self as serenity, GatewayIntents};
 use tracing_subscriber::prelude::*;
@@ -47,8 +48,6 @@ async fn main() {
 
     let options = poise::FrameworkOptions {
         commands: vec![
-            commands::wow_guild::get_upcoming_raids(),
-            commands::wow_guild::get_upcoming_absences(),
             commands::wow_guild::get_liquid_info(),
             commands::wow_guild::class_discords(),
             commands::utilities::source(),
@@ -102,6 +101,8 @@ async fn main() {
         .framework(framework)
         .await
         .unwrap();
+
+    tokio::spawn(health::serve());
 
     client.start().await.unwrap()
 }
