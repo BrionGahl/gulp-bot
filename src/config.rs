@@ -14,6 +14,7 @@ pub struct Config {
     pub wowutils_token: String,
     pub wowutils_group_id: String,
     pub clips_channel_ids: HashSet<ChannelId>,
+    pub raid_notes_channel_id: ChannelId,
     pub log_level: LevelFilter,
 }
 
@@ -45,6 +46,10 @@ impl Config {
                 .map(|s| ChannelId::from(s.trim().parse::<u64>()
                     .expect("Failed to parse `CLIPS_CHANNEL_IDS` env variable, expected a comma-separated list of channel IDs.")))
                 .collect(),
+            raid_notes_channel_id: ChannelId::from(env::var("RAID_NOTES_CHANNEL_ID")
+                .expect("Missing `RAID_NOTES_CHANNEL_ID` env variable.")
+                .parse::<u64>()
+                .expect("Failed to parse `RAID_NOTES_CHANNEL_ID` env variable.")),
             log_level: env::var("LOG_LEVEL")
                 .unwrap_or_else(|_| "INFO".to_string())
                 .parse::<LevelFilter>()

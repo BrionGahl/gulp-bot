@@ -64,6 +64,7 @@ jobs:
             MOD_ROLE_ID=${{ vars.MOD_ROLE_ID }}
             RAIDER_ROLE_ID=${{ vars.RAIDER_ROLE_ID }}
             CLIPS_CHANNEL_IDS=${{ vars.CLIPS_CHANNEL_IDS }}
+            RAID_NOTES_CHANNEL_ID=${{ vars.RAID_NOTES_CHANNEL_ID }}
             LOG_LEVEL=${{ vars.LOG_LEVEL }}
             WOWUTILS_GROUP_ID=${{ vars.WOWUTILS_GROUP_ID }}
             DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }}

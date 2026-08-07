@@ -5,6 +5,7 @@ mod checks;
 mod helper;
 mod clips;
 mod health;
+mod raid_notes;
 
 use poise::serenity_prelude::{self as serenity, GatewayIntents};
 use tracing_subscriber::prelude::*;
@@ -19,6 +20,7 @@ use crate::types::bot::{Error, Data, Context};
 #[tokio::main]
 async fn main() {
     let data = Data::new();
+    let raid_notes_channel_id = data.config.raid_notes_channel_id;
 
     tracing_subscriber::registry()
         .with(data.config.log_level)
@@ -104,6 +106,7 @@ async fn main() {
         .unwrap();
 
     tokio::spawn(health::serve());
+    tokio::spawn(raid_notes::schedule_weekly_posts(client.http.clone(), raid_notes_channel_id));
 
     client.start().await.unwrap()
 }

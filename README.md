@@ -53,7 +53,7 @@ something the workflow does for you:
    ```
 3. In the GitHub repo, set these Actions **variables** (`Settings > Secrets and variables > Actions > Variables`)
    alongside the existing `GCP_REGION` / `GCP_PROJECT_ID`: `BOT_NAME`, `MOD_ROLE_ID`, `RAIDER_ROLE_ID`,
-   `CLIPS_CHANNEL_IDS`, `LOG_LEVEL`, `WOWUTILS_GROUP_ID`.
+   `CLIPS_CHANNEL_IDS`, `RAID_NOTES_CHANNEL_ID`, `LOG_LEVEL`, `WOWUTILS_GROUP_ID`.
 4. Set these Actions **secrets** (`Settings > Secrets and variables > Actions > Secrets`):
    `DISCORD_TOKEN`, `BART_TOKEN`, `WOWUTILS_TOKEN`. They're passed to the Cloud Run service as plain
    environment variables at deploy time — GitHub masks them in workflow logs, but anyone with viewer
@@ -79,6 +79,16 @@ WOWUTILS_GROUP_ID=<WowUtils group ID that droptimizer reports are submitted to>
 
 # Clips channels
 CLIPS_CHANNEL_IDS=<comma-separated list of Discord channel IDs to restrict to video-only messages, e.g. 123,456>
+
+# Weekly raid notes
+RAID_NOTES_CHANNEL_ID=<Discord forum channel ID to post weekly raid notes threads into>
 ```
 
 Note: the bot needs the **Manage Messages** permission in any channel listed in `CLIPS_CHANNEL_IDS` to delete non-video messages.
+
+### Weekly raid notes
+
+Every Tuesday at 9:00 AM Eastern (DST-aware, via `America/New_York`), the bot creates a new forum
+post titled `Week of <Mon> <day> - <Sun> <day>` in the channel set by `RAID_NOTES_CHANNEL_ID`, with a
+placeholder starter message. `RAID_NOTES_CHANNEL_ID` must point at a **forum channel** — the bot needs
+permission to create posts there. See `src/raid_notes.rs`.
