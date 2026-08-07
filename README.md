@@ -22,6 +22,8 @@ On every push to `master`, the workflow:
 1. Builds the image using a multi-stage Rust build with `cargo-chef` for dependency caching
 2. Pushes it to Google Artifact Registry
 3. Deploys it to Cloud Run, pinned to exactly one always-on instance with CPU throttling disabled
+4. Deletes old Cloud Run revisions, keeping only the one now serving traffic and the one before it
+   (a manual rollback target)
 
 The bot has no HTTP API of its own — it only holds a persistent Discord gateway connection — so it
 runs a minimal HTTP listener (`src/health.rs`) purely to satisfy Cloud Run's container startup check.
