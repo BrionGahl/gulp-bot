@@ -16,7 +16,8 @@ pub async fn check_is_moderator(ctx: Context<'_>) -> Result<bool, Error> {
 
 pub async fn check_is_raider(ctx: Context<'_>) -> Result<bool, Error> {
     let raider_role_id = &ctx.data().config.raider_role_id;
-    let user_is_raider = is_some_role(ctx, raider_role_id);
+    let mod_role_id = &ctx.data().config.mod_role_id;
+    let user_is_raider = is_some_role(ctx, raider_role_id) || is_some_role(ctx, mod_role_id);
     if !user_is_raider {
         ctx.send(
             poise::CreateReply::default()

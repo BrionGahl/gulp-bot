@@ -47,12 +47,23 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Deploy to Compute Engine
-        run: |
-          gcloud compute instances update-container ${{ vars.GCE_INSTANCE }} \
-            --container-image=${{ env.IMAGE }}:${{ github.sha }} \
-            --zone=${{ vars.GCE_ZONE }} \
-            --project=${{ vars.GCP_PROJECT_ID }}
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: gulp-bot
+          image: ${{ env.IMAGE }}:${{ github.sha }}
+          region: ${{ vars.GCP_REGION }}
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          # The bot has nothing to serve, only a Discord gateway connection to keep alive, so:
+          # - min/max instances pinned to 1 (no scale-to-zero, no duplicate gateway sessions)
+          # - CPU throttling disabled (the container must run background work between requests)
+          # - unauthenticated invocation disabled (nothing external needs to call this service)
+          flags: --min-instances=1 --max-instances=1 --no-cpu-throttling --no-allow-unauthenticated
+          env_vars: |
+            BOT_NAME=${{ vars.BOT_NAME }}
+            MOD_ROLE_ID=${{ vars.MOD_ROLE_ID }}
+            RAIDER_ROLE_ID=${{ vars.RAIDER_ROLE_ID }}
+            CLIPS_CHANNEL_IDS=${{ vars.CLIPS_CHANNEL_IDS }}
+            LOG_LEVEL=${{ vars.LOG_LEVEL }}
+            DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }}
+            BART_TOKEN=${{ secrets.BART_TOKEN }}

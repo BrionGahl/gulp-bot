@@ -3,7 +3,8 @@ mod types;
 mod config;
 mod checks;
 mod helper;
-mod twitter;
+mod clips;
+mod health;
 
 use poise::serenity_prelude::{self as serenity, GatewayIntents};
 use tracing_subscriber::prelude::*;
@@ -24,13 +25,6 @@ async fn main() {
         .with(tracing_stackdriver::layer())
         .init();
     let token = data.config.discord_token.clone();
-
-    let poll_http = data.http_client.clone();
-    let nitter_base_url = data.config.nitter_base_url.clone();
-    let x_base_url = data.config.x_base_url.clone();
-    let usernames = data.config.twitter_user_ids.clone();
-    let channel_id = data.config.tweet_target_channel_id;
-    let poll_time = data.config.tweet_poll_time;
 
     let intents = GatewayIntents::non_privileged()
         | GatewayIntents::MESSAGE_CONTENT
@@ -54,8 +48,6 @@ async fn main() {
 
     let options = poise::FrameworkOptions {
         commands: vec![
-            commands::wow_guild::get_upcoming_raids(),
-            commands::wow_guild::get_upcoming_absences(),
             commands::wow_guild::get_liquid_info(),
             commands::wow_guild::class_discords(),
             commands::utilities::source(),
@@ -110,8 +102,7 @@ async fn main() {
         .await
         .unwrap();
 
-    let serenity_http = Arc::clone(&client.http);
-    tokio::spawn(twitter::poll_task(serenity_http, poll_http, nitter_base_url, x_base_url, usernames, channel_id, poll_time));
+    tokio::spawn(health::serve());
 
     client.start().await.unwrap()
 }
@@ -125,6 +116,9 @@ async fn event_handler(
     // List of all events we will handle
     match event {
         serenity::FullEvent::Ready { data_about_bot, .. } => {
+        }
+        serenity::FullEvent::Message { new_message } => {
+            clips::enforce_clips_channel(ctx, data, new_message).await;
         }
         _ => {}
     }

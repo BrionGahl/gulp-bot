@@ -10,20 +10,48 @@ The bot is written with the `poise` crate and uses a few others for requests / l
 
 ## Features
 
-- **WoW Guild** — fetches upcoming raids and absences via the WoWAudit API
+- **WoW Guild** — Bart Timeline Reminders addon info and class Discord links
 - **Gambling** — multiplayer roll sessions with a lobby and results embed
-- **Twitter/X feed** — polls a Nitter RSS instance and posts new tweets (with images and video links) to a configured Discord channel
+- **Clips channels** — deletes any message posted in a configured channel that doesn't contain a video (uploaded video file or an unfurled video link embed)
 
 ## Deployment
 
-The bot is packaged as a Docker image and deployed via GitHub Actions to a Compute Engine instance on GCP.
+The bot is packaged as a Docker image and deployed via GitHub Actions to Cloud Run on GCP.
 
 On every push to `master`, the workflow:
 1. Builds the image using a multi-stage Rust build with `cargo-chef` for dependency caching
 2. Pushes it to Google Artifact Registry
-3. Runs `gcloud compute instances update-container` to redeploy the instance
+3. Deploys it to Cloud Run, pinned to exactly one always-on instance with CPU throttling disabled
 
-See `.github/workflows/deploy.yml` for the full workflow.
+The bot has no HTTP API of its own — it only holds a persistent Discord gateway connection — so it
+runs a minimal HTTP listener (`src/health.rs`) purely to satisfy Cloud Run's container startup check.
+
+See `.github/workflows/deploy.yml` for the full workflow, and the [Cloud Run setup](#one-time-cloud-run-setup)
+section below for the one-time GCP configuration this requires.
+
+### One-time Cloud Run setup
+
+This is manual GCP configuration that only needs to happen once (or once per environment), not
+something the workflow does for you:
+
+1. Enable the Cloud Run API on the project: `gcloud services enable run.googleapis.com --project=<PROJECT_ID>`.
+2. Grant the WIF deploy service account (`secrets.WIF_SERVICE_ACCOUNT`) the roles needed to deploy to Cloud Run:
+   ```shell
+   gcloud projects add-iam-policy-binding <PROJECT_ID> \
+     --member="serviceAccount:<WIF_SERVICE_ACCOUNT>" --role="roles/run.admin"
+   gcloud projects add-iam-policy-binding <PROJECT_ID> \
+     --member="serviceAccount:<WIF_SERVICE_ACCOUNT>" --role="roles/iam.serviceAccountUser"
+   ```
+3. In the GitHub repo, set these Actions **variables** (`Settings > Secrets and variables > Actions > Variables`)
+   alongside the existing `GCP_REGION` / `GCP_PROJECT_ID`: `BOT_NAME`, `MOD_ROLE_ID`, `RAIDER_ROLE_ID`,
+   `CLIPS_CHANNEL_IDS`, `LOG_LEVEL`.
+4. Set these Actions **secrets** (`Settings > Secrets and variables > Actions > Secrets`):
+   `DISCORD_TOKEN`, `BART_TOKEN`. They're passed to the Cloud Run service as plain
+   environment variables at deploy time — GitHub masks them in workflow logs, but anyone with viewer
+   access to the Cloud Run service in the GCP console can read them back out of its revision config.
+   If that's ever a concern, Secret Manager is the more locked-down alternative.
+5. The old `GCE_INSTANCE` / `GCE_ZONE` variables and the Compute Engine instance itself are no longer
+   used and can be decommissioned once the first Cloud Run deploy succeeds.
 
 ## Using the bot
 
@@ -36,12 +64,8 @@ BOT_NAME=<display name used in embeds>
 MOD_ROLE_ID=<Discord role ID>
 RAIDER_ROLE_ID=<Discord role ID>
 
-# WoW Audit
-WOWAUDIT_TOKEN=<WoWAudit API token>
-
-# Twitter/X feed (via Nitter)
-NITTER_BASE_URL=<base URL of your Nitter instance, e.g. https://nitter.example.com>
-TWITTER_USER_IDS=<comma-separated list of Twitter usernames to track, e.g. user1,user2>
-TWEET_CHANNEL_ID=<Discord channel ID to post tweets into>
-TWEET_POLL_TIME=<poll interval in seconds, e.g. 60>
+# Clips channels
+CLIPS_CHANNEL_IDS=<comma-separated list of Discord channel IDs to restrict to video-only messages, e.g. 123,456>
 ```
+
+Note: the bot needs the **Manage Messages** permission in any channel listed in `CLIPS_CHANNEL_IDS` to delete non-video messages.

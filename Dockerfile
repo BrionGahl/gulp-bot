@@ -17,4 +17,5 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /app/target/release/gulp-bot .
+EXPOSE 8080
 CMD ["./gulp-bot"]
