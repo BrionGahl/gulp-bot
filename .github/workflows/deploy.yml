@@ -64,8 +64,26 @@ jobs:
             MOD_ROLE_ID=${{ vars.MOD_ROLE_ID }}
             RAIDER_ROLE_ID=${{ vars.RAIDER_ROLE_ID }}
             CLIPS_CHANNEL_IDS=${{ vars.CLIPS_CHANNEL_IDS }}
-            LOG_LEVEL=${{ vars.LOG_LEVEL }}
             WOWUTILS_GROUP_ID=${{ vars.WOWUTILS_GROUP_ID }}
             DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }}
             BART_TOKEN=${{ secrets.BART_TOKEN }}
             WOWUTILS_TOKEN=${{ secrets.WOWUTILS_TOKEN }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Delete old Cloud Run revisions
+        # Keeps the revision that's now serving traffic plus the one before it (a manual
+        # rollback target), and deletes anything older than that.
+        run: |
+          gcloud run revisions list \
+            --service=gulp-bot \
+            --region=${{ vars.GCP_REGION }} \
+            --project=${{ vars.GCP_PROJECT_ID }} \
+            --format='value(metadata.name)' \
+            --sort-by='~metadata.creationTimestamp' \
+          | tail -n +3 \
+          | xargs -r -I {} gcloud run revisions delete {} \
+              --region=${{ vars.GCP_REGION }} \
+              --project=${{ vars.GCP_PROJECT_ID }} \
+              --quiet
