@@ -1,0 +1,39 @@
+name: Teardown Cloud Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type the Cloud Run service name ("gulp-bot") to confirm deletion'
+        required: true
+
+jobs:
+  teardown:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Verify confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "gulp-bot" ]; then
+            echo "Confirmation input must be exactly 'gulp-bot'. Aborting."
+            exit 1
+          fi
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Delete Cloud Run service
+        run: |
+          gcloud run services delete gulp-bot \
+            --region=${{ vars.GCP_REGION }} \
+            --project=${{ vars.GCP_PROJECT_ID }} \
+            --quiet

@@ -8,5 +8,6 @@ tokio = { version = "1.21.2", features = ["macros", "rt-multi-thread", "net", "i
 log = "0.4.29"
 tracing-subscriber = "0.3.22"
 tracing-stackdriver = "0.10"
+tracing-log = "0.2"
 poise = "0.6.1"
 rand = "0.9.2"

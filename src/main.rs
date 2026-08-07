@@ -20,6 +20,7 @@ use crate::types::bot::{Error, Data, Context};
 async fn main() {
     let data = Data::new();
 
+    tracing_log::LogTracer::init().expect("Failed to set logger");
     tracing_subscriber::registry()
         .with(data.config.log_level)
         .with(tracing_stackdriver::layer())

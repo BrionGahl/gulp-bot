@@ -29,6 +29,13 @@ runs a minimal HTTP listener (`src/health.rs`) purely to satisfy Cloud Run's con
 See `.github/workflows/deploy.yml` for the full workflow, and the [Cloud Run setup](#one-time-cloud-run-setup)
 section below for the one-time GCP configuration this requires.
 
+### Tearing down
+
+`.github/workflows/teardown.yml` is a manually-triggered workflow (`Actions` tab → `Teardown Cloud Run` →
+`Run workflow`) that deletes the `gulp-bot` Cloud Run service. It requires typing `gulp-bot` into the
+confirmation input, or the job fails before touching anything. It only deletes the Cloud Run service —
+pushed images stay in Artifact Registry, and the next push to `master` will recreate the service.
+
 ### One-time Cloud Run setup
 
 This is manual GCP configuration that only needs to happen once (or once per environment), not
