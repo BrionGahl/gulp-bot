@@ -12,7 +12,7 @@ The bot is written with the `poise` crate and uses a few others for requests / l
 
 - **WoW Guild** — fetches upcoming raids and absences via the WoWAudit API
 - **Gambling** — multiplayer roll sessions with a lobby and results embed
-- **Twitter/X feed** — polls a Nitter RSS instance and posts new tweets (with images and video links) to a configured Discord channel
+- **Clips channels** — deletes any message posted in a configured channel that doesn't contain a video (uploaded video file or an unfurled video link embed)
 
 ## Deployment
 
@@ -39,9 +39,8 @@ RAIDER_ROLE_ID=<Discord role ID>
 # WoW Audit
 WOWAUDIT_TOKEN=<WoWAudit API token>
 
-# Twitter/X feed (via Nitter)
-NITTER_BASE_URL=<base URL of your Nitter instance, e.g. https://nitter.example.com>
-TWITTER_USER_IDS=<comma-separated list of Twitter usernames to track, e.g. user1,user2>
-TWEET_CHANNEL_ID=<Discord channel ID to post tweets into>
-TWEET_POLL_TIME=<poll interval in seconds, e.g. 60>
+# Clips channels
+CLIPS_CHANNEL_IDS=<comma-separated list of Discord channel IDs to restrict to video-only messages, e.g. 123,456>
 ```
+
+Note: the bot needs the **Manage Messages** permission in any channel listed in `CLIPS_CHANNEL_IDS` to delete non-video messages.
