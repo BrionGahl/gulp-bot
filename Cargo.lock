@@ -508,6 +508,7 @@ dependencies = [
  "poise",
  "rand 0.9.2",
  "tokio",
+ "tracing-log",
  "tracing-stackdriver",
  "tracing-subscriber",
 ]
