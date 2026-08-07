@@ -10,7 +10,7 @@ The bot is written with the `poise` crate and uses a few others for requests / l
 
 ## Features
 
-- **WoW Guild** — Bart Timeline Reminders addon info and class Discord links
+- **WoW Guild** — Bart Timeline Reminders addon info, class Discord links, and droptimizer report submission via WowUtils
 - **Gambling** — multiplayer roll sessions with a lobby and results embed
 - **Clips channels** — deletes any message posted in a configured channel that doesn't contain a video (uploaded video file or an unfurled video link embed)
 
@@ -51,9 +51,9 @@ something the workflow does for you:
    ```
 3. In the GitHub repo, set these Actions **variables** (`Settings > Secrets and variables > Actions > Variables`)
    alongside the existing `GCP_REGION` / `GCP_PROJECT_ID`: `BOT_NAME`, `MOD_ROLE_ID`, `RAIDER_ROLE_ID`,
-   `CLIPS_CHANNEL_IDS`, `LOG_LEVEL`.
+   `CLIPS_CHANNEL_IDS`, `LOG_LEVEL`, `WOWUTILS_GROUP_ID`.
 4. Set these Actions **secrets** (`Settings > Secrets and variables > Actions > Secrets`):
-   `DISCORD_TOKEN`, `BART_TOKEN`. They're passed to the Cloud Run service as plain
+   `DISCORD_TOKEN`, `BART_TOKEN`, `WOWUTILS_TOKEN`. They're passed to the Cloud Run service as plain
    environment variables at deploy time — GitHub masks them in workflow logs, but anyone with viewer
    access to the Cloud Run service in the GCP console can read them back out of its revision config.
    If that's ever a concern, Secret Manager is the more locked-down alternative.
@@ -70,6 +70,10 @@ DISCORD_TOKEN=<bot token>
 BOT_NAME=<display name used in embeds>
 MOD_ROLE_ID=<Discord role ID>
 RAIDER_ROLE_ID=<Discord role ID>
+
+# WowUtils
+WOWUTILS_TOKEN=<WowUtils API token, sent as `Authorization: Bearer <token>`>
+WOWUTILS_GROUP_ID=<WowUtils group ID that droptimizer reports are submitted to>
 
 # Clips channels
 CLIPS_CHANNEL_IDS=<comma-separated list of Discord channel IDs to restrict to video-only messages, e.g. 123,456>
