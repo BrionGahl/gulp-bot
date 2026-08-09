@@ -23,9 +23,8 @@ pub async fn get_liquid_info(ctx: Context<'_>) -> Result<(), Error> {
                \n- Open up the WowUp app, and navigate to Options > Addons\
                \n- In the bottom right, where it says \"Personal Access Token\", input the above token.\
                \n- Navigate to Get Addons (sidebar) > Install from URL (top right)\
-               \n- Paste https://github.com/bart-dev-wow/AuraUpdater and click Import\
-               \n- You should then see the addon, click install\"\
-               \n- Repeat the previous step for https://github.com/bart-dev-wow/TimelineReminders", false
+               \n- Paste https://github.com/bart-dev-wow/TimelineReminders and click Import\
+               \n- You should then see the addon, click install", false
         );
 
     ctx.send(CreateReply::default().embed(embed)).await?;
