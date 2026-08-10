@@ -10,6 +10,8 @@ pub struct Config {
     pub bot_name: String,
     pub mod_role_id: RoleId,
     pub raider_role_id: RoleId,
+    pub trial_role_id: RoleId,
+    pub personal_officer_category_id: ChannelId,
     pub bart_token: String,
     pub wowutils_token: String,
     pub wowutils_group_id: String,
@@ -33,6 +35,14 @@ impl Config {
                 .expect("Missing `RAIDER_ROLE_ID` env variable.")
                 .parse::<u64>()
                 .expect("Failed to parse `RAIDER_ROLE_ID env variable.")),
+            trial_role_id: RoleId::from(env::var("TRIAL_ROLE_ID")
+                .expect("Missing `TRIAL_ROLE_ID` env variable.")
+                .parse::<u64>()
+                .expect("Failed to parse `TRIAL_ROLE_ID env variable.")),
+            personal_officer_category_id: ChannelId::from(env::var("PERSONAL_OFFICER_CATEGORY_ID")
+                .expect("Missing `PERSONAL_OFFICER_CATEGORY_ID` env variable.")
+                .parse::<u64>()
+                .expect("Failed to parse `PERSONAL_OFFICER_CATEGORY_ID` env variable.")),
             bart_token: env::var("BART_TOKEN")
                 .unwrap_or("".to_string()),
             wowutils_token: env::var("WOWUTILS_TOKEN")

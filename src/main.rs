@@ -6,6 +6,7 @@ mod helper;
 mod clips;
 mod health;
 mod raid_notes;
+mod personal_officer_channels;
 
 use poise::serenity_prelude::{self as serenity, GatewayIntents};
 use tracing_subscriber::prelude::*;
@@ -123,6 +124,9 @@ async fn event_handler(
         }
         serenity::FullEvent::Message { new_message } => {
             clips::enforce_clips_channel(ctx, data, new_message).await;
+        }
+        serenity::FullEvent::GuildMemberUpdate { old_if_available, new, .. } => {
+            personal_officer_channels::handle_role_update(ctx, data, old_if_available, new).await;
         }
         _ => {}
     }

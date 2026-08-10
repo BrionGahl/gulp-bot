@@ -13,6 +13,7 @@ The bot is written with the `poise` crate and uses a few others for requests / l
 - **WoW Guild** — Bart Timeline Reminders addon info, class Discord links, and droptimizer report submission via WowUtils
 - **Gambling** — multiplayer roll sessions with a lobby and results embed
 - **Clips channels** — deletes any message posted in a configured channel that doesn't contain a video (uploaded video file or an unfurled video link embed)
+- **Personal officer channels** — when a member is given the trial or raider role, creates a private text channel for them under a configured category, visible only to them and the officer (moderator) role
 
 ## Deployment
 
@@ -53,7 +54,8 @@ something the workflow does for you:
    ```
 3. In the GitHub repo, set these Actions **variables** (`Settings > Secrets and variables > Actions > Variables`)
    alongside the existing `GCP_REGION` / `GCP_PROJECT_ID`: `BOT_NAME`, `MOD_ROLE_ID`, `RAIDER_ROLE_ID`,
-   `CLIPS_CHANNEL_IDS`, `RAID_NOTES_CHANNEL_ID`, `LOG_LEVEL`, `WOWUTILS_GROUP_ID`.
+   `TRIAL_ROLE_ID`, `PERSONAL_OFFICER_CATEGORY_ID`, `CLIPS_CHANNEL_IDS`, `RAID_NOTES_CHANNEL_ID`,
+   `LOG_LEVEL`, `WOWUTILS_GROUP_ID`.
 4. Set these Actions **secrets** (`Settings > Secrets and variables > Actions > Secrets`):
    `DISCORD_TOKEN`, `BART_TOKEN`, `WOWUTILS_TOKEN`. They're passed to the Cloud Run service as plain
    environment variables at deploy time — GitHub masks them in workflow logs, but anyone with viewer
@@ -70,8 +72,10 @@ something the workflow does for you:
 # Discord
 DISCORD_TOKEN=<bot token>
 BOT_NAME=<display name used in embeds>
-MOD_ROLE_ID=<Discord role ID>
+MOD_ROLE_ID=<Discord role ID, also treated as the "officer" role for personal officer channels>
 RAIDER_ROLE_ID=<Discord role ID>
+TRIAL_ROLE_ID=<Discord role ID>
+PERSONAL_OFFICER_CATEGORY_ID=<Discord category channel ID that personal officer channels are created under>
 
 # WowUtils
 WOWUTILS_TOKEN=<WowUtils API token, sent as `Authorization: Bearer <token>`>
@@ -85,6 +89,17 @@ RAID_NOTES_CHANNEL_ID=<Discord forum channel ID to post weekly raid notes thread
 ```
 
 Note: the bot needs the **Manage Messages** permission in any channel listed in `CLIPS_CHANNEL_IDS` to delete non-video messages.
+
+### Personal officer channels
+
+When a member is given the `TRIAL_ROLE_ID` or `RAIDER_ROLE_ID` role, the bot creates a private text
+channel for them under the category set by `PERSONAL_OFFICER_CATEGORY_ID`, named `<their name>-officer-chat`.
+The channel is only visible to that member and to anyone with `MOD_ROLE_ID` (treated as the officer
+role) — `@everyone` is explicitly denied `View Channel`. The bot tags the channel by embedding the
+member's mention in its topic, so if they gain the other role later (e.g. trial promoted to raider) it
+won't create a second channel. Losing the role does **not** delete or archive the channel — that's left
+to officers to do manually. The bot needs the **Manage Channels** permission and must be able to see
+the `PERSONAL_OFFICER_CATEGORY_ID` category. See `src/personal_officer_channels.rs`.
 
 ### Weekly raid notes
 
