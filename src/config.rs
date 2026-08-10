@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::env;
 
-use poise::serenity_prelude::{ChannelId, RoleId, UserId};
+use poise::serenity_prelude::{ChannelId, RoleId};
 use tracing_subscriber::filter::LevelFilter;
 
 #[derive(Debug)]

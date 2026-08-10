@@ -11,12 +11,10 @@ mod personal_officer_channels;
 use poise::serenity_prelude::{self as serenity, GatewayIntents};
 use tracing_subscriber::prelude::*;
 
-use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 use log::info;
-use crate::config::Config;
-use crate::types::bot::{Error, Data, Context};
+use crate::types::bot::{Error, Data};
 
 #[tokio::main]
 async fn main() {
