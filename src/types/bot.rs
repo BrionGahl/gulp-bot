@@ -4,6 +4,10 @@ use crate::config::Config;
 pub struct Data {
     pub config: Config,
     pub http_client: reqwest::Client,
+    /// Serializes the "does this member already have a personal officer channel, if not create
+    /// one" sequence so that two GuildMemberUpdate events for the same member firing close
+    /// together can't both pass the check before either has created a channel.
+    pub personal_officer_channel_lock: tokio::sync::Mutex<()>,
 }
 
 impl Data {
@@ -14,6 +18,7 @@ impl Data {
         Self {
             config,
             http_client,
+            personal_officer_channel_lock: tokio::sync::Mutex::new(()),
         }
     }
 }

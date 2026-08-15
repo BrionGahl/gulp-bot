@@ -123,8 +123,8 @@ async fn event_handler(
         serenity::FullEvent::Message { new_message } => {
             clips::enforce_clips_channel(ctx, data, new_message).await;
         }
-        serenity::FullEvent::GuildMemberUpdate { old_if_available, new, .. } => {
-            personal_officer_channels::handle_role_update(ctx, data, old_if_available, new).await;
+        serenity::FullEvent::GuildMemberUpdate { new, .. } => {
+            personal_officer_channels::handle_role_update(ctx, data, new).await;
         }
         _ => {}
     }

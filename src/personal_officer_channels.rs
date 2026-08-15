@@ -8,23 +8,29 @@ use crate::types::bot::Data;
 
 const CHANNEL_TOPIC_PREFIX: &str = "Personal officer channel for";
 
-/// If `new` just gained the trial or raider role (relative to `old_if_available`), creates a
-/// private text channel for them under the personal officer channels category, visible only to
-/// them and the officer role. No-ops if they already have one.
-pub async fn handle_role_update(ctx: &Context, data: &Data, old_if_available: &Option<Member>, new: &Option<Member>) {
+/// If `new` currently has the trial or raider role, creates a private text channel for them
+/// under the personal officer channels category, visible only to them and the officer role.
+/// No-ops if they already have one.
+///
+/// Deliberately ignores `old_if_available` rather than gating on a before/after role diff:
+/// serenity's cache only has "old" member state when the member was already cached, which isn't
+/// reliable for a guild this size (no member chunk request on startup), so that diff produced
+/// false positives on unrelated member updates (nickname, avatar, etc.) after every restart.
+/// Idempotency comes entirely from the already-has-channel check below.
+pub async fn handle_role_update(ctx: &Context, data: &Data, new: &Option<Member>) {
     let Some(new_member) = new else { return };
 
-    let had_role_before = old_if_available
-        .as_ref()
-        .is_some_and(|old| has_trial_or_raider_role(data, old));
-    let has_role_now = has_trial_or_raider_role(data, new_member);
-
-    if had_role_before || !has_role_now {
+    if !has_trial_or_raider_role(data, new_member) {
         return;
     }
 
     let category_id = data.config.personal_officer_category_id;
     let user_id = new_member.user.id;
+    let officer_role = data.config.mod_role_id;
+
+    // Holds for the whole check-then-create sequence below so that two events for the same
+    // member firing close together can't both see "no channel yet" and both create one.
+    let _lock = data.personal_officer_channel_lock.lock().await;
 
     let channels = match new_member.guild_id.channels(&ctx.http).await {
         Ok(channels) => channels,
@@ -34,17 +40,23 @@ pub async fn handle_role_update(ctx: &Context, data: &Data, old_if_available: &O
         }
     };
 
-    let topic_marker = topic_marker_for(user_id);
-    let already_has_channel = channels
-        .values()
-        .any(|c| c.parent_id == Some(category_id) && c.topic.as_deref().is_some_and(|t| t.contains(&topic_marker)));
+    // Matches on permission overwrites rather than the topic marker so that channels created
+    // manually (before this automation existed, or by an officer directly) are still recognized
+    // as this member's existing channel — as long as they're set up the same way a personal
+    // officer channel should be: under the category, with both the officer role and the member
+    // individually overwritten in.
+    let already_has_channel = channels.values().any(|c| {
+        c.parent_id == Some(category_id)
+            && c.permission_overwrites.iter().any(|o| o.kind == PermissionOverwriteType::Member(user_id))
+            && c.permission_overwrites.iter().any(|o| o.kind == PermissionOverwriteType::Role(officer_role))
+    });
 
     if already_has_channel {
         return;
     }
 
     let everyone_role = new_member.guild_id.everyone_role();
-    let officer_role = data.config.mod_role_id;
+    let topic_marker = topic_marker_for(user_id);
 
     let permissions = vec![
         PermissionOverwrite {
