@@ -8,9 +8,9 @@ use crate::types::bot::Data;
 
 const CHANNEL_TOPIC_PREFIX: &str = "Personal officer channel for";
 
-/// If `new` currently has the trial or raider role, creates a private text channel for them
-/// under the personal officer channels category, visible only to them and the officer role.
-/// No-ops if they already have one.
+/// If `new` currently has the trial or raider role (and isn't themselves an officer), creates a
+/// private text channel for them under the personal officer channels category, visible only to
+/// them and the officer role. No-ops if they already have one.
 ///
 /// Deliberately ignores `old_if_available` rather than gating on a before/after role diff:
 /// serenity's cache only has "old" member state when the member was already cached, which isn't
@@ -27,6 +27,10 @@ pub async fn handle_role_update(ctx: &Context, data: &Data, new: &Option<Member>
     let category_id = data.config.personal_officer_category_id;
     let user_id = new_member.user.id;
     let officer_role = data.config.mod_role_id;
+
+    if new_member.roles.contains(&officer_role) {
+        return;
+    }
 
     // Holds for the whole check-then-create sequence below so that two events for the same
     // member firing close together can't both see "no channel yet" and both create one.
