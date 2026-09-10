@@ -6,6 +6,7 @@ mod helper;
 mod clips;
 mod health;
 mod raid_notes;
+#[allow(dead_code)] // feature disabled in the event handler; kept for easy re-enable
 mod personal_officer_channels;
 mod announcements;
 mod mentions;
@@ -152,7 +153,9 @@ async fn event_handler(
             message_replay::forget_messages(data, multiple_deleted_messages_ids).await;
         }
         serenity::FullEvent::GuildMemberUpdate { new, .. } => {
-            personal_officer_channels::handle_role_update(ctx, data, new).await;
+            // Personal officer channel creation is disabled.
+            // personal_officer_channels::handle_role_update(ctx, data, new).await;
+            let _ = new;
         }
         _ => {}
     }
