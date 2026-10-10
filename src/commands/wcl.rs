@@ -1,4 +1,5 @@
 use log::error;
+use poise::serenity_prelude::CreateAllowedMentions;
 use poise::CreateReply;
 
 use crate::guild_settings::{GuildSettings, WclSource};
@@ -235,7 +236,7 @@ async fn resolve_code(ctx: Context<'_>, warcraft_logs: &WarcraftLogs, target: Ta
         Target::Newest(source) => match warcraft_logs.latest_report_code(&source).await {
             Ok(Some(code)) => Ok(Some(code)),
             Ok(None) => {
-                ctx.say("None of the guild's newest reports are from the registered uploader. Give a report link or code instead.").await?;
+                say_quietly(ctx, "None of the guild's newest reports are from the registered uploader. Give a report link or code instead.".to_string()).await?;
                 Ok(None)
             }
             Err(e) => {
@@ -253,10 +254,16 @@ async fn refuse(ctx: Context<'_>, content: String) -> Result<(), Error> {
 }
 
 /// Reports an API failure in the channel, since the command has already been deferred publicly.
-/// The message is safe to show: it only ever holds the API's own error text.
+/// The message holds the API's own error text, or what an officer typed (a boss that doesn't
+/// exist), so it is sent without pinging anyone.
 async fn failed(ctx: Context<'_>, error: &Error) -> Result<(), Error> {
     error!("Warcraft Logs request failed: {error}");
-    ctx.say(format!("Couldn't get that from Warcraft Logs. {error}")).await?;
+    say_quietly(ctx, format!("Couldn't get that from Warcraft Logs. {error}")).await
+}
+
+/// Says something in the channel without pinging anyone, whatever the text holds.
+async fn say_quietly(ctx: Context<'_>, content: String) -> Result<(), Error> {
+    ctx.send(CreateReply::default().content(content).allowed_mentions(CreateAllowedMentions::new())).await?;
     Ok(())
 }
 

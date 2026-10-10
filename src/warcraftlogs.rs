@@ -34,6 +34,10 @@ const FIGHTS_PER_QUERY: usize = 50;
 /// How many of the guild's newest reports are searched for one from the registered uploader.
 const REPORTS_TO_SEARCH: u32 = 25;
 
+/// How long a request to Warcraft Logs, token or query, may take before the bot gives up. Without a
+/// limit a hung connection would leave the command waiting until Discord's own 15 minutes ran out.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// A token is replaced this long before it expires, so one is never sent just as it lapses.
 const TOKEN_REFRESH_MARGIN: Duration = Duration::from_secs(60);
 
@@ -66,6 +70,10 @@ pub struct WarcraftLogs {
     client_id: String,
     client_secret: String,
     token: Mutex<Option<AccessToken>>,
+    // Fields rather than constants so a test can point the client at a server of its own.
+    token_url: String,
+    api_url: String,
+    timeout: Duration,
 }
 
 struct AccessToken {
@@ -82,7 +90,15 @@ impl fmt::Debug for WarcraftLogs {
 
 impl WarcraftLogs {
     pub fn new(http: reqwest::Client, client_id: String, client_secret: String) -> Self {
-        Self { http, client_id, client_secret, token: Mutex::new(None) }
+        Self {
+            http,
+            client_id,
+            client_secret,
+            token: Mutex::new(None),
+            token_url: TOKEN_URL.to_string(),
+            api_url: API_URL.to_string(),
+            timeout: REQUEST_TIMEOUT,
+        }
     }
 
     /// The newest report in the guild's recent uploads that came from the registered uploader,
@@ -219,11 +235,13 @@ impl WarcraftLogs {
             let token = self.access_token().await?;
             let response = self
                 .http
-                .post(API_URL)
+                .post(&self.api_url)
+                .timeout(self.timeout)
                 .bearer_auth(&token)
                 .json(&json!({ "query": query, "variables": variables }))
                 .send()
-                .await?;
+                .await
+                .map_err(request_error)?;
 
             if response.status() == StatusCode::UNAUTHORIZED && attempt == 0 {
                 *self.token.lock().await = None;
@@ -234,7 +252,7 @@ impl WarcraftLogs {
                 let body = response.text().await.unwrap_or_default();
                 return Err(format!("Warcraft Logs API returned {status}: {body}").into());
             }
-            return parse_response(response.json().await?);
+            return parse_response(response.json().await.map_err(request_error)?);
         }
         Err("Warcraft Logs turned down a freshly issued access token.".into())
     }
@@ -249,21 +267,32 @@ impl WarcraftLogs {
 
         let response = self
             .http
-            .post(TOKEN_URL)
+            .post(&self.token_url)
+            .timeout(self.timeout)
             .basic_auth(&self.client_id, Some(&self.client_secret))
             .form(&[("grant_type", "client_credentials")])
             .send()
-            .await?;
+            .await
+            .map_err(request_error)?;
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             return Err(format!("Warcraft Logs refused the client credentials ({status}): {body}").into());
         }
 
-        let issued: TokenResponse = response.json().await?;
+        let issued: TokenResponse = response.json().await.map_err(request_error)?;
         let value = issued.access_token.clone();
         *held = Some(AccessToken { value: issued.access_token, expires_at: Instant::now() + Duration::from_secs(issued.expires_in) });
         Ok(value)
+    }
+}
+
+/// A failed request as an error an officer can act on: a timeout says so, with no URL in it.
+fn request_error(error: reqwest::Error) -> Error {
+    if error.is_timeout() {
+        "Warcraft Logs took too long to answer. Try again in a moment.".into()
+    } else {
+        error.into()
     }
 }
 
@@ -344,7 +373,7 @@ struct ReportData {
     report: Option<Report>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Report {
     code: String,
@@ -1140,6 +1169,57 @@ mod tests {
 
         let footer = value["footer"]["text"].as_str().unwrap();
         assert!(footer.starts_with("Every use in every Mythic pull counts") && footer.ends_with("2 ignored players are left out."), "{footer}");
+    }
+
+    /// A stand-in for Warcraft Logs on this machine, returning its address: it answers a token
+    /// request, and never answers anything else.
+    async fn silent_api() -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut request = vec![0u8; 4096];
+                    let read = stream.read(&mut request).await.unwrap_or(0);
+                    if request[..read].starts_with(b"POST /oauth") {
+                        let body = r#"{"access_token":"test","expires_in":3600}"#;
+                        let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                        let _ = stream.write_all(response.as_bytes()).await;
+                    } else {
+                        // Hold the connection open, saying nothing, until the client gives up.
+                        std::future::pending::<()>().await;
+                    }
+                });
+            }
+        });
+        format!("http://{address}")
+    }
+
+    fn client_for(base: &str) -> WarcraftLogs {
+        let mut client = WarcraftLogs::new(reqwest::Client::new(), "id".to_string(), "secret".to_string());
+        client.token_url = format!("{base}/oauth/token");
+        client.api_url = format!("{base}/api/v2/client");
+        client.timeout = Duration::from_millis(300);
+        client
+    }
+
+    #[tokio::test]
+    async fn a_hung_warcraft_logs_is_given_up_on_with_a_clear_message() {
+        let base = silent_api().await;
+
+        // The token comes back fine, then the API itself never answers.
+        let started = Instant::now();
+        let error = client_for(&base).report("ABC").await.unwrap_err().to_string();
+        assert_eq!(error, "Warcraft Logs took too long to answer. Try again in a moment.");
+        assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
+
+        // A token request that hangs gives the same message, rather than waiting for ever.
+        let mut stuck = client_for(&base);
+        stuck.token_url = format!("{base}/api/v2/client");
+        let error = stuck.report("ABC").await.unwrap_err().to_string();
+        assert_eq!(error, "Warcraft Logs took too long to answer. Try again in a moment.");
     }
 
     #[test]
