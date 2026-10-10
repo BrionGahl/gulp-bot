@@ -1,6 +1,7 @@
 services:
   gulp-bot:
-    image: localhost/gulp-bot:latest
+    # IMAGE_TAG picks which loaded version runs; set it to an older tag to roll back.
+    image: localhost/gulp-bot:${IMAGE_TAG:-latest}
     container_name: gulp-bot
     restart: unless-stopped
     pull_policy: never

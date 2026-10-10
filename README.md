@@ -22,25 +22,31 @@ a tarball, and loaded onto the host.
 
 ### Building the image
 
-The `Dockerfile` is a multi-stage Rust build that uses `cargo-chef` for dependency caching. Either
-`docker` or `podman` works:
+The `Dockerfile` is a multi-stage Rust build that uses `cargo-chef` for dependency caching.
+`build-image.sh` builds it with `podman` (or `docker` if podman isn't installed) and saves it to a
+tarball:
 
 ```shell
-podman build -t gulp-bot:latest .
-podman save -o gulp-bot.tar gulp-bot:latest
+./build-image.sh
 ```
+
+Every build is tagged twice: with a version derived from the current commit, in the same form as the
+[release tags](#release-tags) (e.g. `v2026.10.09-c97a8ec`, with `-dirty` appended if there are
+uncommitted changes), and with `latest`. The tarball is named `gulp-bot-<version>.tar` and contains
+both tags.
 
 ### Loading it onto the host
 
 Copy the tarball to the Docker host and load it, or upload it through Portainer (`Images` → `Import`):
 
 ```shell
-scp gulp-bot.tar <user>@<host>:/tmp/
-ssh <user>@<host> docker load -i /tmp/gulp-bot.tar
+scp gulp-bot-<version>.tar <user>@<host>:/tmp/
+ssh <user>@<host> docker load -i /tmp/gulp-bot-<version>.tar
 ```
 
-An image built with podman is loaded as `localhost/gulp-bot:latest`, which is the name
-`docker-compose.yml` expects. If it was built with docker instead, the name is `gulp-bot:latest` and
+Loading moves `latest` to the new build and leaves every previously loaded version on the host under
+its own tag. An image built with podman is loaded as `localhost/gulp-bot:<tag>`, which is the name
+`docker-compose.yml` expects. If it was built with docker instead, the name is `gulp-bot:<tag>` and
 the `image:` line needs to match.
 
 ### Running it
@@ -56,10 +62,18 @@ in the `db-data` volume; the bot creates and migrates its tables on startup (`mi
 instance should run per Discord token: every event would otherwise be handled twice, and the bot
 caches settings in memory on the assumption that it is the only writer.
 
-### Updating
+### Updating and rolling back
 
-Rebuild the image, save and load it again as above, then redeploy the stack so the container is
-recreated from the new image.
+Build and load a new image as above, then redeploy the stack so the container is recreated from it.
+
+The stack runs `latest` unless `IMAGE_TAG` is set in its environment variables. To roll back, set
+`IMAGE_TAG` to an older version that is still loaded on the host (e.g. `v2026.10.09-c97a8ec`) and
+redeploy; clear it to return to `latest`. Old versions take up disk space until removed with
+`docker image rm`.
+
+Database migrations only go forward. An image older than a migration that has already been applied
+will refuse to start, so rolling back across a schema change also means restoring a database backup
+from before it.
 
 ### Release tags
 
