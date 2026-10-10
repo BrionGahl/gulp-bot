@@ -28,6 +28,18 @@ pub struct GuildSettings {
     pub raid_notes_cron: Option<Schedule>,
     /// Raid attendance tracking; `None` means it's off for this guild.
     pub raid_voice: Option<RaidVoice>,
+    /// The channel Warcraft Logs results are posted in, and the only one `/wcl` works in.
+    pub wcl_channel_id: Option<ChannelId>,
+    /// Where this guild's Warcraft Logs reports are found.
+    pub wcl_source: Option<WclSource>,
+}
+
+/// Where a guild's Warcraft Logs reports come from: the Warcraft Logs guild they are uploaded to,
+/// and the user ID of the one account whose uploads count. See `warcraftlogs.rs`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WclSource {
+    pub guild_id: u32,
+    pub uploader_id: u32,
 }
 
 /// A guild's raid voice channel and when to record who is in it. See `raid_attendance.rs`.
@@ -53,6 +65,8 @@ pub enum Setting {
     PersonalOfficerCategory,
     #[name = "Raid notes channel"]
     RaidNotesChannel,
+    #[name = "Warcraft Logs channel"]
+    WclChannel,
 }
 
 impl Setting {
@@ -63,6 +77,7 @@ impl Setting {
             Setting::TrialRole => "trial_role_id",
             Setting::PersonalOfficerCategory => "personal_officer_category_id",
             Setting::RaidNotesChannel => "raid_notes_channel_id",
+            Setting::WclChannel => "wcl_channel_id",
         }
     }
 }
@@ -86,7 +101,8 @@ impl GuildSettingsStore {
             "SELECT guild_id, mod_role_id, raider_role_id, trial_role_id, personal_officer_category_id, \
              raid_notes_channel_id, \
              bart_token, wowutils_token, wowutils_group_id, raid_notes_cron, \
-             raid_voice_channel_id, raid_voice_start_cron, raid_voice_end_cron FROM guild_settings",
+             raid_voice_channel_id, raid_voice_start_cron, raid_voice_end_cron, \
+             wcl_channel_id, wcl_guild_id, wcl_uploader_id FROM guild_settings",
         )
         .fetch_all(&pool)
         .await?;
@@ -123,6 +139,14 @@ impl GuildSettingsStore {
                 _ => None,
             };
 
+            let wcl_id = |column: &str| -> Result<Option<u32>, sqlx::Error> {
+                Ok(row.try_get::<Option<i64>, _>(column)?.and_then(|id| u32::try_from(id).ok()))
+            };
+            let wcl_source = match (wcl_id("wcl_guild_id")?, wcl_id("wcl_uploader_id")?) {
+                (Some(guild_id), Some(uploader_id)) => Some(WclSource { guild_id, uploader_id }),
+                _ => None,
+            };
+
             cache.insert(guild_id, GuildSettings {
                 mod_role_id: id("mod_role_id")?.map(RoleId::new),
                 raider_role_id: id("raider_role_id")?.map(RoleId::new),
@@ -136,6 +160,8 @@ impl GuildSettingsStore {
                 wowutils_group_id: row.try_get("wowutils_group_id")?,
                 raid_notes_cron,
                 raid_voice,
+                wcl_channel_id: id("wcl_channel_id")?.map(ChannelId::new),
+                wcl_source,
             });
         }
 
@@ -194,7 +220,25 @@ impl GuildSettingsStore {
             Setting::TrialRole => settings.trial_role_id = value.map(RoleId::new),
             Setting::PersonalOfficerCategory => settings.personal_officer_category_id = value.map(ChannelId::new),
             Setting::RaidNotesChannel => settings.raid_notes_channel_id = value.map(ChannelId::new),
+            Setting::WclChannel => settings.wcl_channel_id = value.map(ChannelId::new),
         }
+        Ok(())
+    }
+
+    /// Registers where this guild's Warcraft Logs reports are found, or clears it when `None`.
+    pub async fn set_wcl_source(&self, guild_id: GuildId, source: Option<WclSource>) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO guild_settings (guild_id, wcl_guild_id, wcl_uploader_id) VALUES ($1, $2, $3) \
+             ON CONFLICT (guild_id) DO UPDATE SET wcl_guild_id = EXCLUDED.wcl_guild_id, \
+             wcl_uploader_id = EXCLUDED.wcl_uploader_id, updated_at = now()",
+        )
+        .bind(guild_id.get() as i64)
+        .bind(source.as_ref().map(|source| i64::from(source.guild_id)))
+        .bind(source.as_ref().map(|source| i64::from(source.uploader_id)))
+        .execute(&self.pool)
+        .await?;
+
+        self.cache.write().unwrap().entry(guild_id).or_default().wcl_source = source;
         Ok(())
     }
 
@@ -361,6 +405,11 @@ mod tests {
         store.set_bart_token(guild_b, Some("bart-b")).await.unwrap();
         store.set_wowutils(guild_b, Some(("wow-b", "group-b"))).await.unwrap();
         store.set_wowutils(guild_b, None).await.unwrap();
+        let wcl_source = WclSource { guild_id: 811636, uploader_id: 240984 };
+        store.set(guild_a, Setting::WclChannel, Some(55)).await.unwrap();
+        store.set_wcl_source(guild_a, Some(wcl_source.clone())).await.unwrap();
+        store.set_wcl_source(guild_b, Some(wcl_source.clone())).await.unwrap();
+        store.set_wcl_source(guild_b, None).await.unwrap();
         store.add_clips_channel(guild_a, ChannelId::new(5)).await.unwrap();
         store.add_clips_channel(guild_a, ChannelId::new(5)).await.unwrap();
         store.add_clips_channel(guild_b, ChannelId::new(6)).await.unwrap();
@@ -384,6 +433,8 @@ mod tests {
             assert_eq!(a.wowutils_group_id.as_deref(), Some("group-a"));
             assert_eq!(a.raid_notes_cron.as_ref(), Some(&tuesdays));
             assert_eq!(a.raid_voice.as_ref(), Some(&raid_voice));
+            assert_eq!(a.wcl_channel_id, Some(ChannelId::new(55)));
+            assert_eq!(a.wcl_source.as_ref(), Some(&wcl_source));
 
             let b = store.get(guild_b);
             assert_eq!(b.mod_role_id, None);
@@ -395,6 +446,8 @@ mod tests {
             assert_eq!(b.wowutils_group_id, None);
             assert_eq!(b.raid_notes_cron, None);
             assert_eq!(b.raid_voice, None);
+            assert_eq!(b.wcl_channel_id, None);
+            assert_eq!(b.wcl_source, None);
         }
     }
 }
