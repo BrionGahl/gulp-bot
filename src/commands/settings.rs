@@ -6,6 +6,7 @@ use crate::personal_officer_channels;
 use crate::raid_notes;
 use crate::schedules;
 use crate::types::bot::{Context, Error};
+use crate::wcl_consumables::{self, AddOutcome as ConsumableOutcome, Kind};
 use crate::wcl_ignored_players::{self, AddOutcome as IgnoreOutcome};
 use crate::wcl_mechanics::{self, AddOutcome};
 
@@ -55,6 +56,9 @@ const MAX_LIST_CHARS: usize = 4000;
         "wcl_ignore_add",
         "wcl_ignore_remove",
         "wcl_ignore_list",
+        "wcl_consumable_add",
+        "wcl_consumable_remove",
+        "wcl_consumable_list",
         "clear",
     ),
     subcommand_required,
@@ -124,6 +128,18 @@ async fn show(ctx: Context<'_>) -> Result<(), Error> {
         count => format!("{count} players"),
     };
 
+    // At most `MAX_PER_KIND` IDs of each kind, so this is always short.
+    let registered_consumables = wcl_consumables::list(&ctx.data().db, guild_id).await?;
+    let wcl_consumables = Kind::ALL
+        .into_iter()
+        .filter_map(|kind| {
+            let ids = wcl_consumables::ids(&registered_consumables, kind);
+            (!ids.is_empty()).then(|| format!("{}: {}", kind.plural(), ids.iter().map(u32::to_string).collect::<Vec<_>>().join(", ")))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let wcl_consumables = if wcl_consumables.is_empty() { "None".to_string() } else { wcl_consumables };
+
     let embed = crate::helper::create_base_embed(&ctx)
         .title("Server Settings")
         .field(Setting::ModRole.name(), role(settings.mod_role_id), true)
@@ -141,7 +157,8 @@ async fn show(ctx: Context<'_>) -> Result<(), Error> {
         .field(Setting::WclChannel.name(), channel(settings.wcl_channel_id), true)
         .field(ClearTarget::WclSource.name(), wcl_source, true)
         .field("Warcraft Logs abilities", wcl_abilities, false)
-        .field("Warcraft Logs ignored players", wcl_ignored, true);
+        .field("Warcraft Logs ignored players", wcl_ignored, true)
+        .field("Warcraft Logs consumables", wcl_consumables, true);
 
     ctx.send(CreateReply::default().embed(embed)).await?;
     Ok(())
@@ -575,6 +592,71 @@ async fn wcl_ignore_list(ctx: Context<'_>) -> Result<(), Error> {
         return reply(ctx, "No players are ignored. Add one with `/settings wcl_ignore_add`.".to_string()).await;
     }
     reply(ctx, format!("Ignored players ({} of {}): {}", ignored.len(), wcl_ignored_players::MAX_IGNORED, ignored.join(", "))).await
+}
+
+/// Count an ability as a healthstone or a health potion in the Warcraft Logs consumables overview
+///
+/// Give the ability's ID as Warcraft Logs logs it: click it in a report's Casts tab. A kind can have
+/// several (a plain and a demonic healthstone, two potions), and only the IDs you add are counted.
+#[poise::command(prefix_command, slash_command, ephemeral)]
+async fn wcl_consumable_add(
+    ctx: Context<'_>,
+    #[description = "Healthstone or health potion"] kind: Kind,
+    #[description = "The ability's ID as Warcraft Logs logs it"] ability_id: u32,
+) -> Result<(), Error> {
+    let guild_id = require_guild(ctx)?;
+
+    // The API's IDs are signed 32-bit integers, and zero is never one.
+    if !(1..=i32::MAX as u32).contains(&ability_id) {
+        return reply(ctx, "That isn't a valid ability ID. It's a positive whole number.".to_string()).await;
+    }
+
+    let message = match wcl_consumables::add(&ctx.data().db, guild_id, kind, ability_id).await? {
+        ConsumableOutcome::Added => format!("Ability {ability_id} now counts as a **{}**.", kind.name().to_lowercase()),
+        ConsumableOutcome::AlreadyRegistered => format!("Ability {ability_id} already counts as a **{}**.", kind.name().to_lowercase()),
+        ConsumableOutcome::OtherKind(other) => format!(
+            "Ability {ability_id} is registered as a **{}**. Remove it with `/settings wcl_consumable_remove` first.",
+            other.name().to_lowercase()
+        ),
+        ConsumableOutcome::Full => format!(
+            "This server already has {} abilities registered as a {}. Remove one with `/settings wcl_consumable_remove` first.",
+            wcl_consumables::MAX_PER_KIND,
+            kind.name().to_lowercase()
+        ),
+    };
+    reply(ctx, message).await
+}
+
+/// Stop counting an ability in the Warcraft Logs consumables overview
+#[poise::command(prefix_command, slash_command, ephemeral)]
+async fn wcl_consumable_remove(ctx: Context<'_>, #[description = "The ability's ID, as in wcl_consumable_list"] ability_id: u32) -> Result<(), Error> {
+    let guild_id = require_guild(ctx)?;
+
+    match wcl_consumables::remove(&ctx.data().db, guild_id, ability_id).await? {
+        Some(kind) => reply(ctx, format!("Ability {ability_id} no longer counts as a **{}**.", kind.name().to_lowercase())).await,
+        None => reply(ctx, format!("Ability {ability_id} isn't registered. See `/settings wcl_consumable_list`.")).await,
+    }
+}
+
+/// List the abilities counted as healthstones and health potions
+#[poise::command(prefix_command, slash_command, ephemeral)]
+async fn wcl_consumable_list(ctx: Context<'_>) -> Result<(), Error> {
+    let guild_id = require_guild(ctx)?;
+
+    let registered = wcl_consumables::list(&ctx.data().db, guild_id).await?;
+    if registered.is_empty() {
+        return reply(ctx, "No abilities are registered. Add one with `/settings wcl_consumable_add`.".to_string()).await;
+    }
+
+    let lines: Vec<String> = Kind::ALL
+        .into_iter()
+        .map(|kind| {
+            let ids = wcl_consumables::ids(&registered, kind);
+            let ids = if ids.is_empty() { "none".to_string() } else { ids.iter().map(u32::to_string).collect::<Vec<_>>().join(", ") };
+            format!("**{}**: {ids}", kind.plural())
+        })
+        .collect();
+    reply(ctx, lines.join("\n")).await
 }
 
 /// Everything `/settings clear` can clear: each ID setting, plus the credentials.

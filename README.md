@@ -12,7 +12,7 @@ The bot is written with the `poise` crate and uses a few others for requests / l
 
 - **WoW Guild** — Bart Timeline Reminders addon info, class Discord links, and droptimizer report submission via WowUtils
 - **Clips channels** — deletes any message posted in a configured channel that doesn't contain a video (uploaded video file or an unfurled video link embed)
-- **Warcraft Logs** — officers get an overview of a raid night's report (Mythic pulls, who died the most, who died first, damage taken from tracked abilities) with `/wcl report` and `/wcl damage_taken`, posted in a registered officer channel
+- **Warcraft Logs** — officers get an overview of a raid night's report (Mythic pulls, who died the most, who died first, damage taken from tracked abilities, healthstones and health potions used) with `/wcl report`, `/wcl damage_taken` and `/wcl consumables`, posted in a registered officer channel
 - **Personal officer channels** — when a member is given the trial or raider role, creates a private text channel for them under a configured category, visible only to them and the officer (moderator) role
 
 ## Deployment
@@ -135,6 +135,7 @@ always restricted to administrators:
 | `/settings wcl_source <guild> <uploader>` | Warcraft Logs guild ID the reports are uploaded to, and the user ID of the account that uploads them |
 | `/settings wcl_mechanic_add <name> <ability_id>` / `wcl_mechanic_remove <name>` / `wcl_mechanic_list` | The abilities whose damage taken the Warcraft Logs overview shows (see [Warcraft Logs](#warcraft-logs)) |
 | `/settings wcl_ignore_add <name>` / `wcl_ignore_remove <name>` / `wcl_ignore_list` | Players left out of the Warcraft Logs overview |
+| `/settings wcl_consumable_add <kind> <ability_id>` / `wcl_consumable_remove <ability_id>` / `wcl_consumable_list` | The abilities counted as healthstones and health potions by `/wcl consumables` |
 | `/settings clear <setting>` | Clears one of the settings above (clips channels and replay users have their own `_remove` commands) |
 
 Before saving, the bot checks with Discord that the role, channel or member actually belongs to the
@@ -281,6 +282,7 @@ channel registered with `/settings wcl_channel`; anywhere else they reply, priva
 | Command | Does |
 | --- | --- |
 | `/wcl report [report]` | Posts the overview of a report. `report` is a report link or code; without it, the newest report from the registered uploader is used |
+| `/wcl consumables [boss] [report]` | Posts how many healthstones and health potions were used, and by whom. `boss` narrows it to the pulls of the boss whose name contains it |
 | `/wcl damage_taken <ability> [boss] [report]` | Posts who took damage from one ability. `ability` is a tracked ability (autocompleted) or any spell ID; `boss` narrows it to the pulls of the boss whose name contains it |
 
 The overview has the report's Mythic boss pulls (kills and wipes for each boss), who died the most,
@@ -315,6 +317,19 @@ ignore 50 players.
 | `/settings wcl_ignore_remove <name>` | Shows the player again (the name autocompletes) |
 | `/settings wcl_ignore_list` | Lists the ignored players |
 
+`/wcl consumables` counts how many **healthstones and health potions** the raid used over the whole
+night, and who used the most of each. Unlike deaths and damage taken it counts **every use in every
+pull**, including once the raid had started wiping, because it is about what the raid consumed. As with
+tracked abilities, only the IDs you register count, as Warcraft Logs logs them (click the ability in a
+report's Casts tab). A kind can have several: a plain and a demonic healthstone, two potions, up to 6 of
+each. Ignored players are left out here too, with their uses.
+
+| Command | Does |
+| --- | --- |
+| `/settings wcl_consumable_add <kind> <ability_id>` | Counts an ability as a healthstone or a health potion |
+| `/settings wcl_consumable_remove <ability_id>` | Stops counting an ability |
+| `/settings wcl_consumable_list` | Lists the registered IDs for each kind |
+
 Setting it up:
 
 1. Create an API client at warcraftlogs.com (Profile, then Manage Your Clients) and give its ID and
@@ -329,4 +344,4 @@ Setting it up:
    the guild's 25 newest.
 
 A report that is still being uploaded is shown without its unfinished pulls. See `src/warcraftlogs.rs`,
-`src/wcl_mechanics.rs`, `src/wcl_ignored_players.rs` and `src/commands/wcl.rs`.
+`src/wcl_mechanics.rs`, `src/wcl_ignored_players.rs`, `src/wcl_consumables.rs` and `src/commands/wcl.rs`.

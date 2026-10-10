@@ -12,6 +12,7 @@ use tokio::sync::Mutex;
 
 use crate::guild_settings::WclSource;
 use crate::types::bot::Error;
+use crate::wcl_consumables::{Kind, Registered};
 use crate::wcl_mechanics::TrackedAbility;
 
 const TOKEN_URL: &str = "https://www.warcraftlogs.com/oauth/token";
@@ -55,6 +56,7 @@ const MOST_DEATHS_SHOWN: usize = 10;
 const FIRST_DEATHS_SHOWN: usize = 5;
 const DAMAGE_SHOWN_IN_OVERVIEW: usize = 5;
 const DAMAGE_SHOWN: usize = 15;
+const CONSUMABLE_PLAYERS_SHOWN: usize = 10;
 
 /// Client for the Warcraft Logs v2 API, which is public-data only: it authenticates with the
 /// bot's own client credentials (no user authorization), so it can read public and unlisted
@@ -129,6 +131,22 @@ impl WarcraftLogs {
         Ok(DamageReport::build(&report, &fights, damage, boss, ignored.len()))
     }
 
+    /// How many healthstones and health potions were used, over the pulls of the boss whose name
+    /// contains `boss` or of every Mythic boss when there is none. Every use counts, not only those
+    /// before the cutoff: this is about how much the raid consumed. `registered` says which abilities
+    /// are which kind. Players named in `ignored` are left out, as in `overview`.
+    pub async fn consumables(&self, code: &str, boss: Option<&str>, registered: &[Registered], ignored: &[String]) -> Result<ConsumablesReport, Error> {
+        let report = self.report(code).await?;
+        let fights = select_fights(&report.fights, boss)?;
+        let fight_ids: Vec<u32> = fights.iter().map(|fight| fight.id).collect();
+
+        let ability_ids: Vec<u32> = registered.iter().map(|entry| entry.ability_id).collect();
+        let totals = self.ability_totals(code, &fight_ids, "Casts", &ability_ids, false, &ignored_set(ignored)).await?;
+
+        info!("Fetched consumables in Warcraft Logs report {code}: {} pulls, {} registered abilities", fight_ids.len(), registered.len());
+        Ok(ConsumablesReport::build(&report, &fights, boss, registered, totals, ignored.len()))
+    }
+
     /// A report with its Mythic boss fights.
     async fn report(&self, code: &str) -> Result<Report, Error> {
         let response: ReportQuery = self.query(&report_query(), json!({ "code": code })).await?;
@@ -148,8 +166,7 @@ impl WarcraftLogs {
     }
 
     /// The damage each player took from each of `abilities` in `fight_ids`, up to the cutoff in
-    /// every pull, in the order of `abilities`. One request covers all the abilities (a table each,
-    /// under an alias); pulls beyond `FIGHTS_PER_QUERY` take further requests, whose totals are added.
+    /// every pull, in the order of `abilities`.
     async fn damage_taken(
         &self,
         code: &str,
@@ -157,23 +174,42 @@ impl WarcraftLogs {
         abilities: &[TrackedAbility],
         ignored: &HashSet<String>,
     ) -> Result<Vec<AbilityDamage>, Error> {
-        if abilities.is_empty() {
+        let ability_ids: Vec<u32> = abilities.iter().map(|ability| ability.ability_id).collect();
+        let totals = self.ability_totals(code, fight_ids, "DamageTaken", &ability_ids, true, ignored).await?;
+
+        Ok(abilities.iter().zip(totals).map(|(ability, players)| AbilityDamage::build(ability, players)).collect())
+    }
+
+    /// For each of `ability_ids`, in order, what each player has in the `data_type` table (damage
+    /// taken, or casts) over `fight_ids`: `cut_off` limits it to the first deaths in each pull, as for
+    /// damage taken. One request covers all the abilities (a table each, under an alias); pulls
+    /// beyond `FIGHTS_PER_QUERY` take further requests, whose totals are added.
+    async fn ability_totals(
+        &self,
+        code: &str,
+        fight_ids: &[u32],
+        data_type: &str,
+        ability_ids: &[u32],
+        cut_off: bool,
+        ignored: &HashSet<String>,
+    ) -> Result<Vec<HashMap<String, (String, u64)>>, Error> {
+        if ability_ids.is_empty() {
             return Ok(Vec::new());
         }
 
-        let query = damage_query(abilities);
-        let mut totals: Vec<HashMap<String, (String, u64)>> = vec![HashMap::new(); abilities.len()];
+        let query = ability_tables_query(data_type, ability_ids, cut_off);
+        let mut totals: Vec<HashMap<String, (String, u64)>> = vec![HashMap::new(); ability_ids.len()];
         for chunk in fight_ids.chunks(FIGHTS_PER_QUERY) {
-            let response: DamageQuery = self.query(&query, json!({ "code": code, "fightIDs": chunk })).await?;
+            let response: TablesQuery = self.query(&query, json!({ "code": code, "fightIDs": chunk })).await?;
             let tables = response.report_data.report.ok_or("That report doesn't exist, or isn't public.")?;
             for (index, players) in totals.iter_mut().enumerate() {
                 if let Some(table) = tables.get(&alias(index)) {
-                    add_damage(players, &table.data.entries, ignored);
+                    add_totals(players, &table.data.entries, ignored);
                 }
             }
         }
 
-        Ok(abilities.iter().zip(totals).map(|(ability, players)| AbilityDamage::build(ability, players)).collect())
+        Ok(totals)
     }
 
     /// Sends one GraphQL query and returns its data, or the API's own error messages.
@@ -263,19 +299,15 @@ fn alias(index: usize) -> String {
     format!("a{index}")
 }
 
-/// One damage taken table per ability, each filtered to that ability and so listing the players who
-/// took it. (Not `viewBy: Ability`, whose per-ability player lists hold only the top five.)
-fn damage_query(abilities: &[TrackedAbility]) -> String {
-    let tables: String = abilities
+/// One table of `data_type` per ability, each filtered to that ability and so listing the players
+/// who have it (took the damage, or cast it). `cut_off` asks for the cutoff to be applied. (Not
+/// `viewBy: Ability`, whose per-ability player lists hold only the top five.)
+fn ability_tables_query(data_type: &str, ability_ids: &[u32], cut_off: bool) -> String {
+    let cut = if cut_off { format!(", wipeCutoff: {WIPE_CUTOFF}") } else { String::new() };
+    let tables: String = ability_ids
         .iter()
         .enumerate()
-        .map(|(index, ability)| {
-            format!(
-                " {}: table(dataType: DamageTaken, fightIDs: $fightIDs, abilityID: {}, wipeCutoff: {WIPE_CUTOFF})",
-                alias(index),
-                ability.ability_id
-            )
-        })
+        .map(|(index, ability_id)| format!(" {}: table(dataType: {data_type}, fightIDs: $fightIDs, abilityID: {ability_id}{cut})", alias(index)))
         .collect();
 
     format!("query($code: String!, $fightIDs: [Int]) {{ reportData {{ report(code: $code) {{{tables} }} }} }}")
@@ -442,19 +474,19 @@ struct DeathEntry {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DamageQuery {
-    report_data: DamageReportData,
+struct TablesQuery {
+    report_data: TablesReportData,
 }
 
-/// The report's tables, by the aliases `damage_query` gave them.
+/// The report's tables, by the aliases `ability_tables_query` gave them.
 #[derive(Deserialize)]
-struct DamageReportData {
-    report: Option<HashMap<String, Table<DamageEntry>>>,
+struct TablesReportData {
+    report: Option<HashMap<String, Table<PlayerEntry>>>,
 }
 
-/// One player's damage taken from one ability.
+/// One player's total for one ability: damage taken from it, or how often they cast it.
 #[derive(Deserialize)]
-struct DamageEntry {
+struct PlayerEntry {
     name: String,
     #[serde(rename = "type", default)]
     class: String,
@@ -470,9 +502,9 @@ fn is_ignored(ignored: &HashSet<String>, name: &str) -> bool {
     ignored.contains(&name.to_lowercase())
 }
 
-/// Adds `entries`, except those of ignored players, to the running damage totals per player. Pulls are queried in chunks, and a
-/// player's damage over the night is the sum over the chunks.
-fn add_damage(players: &mut HashMap<String, (String, u64)>, entries: &[DamageEntry], ignored: &HashSet<String>) {
+/// Adds `entries`, except those of ignored players, to the running totals per player. Pulls are
+/// queried in chunks, and a player's total over the night is the sum over the chunks.
+fn add_totals(players: &mut HashMap<String, (String, u64)>, entries: &[PlayerEntry], ignored: &HashSet<String>) {
     for entry in entries.iter().filter(|entry| !is_ignored(ignored, &entry.name)) {
         let player = players.entry(entry.name.clone()).or_insert_with(|| (entry.class.clone(), 0));
         player.1 += entry.total.max(0.0) as u64;
@@ -512,7 +544,7 @@ struct PlayerCount {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct PlayerDamage {
+struct PlayerTotal {
     name: String,
     class: String,
     total: u64,
@@ -524,16 +556,21 @@ struct AbilityDamage {
     name: String,
     total: u64,
     /// Most damage first (ties in name order).
-    players: Vec<PlayerDamage>,
+    players: Vec<PlayerTotal>,
 }
 
 impl AbilityDamage {
     fn build(ability: &TrackedAbility, players: HashMap<String, (String, u64)>) -> Self {
-        let mut players: Vec<PlayerDamage> = players.into_iter().map(|(name, (class, total))| PlayerDamage { name, class, total }).collect();
-        players.sort_by(|a, b| b.total.cmp(&a.total).then_with(|| a.name.cmp(&b.name)));
-
+        let players = ranked_players(players);
         Self { name: ability.name.clone(), total: players.iter().map(|player| player.total).sum(), players }
     }
+}
+
+/// Players with their totals, most first (ties in name order).
+fn ranked_players(players: HashMap<String, (String, u64)>) -> Vec<PlayerTotal> {
+    let mut ranking: Vec<PlayerTotal> = players.into_iter().map(|(name, (class, total))| PlayerTotal { name, class, total }).collect();
+    ranking.sort_by(|a, b| b.total.cmp(&a.total).then_with(|| a.name.cmp(&b.name)));
+    ranking
 }
 
 impl Overview {
@@ -583,21 +620,93 @@ pub struct DamageReport {
 
 impl DamageReport {
     fn build(report: &Report, fights: &[&Fight], ability: AbilityDamage, boss: Option<&str>, ignored: usize) -> Self {
-        let scope = if boss.is_some_and(|boss| !boss.trim().is_empty()) {
-            let mut names: Vec<&str> = fights.iter().map(|fight| fight.name.as_str()).collect();
-            names.dedup();
-            names.join(", ")
-        } else {
-            "All Mythic bosses".to_string()
-        };
+        Self {
+            code: report.code.clone(),
+            title: report.title.clone(),
+            started_at: (report.start_time / 1000.0) as i64,
+            scope: scope_text(fights, boss),
+            pulls: fights.len(),
+            ability,
+            ignored,
+        }
+    }
+}
+
+/// Which bosses a set of pulls is of, for an embed: the boss names when the pulls were narrowed to a
+/// boss, otherwise all of them.
+fn scope_text(fights: &[&Fight], boss: Option<&str>) -> String {
+    if boss.is_some_and(|boss| !boss.trim().is_empty()) {
+        let mut names: Vec<&str> = fights.iter().map(|fight| fight.name.as_str()).collect();
+        names.dedup();
+        names.join(", ")
+    } else {
+        "All Mythic bosses".to_string()
+    }
+}
+
+/// What `/wcl consumables` shows: how many healthstones and health potions were used.
+#[derive(Debug)]
+pub struct ConsumablesReport {
+    code: String,
+    title: String,
+    /// Unix timestamp, in seconds, of the start of the report.
+    started_at: i64,
+    /// Which bosses the pulls are of.
+    scope: String,
+    pulls: usize,
+    /// One entry for each kind, healthstones first.
+    uses: Vec<ConsumableUse>,
+    /// How many players were left out, for the footer.
+    ignored: usize,
+}
+
+/// The uses of one kind of consumable: in all, and by each player who used any.
+#[derive(Debug, PartialEq, Eq)]
+struct ConsumableUse {
+    kind: Kind,
+    /// Whether any ability is registered for this kind; if not, there is nothing to count.
+    registered: bool,
+    total: u64,
+    /// Most uses first (ties in name order).
+    players: Vec<PlayerTotal>,
+}
+
+impl ConsumablesReport {
+    /// `totals` holds each registered ability's players, in the order of `registered`; the
+    /// abilities of one kind are added together (a plain and a demonic healthstone are both
+    /// healthstones).
+    fn build(
+        report: &Report,
+        fights: &[&Fight],
+        boss: Option<&str>,
+        registered: &[Registered],
+        totals: Vec<HashMap<String, (String, u64)>>,
+        ignored: usize,
+    ) -> Self {
+        let uses = Kind::ALL
+            .into_iter()
+            .map(|kind| {
+                let mut players: HashMap<String, (String, u64)> = HashMap::new();
+                let mut any_registered = false;
+                for (_, per_ability) in registered.iter().zip(&totals).filter(|(entry, _)| entry.kind == kind) {
+                    any_registered = true;
+                    for (name, (class, total)) in per_ability {
+                        players.entry(name.clone()).or_insert_with(|| (class.clone(), 0)).1 += total;
+                    }
+                }
+
+                let players = ranked_players(players);
+                ConsumableUse { kind, registered: any_registered, total: players.iter().map(|player| player.total).sum(), players }
+            })
+            .collect();
 
         Self {
             code: report.code.clone(),
             title: report.title.clone(),
             started_at: (report.start_time / 1000.0) as i64,
-            scope,
+            scope: scope_text(fights, boss),
             pulls: fights.len(),
-            ability,
+            uses,
             ignored,
         }
     }
@@ -646,13 +755,23 @@ pub fn parse_report_code(input: &str) -> Option<String> {
     (!code.is_empty() && code.len() <= 32 && code.chars().all(|c| c.is_ascii_alphanumeric())).then(|| code.to_string())
 }
 
-/// The footer of both embeds: what is counted, and how many players are left out.
+/// The footer of the overview and damage embeds: what is counted, and how many players are left out.
 fn footer_text(ignored: usize) -> String {
-    let mut footer = format!("Only the first {WIPE_CUTOFF} deaths in each pull count, and damage taken up to the last of them.");
-    if ignored > 0 {
-        footer.push_str(&format!(" {} left out.", if ignored == 1 { "1 ignored player is".to_string() } else { format!("{ignored} ignored players are") }));
+    format!("Only the first {WIPE_CUTOFF} deaths in each pull count, and damage taken up to the last of them.{}", ignored_note(ignored))
+}
+
+/// The footer of the consumables embed.
+fn consumables_footer(ignored: usize) -> String {
+    format!("Every use in every Mythic pull counts, including once the raid had started wiping.{}", ignored_note(ignored))
+}
+
+/// A sentence for a footer saying how many players are left out, or nothing if none are.
+fn ignored_note(ignored: usize) -> String {
+    match ignored {
+        0 => String::new(),
+        1 => " 1 ignored player is left out.".to_string(),
+        count => format!(" {count} ignored players are left out."),
     }
-    footer
 }
 
 /// The characters of an embed that count towards Discord's limit on its total size.
@@ -756,6 +875,39 @@ pub fn damage_embed(report: &DamageReport) -> CreateEmbed {
     embed.field("Who took it", ranked_list(&damage_rows(ability), DAMAGE_SHOWN, MAX_FIELD_CHARS), false)
 }
 
+pub fn consumables_embed(report: &ConsumablesReport) -> CreateEmbed {
+    let embed = CreateEmbed::new()
+        .title("Consumables used")
+        .url(report_url(&report.code))
+        .colour(Colour::from(EMBED_COLOUR))
+        .footer(CreateEmbedFooter::new(consumables_footer(report.ignored)));
+
+    let report_title = truncate(&report.title, MAX_ABILITY_NAME_CHARS);
+    if report.pulls == 0 {
+        return embed.description(format!("<t:{}:F> · {report_title}\nNo Mythic boss pulls in this report.", report.started_at));
+    }
+
+    // Cut so that however many bosses the scope names, the description stays within Discord's limit.
+    let description = format!("<t:{}:F> · {report_title}\n**{}**, {}", report.started_at, report.scope, plural(report.pulls as u32, "pull"));
+    embed.description(truncate(&description, MAX_DESCRIPTION_CHARS)).fields(report.uses.iter().map(consumable_field))
+}
+
+/// The field for one kind of consumable: how many were used in all, and by whom. Always has a
+/// value, since Discord turns down an empty one.
+fn consumable_field(used: &ConsumableUse) -> (String, String, bool) {
+    if !used.registered {
+        return (used.kind.plural().to_string(), "None registered. Add one with `/settings wcl_consumable_add`.".to_string(), false);
+    }
+
+    let name = format!("{} — {} used", used.kind.plural(), used.total);
+    let value = if used.players.is_empty() {
+        "None used.".to_string()
+    } else {
+        ranked_list(&count_rows(&used.players), CONSUMABLE_PLAYERS_SHOWN, MAX_FIELD_CHARS)
+    };
+    (name, value, false)
+}
+
 fn overview_description(overview: &Overview) -> String {
     let pulls: u32 = overview.encounters.iter().map(|encounter| encounter.pulls).sum();
     if pulls == 0 {
@@ -785,6 +937,11 @@ struct Row {
 
 fn death_rows(players: &[PlayerCount]) -> Vec<Row> {
     players.iter().map(|player| Row { name: player.name.clone(), class: player.class.clone(), value: player.count.to_string() }).collect()
+}
+
+/// Each player's count, for a ranking of how many they used.
+fn count_rows(players: &[PlayerTotal]) -> Vec<Row> {
+    players.iter().map(|player| Row { name: player.name.clone(), class: player.class.clone(), value: player.total.to_string() }).collect()
 }
 
 /// Each player's damage and their share of everything taken from the ability.
@@ -891,17 +1048,98 @@ mod tests {
     }
 
     #[test]
-    fn the_damage_query_has_a_cut_off_table_for_each_ability() {
-        let query = damage_query(&[tracked(1282408, "Coalesced Venom"), tracked(1299838, "Venom Rupture")]);
-
+    fn the_ability_tables_query_has_a_table_for_each_ability_with_or_without_the_cutoff() {
+        // Damage taken is cut off at the second death in each pull.
         assert_eq!(
-            query,
+            ability_tables_query("DamageTaken", &[1282408, 1299838], true),
             "query($code: String!, $fightIDs: [Int]) { reportData { report(code: $code) { \
              a0: table(dataType: DamageTaken, fightIDs: $fightIDs, abilityID: 1282408, wipeCutoff: 2) \
              a1: table(dataType: DamageTaken, fightIDs: $fightIDs, abilityID: 1299838, wipeCutoff: 2) } } }"
         );
-        // Whatever an officer names an ability, it never reaches the query.
-        assert!(!damage_query(&[tracked(5, "x\") { evil }")]).contains("evil"));
+        // Consumables are every cast, so there is no cutoff. Only numbers go into the query.
+        assert_eq!(
+            ability_tables_query("Casts", &[6262], false),
+            "query($code: String!, $fightIDs: [Int]) { reportData { report(code: $code) { \
+             a0: table(dataType: Casts, fightIDs: $fightIDs, abilityID: 6262) } } }"
+        );
+    }
+
+    fn registered(kind: Kind, ability_id: u32) -> Registered {
+        Registered { kind, ability_id }
+    }
+
+    fn players_of(players: &[(&str, &str, u64)]) -> HashMap<String, (String, u64)> {
+        players.iter().map(|(name, class, total)| (name.to_string(), (class.to_string(), *total))).collect()
+    }
+
+    #[test]
+    fn the_abilities_of_one_kind_are_added_together() {
+        let night = report(&[("Zul'jan", false, false), ("Zul'jan", false, false)]);
+        let fights: Vec<&Fight> = night.fights.iter().collect();
+        let registered = [registered(Kind::Healthstone, 6262), registered(Kind::Healthstone, 452930), registered(Kind::HealthPotion, 1234768)];
+        // In the order of `registered`: the plain healthstone, the demonic one, then the potion.
+        let totals = vec![
+            players_of(&[("Saven", "Paladin", 24), ("Scrublock", "Warlock", 2)]),
+            players_of(&[("Scrublock", "Warlock", 35)]),
+            players_of(&[("Aâyo", "Hunter", 8)]),
+        ];
+
+        let report = ConsumablesReport::build(&night, &fights, None, &registered, totals, 0);
+
+        let stones = &report.uses[0];
+        assert_eq!((stones.kind, stones.registered, stones.total), (Kind::Healthstone, true, 61));
+        // Scrublock's two kinds of healthstone are one person's total.
+        let ranking: Vec<(&str, u64)> = stones.players.iter().map(|player| (player.name.as_str(), player.total)).collect();
+        assert_eq!(ranking, vec![("Scrublock", 37), ("Saven", 24)]);
+        let potions = &report.uses[1];
+        assert_eq!((potions.kind, potions.registered, potions.total), (Kind::HealthPotion, true, 8));
+        assert_eq!(report.pulls, 2);
+        assert_eq!(report.scope, "All Mythic bosses");
+    }
+
+    #[test]
+    fn a_kind_with_nothing_registered_or_nothing_used_says_so() {
+        let night = report(&[("Zul'jan", false, false)]);
+        let fights: Vec<&Fight> = night.fights.iter().collect();
+        // Only healthstones are registered, and nobody used one.
+        let report = ConsumablesReport::build(&night, &fights, None, &[registered(Kind::Healthstone, 6262)], vec![HashMap::new()], 0);
+
+        let value = serde_json::to_value(consumables_embed(&report)).unwrap();
+        let fields = value["fields"].as_array().unwrap();
+        assert_eq!(fields.len(), 2);
+        assert_eq!((fields[0]["name"].as_str().unwrap(), fields[0]["value"].as_str().unwrap()), ("Healthstones — 0 used", "None used."));
+        assert_eq!(fields[1]["name"], "Health potions");
+        assert!(fields[1]["value"].as_str().unwrap().contains("/settings wcl_consumable_add"));
+
+        // No pulls at all: no fields, and nothing Discord would turn down as empty.
+        let empty = ConsumablesReport::build(&night, &[], None, &[], Vec::new(), 0);
+        let value = serde_json::to_value(consumables_embed(&empty)).unwrap();
+        assert!(value["description"].as_str().unwrap().contains("No Mythic boss pulls") && value["fields"].is_null());
+    }
+
+    #[test]
+    fn the_consumables_embed_lists_the_top_users_and_stays_within_limits() {
+        let night = report(&[("Zul'jan", false, false), ("Zul'jan", false, false), ("Zul'jan", true, false)]);
+        let fights: Vec<&Fight> = night.fights.iter().collect();
+        let players: HashMap<String, (String, u64)> = (0..40).map(|n| (format!("Player{n:06}"), ("DemonHunter".to_string(), 100 - n as u64))).collect();
+        let registered = [registered(Kind::Healthstone, 1), registered(Kind::HealthPotion, 2)];
+
+        let report = ConsumablesReport::build(&night, &fights, Some("zul"), &registered, vec![players.clone(), players], 2);
+        let embed = consumables_embed(&report);
+        let value = serde_json::to_value(&embed).unwrap();
+
+        assert_eq!(value["title"], "Consumables used");
+        let description = value["description"].as_str().unwrap();
+        assert!(description.contains("**Zul'jan**, 3 pulls"), "{description}");
+        // The top ten, then a note for the rest, and the total is every player's uses added up.
+        let stones = &value["fields"][0];
+        assert_eq!(stones["name"], format!("Healthstones — {} used", (0..40u64).map(|n| 100 - n).sum::<u64>()));
+        assert_eq!(stones["value"].as_str().unwrap().lines().count(), CONSUMABLE_PLAYERS_SHOWN + 1);
+        assert!(stones["value"].as_str().unwrap().starts_with("1. **Player000000** (Demon Hunter) — 100"));
+        assert!(embed_text_size(&embed) <= MAX_EMBED_CHARS);
+
+        let footer = value["footer"]["text"].as_str().unwrap();
+        assert!(footer.starts_with("Every use in every Mythic pull counts") && footer.ends_with("2 ignored players are left out."), "{footer}");
     }
 
     #[test]
@@ -963,16 +1201,16 @@ mod tests {
 
     #[test]
     fn damage_tables_are_read_by_alias_and_added_across_chunks() {
-        let response: GraphQlResponse<DamageQuery> = serde_json::from_str(DAMAGE_RESPONSE).unwrap();
+        let response: GraphQlResponse<TablesQuery> = serde_json::from_str(DAMAGE_RESPONSE).unwrap();
         let tables = parse_response(response).unwrap().report_data.report.unwrap();
         assert_eq!(tables.len(), 2);
 
         let mut players = HashMap::new();
-        add_damage(&mut players, &tables[&alias(0)].data.entries, &HashSet::new());
+        add_totals(&mut players, &tables[&alias(0)].data.entries, &HashSet::new());
         // A second chunk of pulls: the same players again, and a new one.
-        add_damage(
+        add_totals(
             &mut players,
-            &[DamageEntry { name: "Rè".into(), class: "Rogue".into(), total: 100.0 }, DamageEntry { name: "New".into(), class: String::new(), total: 7.0 }],
+            &[PlayerEntry { name: "Rè".into(), class: "Rogue".into(), total: 100.0 }, PlayerEntry { name: "New".into(), class: String::new(), total: 7.0 }],
             &HashSet::new(),
         );
 
@@ -1270,9 +1508,9 @@ mod tests {
         assert!(!is_ignored(&ignored, "Tritonia"));
         assert!(!is_ignored(&HashSet::new(), "Tritonian"));
 
-        let entry = |name: &str, total: f64| DamageEntry { name: name.to_string(), class: "Rogue".to_string(), total };
+        let entry = |name: &str, total: f64| PlayerEntry { name: name.to_string(), class: "Rogue".to_string(), total };
         let mut players = HashMap::new();
-        add_damage(&mut players, &[entry("Tritonian", 900.0), entry("Aâyo", 50.0), entry("Rè", 100.0)], &ignored);
+        add_totals(&mut players, &[entry("Tritonian", 900.0), entry("Aâyo", 50.0), entry("Rè", 100.0)], &ignored);
 
         let ability = AbilityDamage::build(&tracked(1, "Fire"), players);
         // Only Rè is left, and the total is theirs alone, so their share is all of it.
@@ -1295,6 +1533,42 @@ mod tests {
         let damage = DamageReport::build(&night, &[&night.fights[0]], AbilityDamage::build(&tracked(1, "Fire"), HashMap::new()), None, 1);
         let value = serde_json::to_value(damage_embed(&damage)).unwrap();
         assert!(value["footer"]["text"].as_str().unwrap().ends_with("1 ignored player is left out."));
+    }
+
+    /// Calls the real API with a public report, and healthstone and health potion ability IDs (comma
+    /// separated): `WCL_CLIENT_ID=... WCL_CLIENT_SECRET=... WCL_TEST_REPORT=<code>
+    /// WCL_TEST_HEALTHSTONES=6262,452930 WCL_TEST_POTIONS=1234768,1295247 cargo test -- --ignored --nocapture`.
+    #[tokio::test]
+    #[ignore = "needs WCL_CLIENT_ID, WCL_CLIENT_SECRET, WCL_TEST_REPORT, WCL_TEST_HEALTHSTONES and WCL_TEST_POTIONS, and calls the real Warcraft Logs API"]
+    async fn the_real_api_counts_consumables() {
+        let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} must be set"));
+        let ids = |name: &str| -> Vec<u32> { var(name).split(',').map(|id| id.trim().parse().unwrap()).collect() };
+        let mut registered: Vec<Registered> = ids("WCL_TEST_HEALTHSTONES").into_iter().map(|id| Registered { kind: Kind::Healthstone, ability_id: id }).collect();
+        registered.extend(ids("WCL_TEST_POTIONS").into_iter().map(|id| Registered { kind: Kind::HealthPotion, ability_id: id }));
+        let client = WarcraftLogs::new(reqwest::Client::new(), var("WCL_CLIENT_ID"), var("WCL_CLIENT_SECRET"));
+        let code = var("WCL_TEST_REPORT");
+
+        let report = client.consumables(&code, None, &registered, &[]).await.unwrap();
+        for used in &report.uses {
+            let (name, value, _) = consumable_field(used);
+            println!("{name}\n{value}");
+            assert!(used.registered && used.total > 0);
+            assert_eq!(used.total, used.players.iter().map(|player| player.total).sum::<u64>());
+        }
+
+        // Ignoring the player who used the most healthstones (typed in capitals) removes them and exactly their uses.
+        let top = report.uses[0].players[0].clone();
+        let hidden = client.consumables(&code, None, &registered, &[top.name.to_uppercase()]).await.unwrap();
+        assert!(hidden.uses[0].players.iter().all(|player| player.name != top.name));
+        assert_eq!(hidden.uses[0].total, report.uses[0].total - top.total);
+        assert_eq!(hidden.ignored, 1);
+        println!("with {} ignored: {} healthstones used", top.name, hidden.uses[0].total);
+
+        // One boss only, and a boss the report doesn't have.
+        let boss = client.overview(&code, &[], &[]).await.unwrap().encounters[0].name.to_uppercase();
+        let one = client.consumables(&code, Some(&boss), &registered, &[]).await.unwrap();
+        assert!(one.uses[0].total <= report.uses[0].total && one.pulls > 0);
+        assert!(client.consumables(&code, Some("no such boss"), &registered, &[]).await.is_err());
     }
 
     #[test]
