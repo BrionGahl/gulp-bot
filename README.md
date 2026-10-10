@@ -33,8 +33,10 @@ tarball:
 
 Every build is tagged twice: with a version derived from the current commit, in the same form as the
 [release tags](#release-tags) (e.g. `v2026.10.09-c97a8ec`, with `-dirty` appended if there are
-uncommitted changes), and with `latest`. The tarball is named `gulp-bot-<version>.tar` and contains
-both tags.
+uncommitted changes), and with a moving channel tag. A build from `master` moves `latest`; a build
+from any other branch moves `dev` instead, so loading it never changes what a stack running `latest`
+gets. Set `CHANNEL` to pick the tag yourself, e.g. `CHANNEL=latest ./build-image.sh` to release from
+another branch. The tarball is named `gulp-bot-<version>.tar` and contains both tags.
 
 ### Loading it onto the host
 
@@ -45,8 +47,8 @@ scp gulp-bot-<version>.tar <user>@<host>:/tmp/
 ssh <user>@<host> docker load -i /tmp/gulp-bot-<version>.tar
 ```
 
-Loading moves `latest` to the new build and leaves every previously loaded version on the host under
-its own tag. An image built with podman is loaded as `localhost/gulp-bot:<tag>`, which is the name
+Loading moves the build's channel tag (`latest` or `dev`) to the new build and leaves every
+previously loaded version on the host under its own tag. An image built with podman is loaded as `localhost/gulp-bot:<tag>`, which is the name
 `docker-compose.yml` expects. If it was built with docker instead, the name is `gulp-bot:<tag>` and
 the `image:` line needs to match.
 
