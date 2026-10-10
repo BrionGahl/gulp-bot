@@ -14,6 +14,8 @@ mod guild_settings;
 mod schedules;
 mod raid_attendance;
 mod warcraftlogs;
+mod wcl_mechanics;
+mod wcl_ignored_players;
 
 use poise::serenity_prelude::{self as serenity, GatewayIntents};
 use tracing_subscriber::prelude::*;

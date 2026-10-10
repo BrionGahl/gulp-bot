@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -12,6 +12,7 @@ use tokio::sync::Mutex;
 
 use crate::guild_settings::WclSource;
 use crate::types::bot::Error;
+use crate::wcl_mechanics::TrackedAbility;
 
 const TOKEN_URL: &str = "https://www.warcraftlogs.com/oauth/token";
 const API_URL: &str = "https://www.warcraftlogs.com/api/v2/client";
@@ -21,11 +22,12 @@ const MYTHIC_DIFFICULTY: u32 = 5;
 
 /// Only this many deaths in a pull are counted. Every death after the second is the raid wiping
 /// rather than someone's mistake, so the API is asked to ignore everything after it (`wipeCutoff`).
+/// Damage taken is cut off the same way: nothing after the last counted death.
 pub const WIPE_CUTOFF: u32 = 2;
 
-/// The most fights asked about in one deaths query. An uncut deaths table came back with exactly
-/// 200 entries, which looks like a cap; with the cutoff a fight yields about two entries, so this
-/// stays well under it.
+/// The most fights asked about in one query. An uncut deaths table came back with exactly 200
+/// entries, which looks like a cap; with the cutoff a fight yields about two entries, so this stays
+/// well under it.
 const FIGHTS_PER_QUERY: usize = 50;
 
 /// How many of the guild's newest reports are searched for one from the registered uploader.
@@ -41,10 +43,18 @@ const EMBED_COLOUR: u32 = 0xAF69EE;
 const MAX_TITLE_CHARS: usize = 256;
 const MAX_DESCRIPTION_CHARS: usize = 4096;
 const MAX_FIELD_CHARS: usize = 1024;
+/// Discord's limit on all the text in one embed (title, description, field names and values, footer).
+const MAX_EMBED_CHARS: usize = 6000;
+/// Room kept free in the overview for the footer note that says abilities were left out.
+const FOOTER_NOTE_RESERVE: usize = 100;
+/// The longest an ability name is shown as, in a title or a field name (Discord allows 256).
+const MAX_ABILITY_NAME_CHARS: usize = 100;
 
 /// How many players each ranking shows.
 const MOST_DEATHS_SHOWN: usize = 10;
 const FIRST_DEATHS_SHOWN: usize = 5;
+const DAMAGE_SHOWN_IN_OVERVIEW: usize = 5;
+const DAMAGE_SHOWN: usize = 15;
 
 /// Client for the Warcraft Logs v2 API, which is public-data only: it authenticates with the
 /// bot's own client credentials (no user authorization), so it can read public and unlisted
@@ -82,25 +92,88 @@ impl WarcraftLogs {
         Ok(newest_by_uploader(&response.report_data.reports.data, source.uploader_id).map(|report| report.code.clone()))
     }
 
-    /// Everything the overview shows for one report: its Mythic boss pulls, and the deaths in them
-    /// with the cutoff applied.
-    pub async fn overview(&self, code: &str) -> Result<Overview, Error> {
+    /// Everything the overview shows for one report: its Mythic boss pulls, the deaths in them with
+    /// the cutoff applied, and the damage taken from each of the `tracked` abilities.
+    ///
+    /// Players named in `ignored` are left out of all of it: they are in no ranking, and what they
+    /// took doesn't count towards any total. (The cutoff is the API's, so an ignored player's death
+    /// among the first two in a pull still uses up one of them.)
+    pub async fn overview(&self, code: &str, tracked: &[TrackedAbility], ignored: &[String]) -> Result<Overview, Error> {
+        let report = self.report(code).await?;
+        let fight_ids = finished_fight_ids(report.fights.iter());
+        let ignored_names = ignored_set(ignored);
+
+        let mut deaths = self.deaths(code, &fight_ids).await?;
+        deaths.retain(|death| !is_ignored(&ignored_names, &death.name));
+        let damage = self.damage_taken(code, &fight_ids, tracked, &ignored_names).await?;
+
+        info!("Fetched Warcraft Logs report {code}: {} Mythic pulls, {} counted deaths, {} tracked abilities", fight_ids.len(), deaths.len(), tracked.len());
+        Ok(Overview::build(&report, &deaths, damage, ignored.len()))
+    }
+
+    /// Who took damage from one ability, over the pulls of the boss whose name contains `boss`, or
+    /// of every Mythic boss when there is none.
+    /// Players named in `ignored` are left out, as in `overview`.
+    pub async fn damage_report(&self, code: &str, boss: Option<&str>, ability: &TrackedAbility, ignored: &[String]) -> Result<DamageReport, Error> {
+        let report = self.report(code).await?;
+        let fights = select_fights(&report.fights, boss)?;
+        let fight_ids: Vec<u32> = fights.iter().map(|fight| fight.id).collect();
+
+        let damage = self
+            .damage_taken(code, &fight_ids, std::slice::from_ref(ability), &ignored_set(ignored))
+            .await?
+            .pop()
+            .ok_or("Warcraft Logs sent no damage data.")?;
+
+        info!("Fetched damage taken from {} in Warcraft Logs report {code}: {} pulls", ability.name, fight_ids.len());
+        Ok(DamageReport::build(&report, &fights, damage, boss, ignored.len()))
+    }
+
+    /// A report with its Mythic boss fights.
+    async fn report(&self, code: &str) -> Result<Report, Error> {
         let response: ReportQuery = self.query(&report_query(), json!({ "code": code })).await?;
-        let report = response.report_data.report.ok_or("That report doesn't exist, or isn't public.")?;
+        response.report_data.report.ok_or_else(|| "That report doesn't exist, or isn't public.".into())
+    }
 
-        // Pulls that are still being uploaded are left out: their deaths aren't all there yet.
-        let fight_ids: Vec<u32> = report.fights.iter().filter(|fight| !fight.in_progress.unwrap_or(false)).map(|fight| fight.id).collect();
-
+    /// Every counted death in `fight_ids`: the first `WIPE_CUTOFF` of each pull.
+    async fn deaths(&self, code: &str, fight_ids: &[u32]) -> Result<Vec<DeathEntry>, Error> {
         let mut deaths = Vec::new();
         let query = deaths_query();
         for chunk in fight_ids.chunks(FIGHTS_PER_QUERY) {
             let response: DeathsQuery = self.query(&query, json!({ "code": code, "fightIDs": chunk })).await?;
-            let table = response.report_data.report.ok_or("That report doesn't exist, or isn't public.")?.table;
-            deaths.extend(table.data.entries);
+            let report = response.report_data.report.ok_or("That report doesn't exist, or isn't public.")?;
+            deaths.extend(report.table.data.entries);
+        }
+        Ok(deaths)
+    }
+
+    /// The damage each player took from each of `abilities` in `fight_ids`, up to the cutoff in
+    /// every pull, in the order of `abilities`. One request covers all the abilities (a table each,
+    /// under an alias); pulls beyond `FIGHTS_PER_QUERY` take further requests, whose totals are added.
+    async fn damage_taken(
+        &self,
+        code: &str,
+        fight_ids: &[u32],
+        abilities: &[TrackedAbility],
+        ignored: &HashSet<String>,
+    ) -> Result<Vec<AbilityDamage>, Error> {
+        if abilities.is_empty() {
+            return Ok(Vec::new());
         }
 
-        info!("Fetched Warcraft Logs report {code}: {} Mythic pulls, {} counted deaths", fight_ids.len(), deaths.len());
-        Ok(Overview::build(&report, &deaths))
+        let query = damage_query(abilities);
+        let mut totals: Vec<HashMap<String, (String, u64)>> = vec![HashMap::new(); abilities.len()];
+        for chunk in fight_ids.chunks(FIGHTS_PER_QUERY) {
+            let response: DamageQuery = self.query(&query, json!({ "code": code, "fightIDs": chunk })).await?;
+            let tables = response.report_data.report.ok_or("That report doesn't exist, or isn't public.")?;
+            for (index, players) in totals.iter_mut().enumerate() {
+                if let Some(table) = tables.get(&alias(index)) {
+                    add_damage(players, &table.data.entries, ignored);
+                }
+            }
+        }
+
+        Ok(abilities.iter().zip(totals).map(|(ability, players)| AbilityDamage::build(ability, players)).collect())
     }
 
     /// Sends one GraphQL query and returns its data, or the API's own error messages.
@@ -165,7 +238,8 @@ struct TokenResponse {
 }
 
 // The queries take their values as GraphQL variables, never spliced into the text, so a report code
-// typed into a command can't change what is asked.
+// typed into a command can't change what is asked. The one thing built into a query is the list of
+// ability IDs, which are numbers.
 fn report_query() -> String {
     format!(
         "query($code: String!) {{ reportData {{ report(code: $code) {{ \
@@ -182,6 +256,29 @@ fn deaths_query() -> String {
         "query($code: String!, $fightIDs: [Int]) {{ reportData {{ report(code: $code) {{ \
          table(dataType: Deaths, fightIDs: $fightIDs, wipeCutoff: {WIPE_CUTOFF}) }} }} }}"
     )
+}
+
+/// The alias of the table for the ability at `index` in a damage query.
+fn alias(index: usize) -> String {
+    format!("a{index}")
+}
+
+/// One damage taken table per ability, each filtered to that ability and so listing the players who
+/// took it. (Not `viewBy: Ability`, whose per-ability player lists hold only the top five.)
+fn damage_query(abilities: &[TrackedAbility]) -> String {
+    let tables: String = abilities
+        .iter()
+        .enumerate()
+        .map(|(index, ability)| {
+            format!(
+                " {}: table(dataType: DamageTaken, fightIDs: $fightIDs, abilityID: {}, wipeCutoff: {WIPE_CUTOFF})",
+                alias(index),
+                ability.ability_id
+            )
+        })
+        .collect();
+
+    format!("query($code: String!, $fightIDs: [Int]) {{ reportData {{ report(code: $code) {{{tables} }} }} }}")
 }
 
 #[derive(Deserialize)]
@@ -225,13 +322,46 @@ struct Report {
     fights: Vec<Fight>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Fight {
     id: u32,
     name: String,
     kill: Option<bool>,
     in_progress: Option<bool>,
+}
+
+impl Fight {
+    /// A pull that is still being uploaded is left out everywhere: its events aren't all there yet.
+    fn is_finished(&self) -> bool {
+        !self.in_progress.unwrap_or(false)
+    }
+}
+
+fn finished_fight_ids<'a>(fights: impl Iterator<Item = &'a Fight>) -> Vec<u32> {
+    fights.filter(|fight| fight.is_finished()).map(|fight| fight.id).collect()
+}
+
+/// The finished fights of `fights`, narrowed to those of the boss whose name contains `boss`
+/// (ignoring case) when one is given. An error says which bosses the report does have.
+fn select_fights<'a>(fights: &'a [Fight], boss: Option<&str>) -> Result<Vec<&'a Fight>, String> {
+    let finished: Vec<&Fight> = fights.iter().filter(|fight| fight.is_finished()).collect();
+    let Some(boss) = boss.map(str::trim).filter(|boss| !boss.is_empty()) else { return Ok(finished) };
+
+    let needle = boss.to_lowercase();
+    let matching: Vec<&Fight> = finished.iter().copied().filter(|fight| fight.name.to_lowercase().contains(&needle)).collect();
+    if !matching.is_empty() {
+        return Ok(matching);
+    }
+
+    let mut names: Vec<&str> = finished.iter().map(|fight| fight.name.as_str()).collect();
+    names.sort();
+    names.dedup();
+    Err(if names.is_empty() {
+        "This report has no Mythic boss pulls.".to_string()
+    } else {
+        format!("No Mythic pulls of a boss matching `{boss}`. The bosses in this report: {}.", names.join(", "))
+    })
 }
 
 #[derive(Deserialize)]
@@ -271,6 +401,17 @@ fn newest_by_uploader(reports: &[ReportSummary], uploader_id: u32) -> Option<&Re
         .max_by(|a, b| a.start_time.total_cmp(&b.start_time))
 }
 
+/// The `table` field is untyped JSON; for the tables used here it is `{ "data": { "entries": [...] } }`.
+#[derive(Deserialize)]
+struct Table<E> {
+    data: TableData<E>,
+}
+
+#[derive(Deserialize)]
+struct TableData<E> {
+    entries: Vec<E>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeathsQuery {
@@ -284,18 +425,7 @@ struct DeathsReportData {
 
 #[derive(Deserialize)]
 struct DeathsReport {
-    table: DeathsTable,
-}
-
-/// The `table` field is untyped JSON; for deaths it is `{ "data": { "entries": [...] } }`.
-#[derive(Deserialize)]
-struct DeathsTable {
-    data: DeathsData,
-}
-
-#[derive(Deserialize)]
-struct DeathsData {
-    entries: Vec<DeathEntry>,
+    table: Table<DeathEntry>,
 }
 
 /// One death in one pull. Only the fields the overview uses are read.
@@ -310,6 +440,45 @@ struct DeathEntry {
     timestamp: f64,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DamageQuery {
+    report_data: DamageReportData,
+}
+
+/// The report's tables, by the aliases `damage_query` gave them.
+#[derive(Deserialize)]
+struct DamageReportData {
+    report: Option<HashMap<String, Table<DamageEntry>>>,
+}
+
+/// One player's damage taken from one ability.
+#[derive(Deserialize)]
+struct DamageEntry {
+    name: String,
+    #[serde(rename = "type", default)]
+    class: String,
+    total: f64,
+}
+
+/// Player names in the form they are compared in: lowercase, so capitalisation never matters.
+fn ignored_set(names: &[String]) -> HashSet<String> {
+    names.iter().map(|name| name.to_lowercase()).collect()
+}
+
+fn is_ignored(ignored: &HashSet<String>, name: &str) -> bool {
+    ignored.contains(&name.to_lowercase())
+}
+
+/// Adds `entries`, except those of ignored players, to the running damage totals per player. Pulls are queried in chunks, and a
+/// player's damage over the night is the sum over the chunks.
+fn add_damage(players: &mut HashMap<String, (String, u64)>, entries: &[DamageEntry], ignored: &HashSet<String>) {
+    for entry in entries.iter().filter(|entry| !is_ignored(ignored, &entry.name)) {
+        let player = players.entry(entry.name.clone()).or_insert_with(|| (entry.class.clone(), 0));
+        player.1 += entry.total.max(0.0) as u64;
+    }
+}
+
 /// What `/wcl report` shows for one report.
 #[derive(Debug)]
 pub struct Overview {
@@ -322,6 +491,10 @@ pub struct Overview {
     deaths: Vec<PlayerCount>,
     /// Players ranked by how many pulls they were the first to die in.
     first_deaths: Vec<PlayerCount>,
+    /// Damage taken from each tracked ability.
+    damage: Vec<AbilityDamage>,
+    /// How many players were left out of all of it, for the footer.
+    ignored: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -338,10 +511,35 @@ struct PlayerCount {
     count: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PlayerDamage {
+    name: String,
+    class: String,
+    total: u64,
+}
+
+/// The damage taken from one ability: in all, and by each player who took any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AbilityDamage {
+    name: String,
+    total: u64,
+    /// Most damage first (ties in name order).
+    players: Vec<PlayerDamage>,
+}
+
+impl AbilityDamage {
+    fn build(ability: &TrackedAbility, players: HashMap<String, (String, u64)>) -> Self {
+        let mut players: Vec<PlayerDamage> = players.into_iter().map(|(name, (class, total))| PlayerDamage { name, class, total }).collect();
+        players.sort_by(|a, b| b.total.cmp(&a.total).then_with(|| a.name.cmp(&b.name)));
+
+        Self { name: ability.name.clone(), total: players.iter().map(|player| player.total).sum(), players }
+    }
+}
+
 impl Overview {
-    fn build(report: &Report, deaths: &[DeathEntry]) -> Self {
+    fn build(report: &Report, deaths: &[DeathEntry], damage: Vec<AbilityDamage>, ignored: usize) -> Self {
         let mut encounters: Vec<EncounterSummary> = Vec::new();
-        for fight in report.fights.iter().filter(|fight| !fight.in_progress.unwrap_or(false)) {
+        for fight in report.fights.iter().filter(|fight| fight.is_finished()) {
             let position = match encounters.iter().position(|encounter| encounter.name == fight.name) {
                 Some(position) => position,
                 None => {
@@ -362,6 +560,45 @@ impl Overview {
             encounters,
             deaths: tally(deaths.iter()),
             first_deaths: tally(first_death_of_each_pull(deaths).into_iter()),
+            damage,
+            ignored,
+        }
+    }
+}
+
+/// What `/wcl damage_taken` shows: one ability's damage over some of a report's pulls.
+#[derive(Debug)]
+pub struct DamageReport {
+    code: String,
+    title: String,
+    /// Unix timestamp, in seconds, of the start of the report.
+    started_at: i64,
+    /// Which bosses the pulls are of.
+    scope: String,
+    pulls: usize,
+    ability: AbilityDamage,
+    /// How many players were left out, for the footer.
+    ignored: usize,
+}
+
+impl DamageReport {
+    fn build(report: &Report, fights: &[&Fight], ability: AbilityDamage, boss: Option<&str>, ignored: usize) -> Self {
+        let scope = if boss.is_some_and(|boss| !boss.trim().is_empty()) {
+            let mut names: Vec<&str> = fights.iter().map(|fight| fight.name.as_str()).collect();
+            names.dedup();
+            names.join(", ")
+        } else {
+            "All Mythic bosses".to_string()
+        };
+
+        Self {
+            code: report.code.clone(),
+            title: report.title.clone(),
+            started_at: (report.start_time / 1000.0) as i64,
+            scope,
+            pulls: fights.len(),
+            ability,
+            ignored,
         }
     }
 }
@@ -409,20 +646,114 @@ pub fn parse_report_code(input: &str) -> Option<String> {
     (!code.is_empty() && code.len() <= 32 && code.chars().all(|c| c.is_ascii_alphanumeric())).then(|| code.to_string())
 }
 
+/// The footer of both embeds: what is counted, and how many players are left out.
+fn footer_text(ignored: usize) -> String {
+    let mut footer = format!("Only the first {WIPE_CUTOFF} deaths in each pull count, and damage taken up to the last of them.");
+    if ignored > 0 {
+        footer.push_str(&format!(" {} left out.", if ignored == 1 { "1 ignored player is".to_string() } else { format!("{ignored} ignored players are") }));
+    }
+    footer
+}
+
+/// The characters of an embed that count towards Discord's limit on its total size.
+fn embed_chars(title: &str, description: &str, footer: &str, fields: &[(String, String)]) -> usize {
+    let fields: usize = fields.iter().map(|(name, value)| name.chars().count() + value.chars().count()).sum();
+    title.chars().count() + description.chars().count() + footer.chars().count() + fields
+}
+
 pub fn overview_embed(overview: &Overview) -> CreateEmbed {
-    let mut embed = CreateEmbed::new()
-        .title(truncate(&overview.title, MAX_TITLE_CHARS))
+    let title = truncate(&overview.title, MAX_TITLE_CHARS);
+    let description = overview_description(overview);
+
+    let mut fields: Vec<(String, String)> = Vec::new();
+    if !overview.deaths.is_empty() {
+        fields.push(("Most deaths".to_string(), ranked_list(&death_rows(&overview.deaths), MOST_DEATHS_SHOWN, MAX_FIELD_CHARS)));
+        fields.push(("First to die in a pull".to_string(), ranked_list(&death_rows(&overview.first_deaths), FIRST_DEATHS_SHOWN, MAX_FIELD_CHARS)));
+    }
+
+    // An embed holds at most 6000 characters in all, so tracked abilities are added while they fit.
+    let mut used = embed_chars(&title, &description, &footer_text(overview.ignored), &fields) + FOOTER_NOTE_RESERVE;
+    let mut left_out = 0;
+    let pulls: u32 = overview.encounters.iter().map(|encounter| encounter.pulls).sum();
+    for ability in &overview.damage {
+        let field = damage_field(ability, DAMAGE_SHOWN_IN_OVERVIEW, pulls);
+        let size = field.0.chars().count() + field.1.chars().count();
+        if used + size > MAX_EMBED_CHARS {
+            left_out += 1;
+            continue;
+        }
+        used += size;
+        fields.push(field);
+    }
+
+    let footer = if left_out > 0 {
+        format!("{} {left_out} more tracked abilities didn't fit; see /wcl damage_taken.", footer_text(overview.ignored))
+    } else {
+        footer_text(overview.ignored)
+    };
+
+    CreateEmbed::new()
+        .title(title)
         .url(report_url(&overview.code))
         .colour(Colour::from(EMBED_COLOUR))
-        .description(overview_description(overview))
-        .footer(CreateEmbedFooter::new(format!("Only the first {WIPE_CUTOFF} deaths in each pull are counted.")));
+        .description(description)
+        .fields(fields.into_iter().map(|(name, value)| (name, value, false)))
+        .footer(CreateEmbedFooter::new(footer))
+}
 
-    if !overview.deaths.is_empty() {
-        embed = embed
-            .field("Most deaths", ranked_list(&overview.deaths, MOST_DEATHS_SHOWN, MAX_FIELD_CHARS), false)
-            .field("First to die in a pull", ranked_list(&overview.first_deaths, FIRST_DEATHS_SHOWN, MAX_FIELD_CHARS), false);
+/// The field for one tracked ability: its title, the total damage taken from it over all `pulls`
+/// of the night, and the players who took the most of it.
+fn damage_field(ability: &AbilityDamage, shown: usize, pulls: u32) -> (String, String) {
+    let name = format!("{} — damage taken", truncate(&ability.name, MAX_ABILITY_NAME_CHARS));
+    let value = if ability.players.is_empty() {
+        "Nobody took damage from this. If that's unexpected, check its ability ID.".to_string()
+    } else {
+        let total = format!("Total: **{}** over {}\n", format_damage(ability.total), plural(pulls, "pull"));
+        format!("{total}{}", ranked_list(&damage_rows(ability), shown, MAX_FIELD_CHARS - total.len()))
+    };
+    (name, value)
+}
+
+/// "1 pull", "34 pulls".
+fn plural(count: u32, noun: &str) -> String {
+    if count == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{count} {noun}s")
     }
-    embed
+}
+
+pub fn damage_embed(report: &DamageReport) -> CreateEmbed {
+    let ability = &report.ability;
+    let embed = CreateEmbed::new()
+        .title(format!("{} — damage taken", truncate(&ability.name, MAX_ABILITY_NAME_CHARS)))
+        .url(report_url(&report.code))
+        .colour(Colour::from(EMBED_COLOUR))
+        .footer(CreateEmbedFooter::new(footer_text(report.ignored)));
+
+    let report_title = truncate(&report.title, MAX_ABILITY_NAME_CHARS);
+    if report.pulls == 0 {
+        return embed.description(format!("<t:{}:F> · {report_title}\nNo Mythic boss pulls in this report.", report.started_at));
+    }
+
+    let description = format!(
+        "<t:{}:F> · {report_title}\n**{}**, {} pulls\nTotal damage taken: **{}**",
+        report.started_at,
+        report.scope,
+        report.pulls,
+        format_damage(ability.total),
+    );
+    // Cut so that however many bosses the scope names, the description stays within Discord's limit.
+    let embed = embed.description(truncate(&description, MAX_DESCRIPTION_CHARS));
+
+    if ability.players.is_empty() {
+        return embed.field(
+            "Who took it",
+            "Nobody took damage from this in those pulls. If that's unexpected, check the ability ID: Warcraft Logs can log an ability's damage under a different ID than its spell page shows.",
+            false,
+        );
+    }
+    embed.field("Who took it", ranked_list(&damage_rows(ability), DAMAGE_SHOWN, MAX_FIELD_CHARS), false)
 }
 
 fn overview_description(overview: &Overview) -> String {
@@ -445,15 +776,38 @@ fn overview_description(overview: &Overview) -> String {
     description
 }
 
+/// One line of a ranking: a player, their class, and what is being counted.
+struct Row {
+    name: String,
+    class: String,
+    value: String,
+}
+
+fn death_rows(players: &[PlayerCount]) -> Vec<Row> {
+    players.iter().map(|player| Row { name: player.name.clone(), class: player.class.clone(), value: player.count.to_string() }).collect()
+}
+
+/// Each player's damage and their share of everything taken from the ability.
+fn damage_rows(ability: &AbilityDamage) -> Vec<Row> {
+    ability
+        .players
+        .iter()
+        .map(|player| {
+            let share = if ability.total == 0 { 0.0 } else { player.total as f64 * 100.0 / ability.total as f64 };
+            Row { name: player.name.clone(), class: player.class.clone(), value: format!("{} ({share:.1}%)", format_damage(player.total)) }
+        })
+        .collect()
+}
+
 /// The top `max_lines` of a ranking, one numbered line each, in at most `max_chars`. If players are
 /// left off, the list ends with a line saying how many.
-fn ranked_list(players: &[PlayerCount], max_lines: usize, max_chars: usize) -> String {
+fn ranked_list(rows: &[Row], max_lines: usize, max_chars: usize) -> String {
     let mut list = String::new();
-    for (index, player) in players.iter().enumerate() {
-        let class = if player.class.is_empty() { String::new() } else { format!(" ({})", display_class(&player.class)) };
-        let line = format!("{}. **{}**{class} — {}", index + 1, player.name, player.count);
+    for (index, row) in rows.iter().enumerate() {
+        let class = if row.class.is_empty() { String::new() } else { format!(" ({})", display_class(&row.class)) };
+        let line = format!("{}. **{}**{class} — {}", index + 1, row.name, row.value);
         let separator = if index == 0 { "" } else { "\n" };
-        let overflow_note = format!("\n…and {} more.", players.len() - index);
+        let overflow_note = format!("\n…and {} more.", rows.len() - index);
 
         if index >= max_lines || list.len() + separator.len() + line.len() + overflow_note.len() > max_chars {
             list.push_str(&overflow_note);
@@ -463,6 +817,17 @@ fn ranked_list(players: &[PlayerCount], max_lines: usize, max_chars: usize) -> S
         list.push_str(&line);
     }
     list
+}
+
+/// Damage as a short number: 3.5B, 200.3M, 12.3K.
+fn format_damage(amount: u64) -> String {
+    let (value, suffix) = match amount {
+        1_000_000_000.. => (amount as f64 / 1e9, "B"),
+        1_000_000.. => (amount as f64 / 1e6, "M"),
+        1_000.. => (amount as f64 / 1e3, "K"),
+        _ => return amount.to_string(),
+    };
+    format!("{value:.1}{suffix}")
 }
 
 /// "DeathKnight" as "Death Knight".
@@ -498,6 +863,10 @@ mod tests {
         PlayerCount { name: name.to_string(), class: "Rogue".to_string(), count }
     }
 
+    fn tracked(ability_id: u32, name: &str) -> TrackedAbility {
+        TrackedAbility { ability_id, name: name.to_string() }
+    }
+
     #[test]
     fn report_codes_are_read_from_links_and_bare_codes() {
         let code = Some("YRwPxnJ4MKpWFyrg".to_string());
@@ -519,6 +888,20 @@ mod tests {
     fn the_queries_ask_for_mythic_and_the_cutoff() {
         assert!(report_query().contains("fights(difficulty: 5, killType: Encounters)"));
         assert!(deaths_query().contains("wipeCutoff: 2)"));
+    }
+
+    #[test]
+    fn the_damage_query_has_a_cut_off_table_for_each_ability() {
+        let query = damage_query(&[tracked(1282408, "Coalesced Venom"), tracked(1299838, "Venom Rupture")]);
+
+        assert_eq!(
+            query,
+            "query($code: String!, $fightIDs: [Int]) { reportData { report(code: $code) { \
+             a0: table(dataType: DamageTaken, fightIDs: $fightIDs, abilityID: 1282408, wipeCutoff: 2) \
+             a1: table(dataType: DamageTaken, fightIDs: $fightIDs, abilityID: 1299838, wipeCutoff: 2) } } }"
+        );
+        // Whatever an officer names an ability, it never reaches the query.
+        assert!(!damage_query(&[tracked(5, "x\") { evil }")]).contains("evil"));
     }
 
     #[test]
@@ -569,6 +952,60 @@ mod tests {
         assert_eq!(first[0].name, "First");
     }
 
+    /// The shape of a real response to a damage query with two aliased tables, cut down to a few fields.
+    const DAMAGE_RESPONSE: &str = r#"{"data":{"reportData":{"report":{
+        "a0":{"data":{"entries":[
+            {"name":"Rè","id":16,"guid":1,"type":"Rogue","icon":"x","total":200325787,"totalReduced":1,"activeTime":0},
+            {"name":"Scrublock","id":1,"type":"Warlock","total":193309151},
+            {"name":"Kail","id":2,"type":"Evoker","total":193309151}]}},
+        "a1":{"data":{"entries":[]}}
+    }}}}"#;
+
+    #[test]
+    fn damage_tables_are_read_by_alias_and_added_across_chunks() {
+        let response: GraphQlResponse<DamageQuery> = serde_json::from_str(DAMAGE_RESPONSE).unwrap();
+        let tables = parse_response(response).unwrap().report_data.report.unwrap();
+        assert_eq!(tables.len(), 2);
+
+        let mut players = HashMap::new();
+        add_damage(&mut players, &tables[&alias(0)].data.entries, &HashSet::new());
+        // A second chunk of pulls: the same players again, and a new one.
+        add_damage(
+            &mut players,
+            &[DamageEntry { name: "Rè".into(), class: "Rogue".into(), total: 100.0 }, DamageEntry { name: "New".into(), class: String::new(), total: 7.0 }],
+            &HashSet::new(),
+        );
+
+        let ability = AbilityDamage::build(&tracked(1, "Coalesced Venom"), players);
+        let ranking: Vec<(&str, u64)> = ability.players.iter().map(|p| (p.name.as_str(), p.total)).collect();
+        // Ties are in name order.
+        assert_eq!(ranking, vec![("Rè", 200_325_887), ("Kail", 193_309_151), ("Scrublock", 193_309_151), ("New", 7)]);
+        assert_eq!(ability.total, 200_325_887 + 193_309_151 * 2 + 7);
+
+        let nobody = AbilityDamage::build(&tracked(2, "Nothing"), HashMap::new());
+        assert!(nobody.players.is_empty() && nobody.total == 0);
+        assert!(tables[&alias(1)].data.entries.is_empty());
+    }
+
+    #[test]
+    fn damage_is_shown_short_with_each_players_share() {
+        assert_eq!(format_damage(0), "0");
+        assert_eq!(format_damage(999), "999");
+        assert_eq!(format_damage(12_345), "12.3K");
+        assert_eq!(format_damage(200_325_787), "200.3M");
+        assert_eq!(format_damage(3_514_226_904), "3.5B");
+
+        let mut players = HashMap::new();
+        players.insert("A".to_string(), ("Rogue".to_string(), 750u64));
+        players.insert("B".to_string(), ("DeathKnight".to_string(), 250u64));
+        let rows = damage_rows(&AbilityDamage::build(&tracked(1, "Fire"), players));
+        assert_eq!((rows[0].name.as_str(), rows[0].value.as_str()), ("A", "750 (75.0%)"));
+        assert_eq!((rows[1].name.as_str(), rows[1].value.as_str()), ("B", "250 (25.0%)"));
+
+        // An ability nobody took damage from has no shares to divide by zero.
+        assert!(damage_rows(&AbilityDamage::build(&tracked(1, "Fire"), HashMap::new())).is_empty());
+    }
+
     #[test]
     fn the_newest_report_from_the_uploader_is_picked() {
         let reports: Vec<ReportSummary> = serde_json::from_str(
@@ -610,6 +1047,8 @@ mod tests {
         let overview = Overview::build(
             &report(&[("Zul'jan", false, false), ("Zul'jan", false, false), ("Zul'jan", true, false), ("Other", false, false), ("Zul'jan", false, true)]),
             &[],
+            Vec::new(),
+            0,
         );
 
         // The pull still being uploaded isn't counted.
@@ -629,7 +1068,7 @@ mod tests {
 
     #[test]
     fn a_report_without_mythic_pulls_says_so() {
-        let overview = Overview::build(&report(&[]), &[]);
+        let overview = Overview::build(&report(&[]), &[], Vec::new(), 0);
         assert!(overview_description(&overview).contains("No Mythic boss pulls"));
     }
 
@@ -637,51 +1076,181 @@ mod tests {
     fn a_long_encounter_list_fits_in_a_description() {
         let fights: Vec<(String, bool, bool)> = (0..400).map(|n| (format!("Boss number {n} with a rather long name"), false, false)).collect();
         let fights: Vec<(&str, bool, bool)> = fights.iter().map(|(name, kill, progress)| (name.as_str(), *kill, *progress)).collect();
-        let description = overview_description(&Overview::build(&report(&fights), &[]));
+        let description = overview_description(&Overview::build(&report(&fights), &[], Vec::new(), 0));
 
         assert!(description.len() <= MAX_DESCRIPTION_CHARS);
         assert!(description.contains("more."));
     }
 
     #[test]
+    fn a_boss_filter_picks_the_pulls_of_matching_bosses() {
+        let report = report(&[("The Coiled Altar", false, false), ("Other Boss", false, false), ("The Coiled Altar", true, false), ("The Coiled Altar", false, true)]);
+
+        // No filter: every finished pull.
+        assert_eq!(select_fights(&report.fights, None).unwrap().len(), 3);
+        assert_eq!(select_fights(&report.fights, Some("  ")).unwrap().len(), 3);
+        // A part of the name, in any case; the pull still being uploaded is left out.
+        let coiled = select_fights(&report.fights, Some("coiled")).unwrap();
+        assert_eq!(coiled.iter().map(|fight| fight.id).collect::<Vec<_>>(), vec![1, 3]);
+
+        let problem = select_fights(&report.fights, Some("nope")).unwrap_err();
+        assert!(problem.contains("`nope`") && problem.contains("Other Boss, The Coiled Altar."), "{problem}");
+        assert!(select_fights(&[], Some("nope")).unwrap_err().contains("no Mythic boss pulls"));
+    }
+
+    #[test]
     fn rankings_are_cut_to_the_lines_and_characters_allowed() {
         let players: Vec<PlayerCount> = (1..=30).map(|n| player(&format!("Player{n}"), 31 - n)).collect();
 
-        let list = ranked_list(&players, 3, MAX_FIELD_CHARS);
+        let list = ranked_list(&death_rows(&players), 3, MAX_FIELD_CHARS);
         assert_eq!(list.lines().count(), 4);
         assert!(list.starts_with("1. **Player1** (Rogue) — 30\n2. **Player2**"));
         assert!(list.ends_with("…and 27 more."));
 
         // A list that fits is left whole.
-        let list = ranked_list(&players[..2], 10, MAX_FIELD_CHARS);
+        let list = ranked_list(&death_rows(&players[..2]), 10, MAX_FIELD_CHARS);
         assert_eq!(list.lines().count(), 2);
         assert!(!list.contains("more."));
 
         // Long names can't push a field over Discord's limit.
         let wide: Vec<PlayerCount> = (1..=40).map(|n| player(&"x".repeat(60 + n), 1)).collect();
-        let list = ranked_list(&wide, 40, MAX_FIELD_CHARS);
+        let list = ranked_list(&death_rows(&wide), 40, MAX_FIELD_CHARS);
         assert!(list.len() <= MAX_FIELD_CHARS);
         assert!(list.ends_with(" more."));
     }
 
+    /// The text of an embed that counts towards Discord's size limit, read back from what would be sent.
+    fn embed_text_size(embed: &CreateEmbed) -> usize {
+        let value = serde_json::to_value(embed).unwrap();
+        let text = |v: &Value| v.as_str().map_or(0, |s| s.chars().count());
+        let fields: usize = value["fields"].as_array().map_or(0, |fields| fields.iter().map(|f| text(&f["name"]) + text(&f["value"])).sum());
+        text(&value["title"]) + text(&value["description"]) + text(&value["footer"]["text"]) + fields
+    }
+
+    fn crowded_ability(name: &str, players: usize) -> AbilityDamage {
+        let ability = TrackedAbility { ability_id: 1, name: name.to_string() };
+        let totals = (0..players).map(|n| (format!("A rather long player name {n}"), ("DemonHunter".to_string(), 1_000_000_000u64 - n as u64))).collect();
+        AbilityDamage::build(&ability, totals)
+    }
+
+    #[test]
+    fn an_overview_with_many_tracked_abilities_stays_within_discords_size_limit() {
+        let fights: Vec<(String, bool, bool)> = (0..12).map(|n| (format!("Boss number {n} with a rather long name"), false, false)).collect();
+        let fights: Vec<(&str, bool, bool)> = fights.iter().map(|(name, kill, progress)| (name.as_str(), *kill, *progress)).collect();
+        let deaths: Vec<DeathEntry> = (0..60).map(|n| death(&format!("A rather long player name {n}"), "DemonHunter", n, n as f64)).collect();
+        let damage: Vec<AbilityDamage> = (0..10).map(|n| crowded_ability(&"x".repeat(90 + n), 30)).collect();
+
+        let overview = Overview::build(&report(&fights), &deaths, damage, 3);
+        let embed = overview_embed(&overview);
+        let size = embed_text_size(&embed);
+        assert!(size <= MAX_EMBED_CHARS, "embed text is {size} characters");
+
+        // Not everything fit, and the footer says so.
+        let value = serde_json::to_value(&embed).unwrap();
+        let shown = value["fields"].as_array().unwrap().len() - 2;
+        assert!(shown > 0 && shown < 10, "{shown} abilities shown");
+        assert!(value["footer"]["text"].as_str().unwrap().contains(&format!("{} more tracked abilities", 10 - shown)));
+    }
+
+    #[test]
+    fn an_overview_shows_every_tracked_ability_when_there_is_room() {
+        let damage = vec![crowded_ability("Coalesced Venom", 20), AbilityDamage::build(&tracked(2, "Venom Rupture"), HashMap::new())];
+        let embed = overview_embed(&Overview::build(&report(&[("Zul'jan", false, false)]), &[death("Rè", "Rogue", 1, 1.0)], damage, 0));
+        let value = serde_json::to_value(&embed).unwrap();
+        let fields = value["fields"].as_array().unwrap();
+
+        assert_eq!(fields.len(), 4);
+        assert_eq!(fields[2]["name"], "Coalesced Venom — damage taken");
+        // The ability's total for the night first (over the one pull this report has), then only the
+        // top few players, with a note for the rest.
+        let field = fields[2]["value"].as_str().unwrap();
+        assert!(field.starts_with("Total: **"), "{field}");
+        assert!(field.lines().next().unwrap().ends_with("over 1 pull"), "{field}");
+        assert_eq!(field.lines().count(), 1 + DAMAGE_SHOWN_IN_OVERVIEW + 1);
+        // An ability nobody took damage from still gets a field, and Discord rejects an empty one.
+        assert!(fields[3]["value"].as_str().unwrap().starts_with("Nobody took damage from this."));
+        assert!(!value["footer"]["text"].as_str().unwrap().contains("didn't fit"));
+    }
+
+    #[test]
+    fn a_damage_report_names_the_boss_and_lists_the_players() {
+        let report = report(&[("The Coiled Altar", false, false), ("The Coiled Altar", true, false)]);
+        let fights = select_fights(&report.fights, Some("coiled")).unwrap();
+        // Names as long as a character name can be (12 letters), so the line limit is what cuts the list.
+        let totals = (0..40).map(|n| (format!("Player{n:06}"), ("Rogue".to_string(), 1_000_000_000u64 - n as u64))).collect();
+        let ability = AbilityDamage::build(&tracked(1, "Coalesced Venom"), totals);
+        let damage = DamageReport::build(&report, &fights, ability, Some("coiled"), 0);
+
+        assert_eq!(damage.scope, "The Coiled Altar");
+        assert_eq!(damage.pulls, 2);
+        let value = serde_json::to_value(damage_embed(&damage)).unwrap();
+        assert_eq!(value["title"], "Coalesced Venom — damage taken");
+        let description = value["description"].as_str().unwrap();
+        assert!(description.contains("**The Coiled Altar**, 2 pulls") && description.contains("Total damage taken: **"), "{description}");
+        assert_eq!(value["fields"][0]["value"].as_str().unwrap().lines().count(), DAMAGE_SHOWN + 1);
+
+        // Far longer names than a character can have are cut by the character limit instead, never over it.
+        let long = serde_json::to_value(damage_embed(&DamageReport::build(&report, &fights, crowded_ability("Coalesced Venom", 40), None, 0))).unwrap();
+        assert!(long["fields"][0]["value"].as_str().unwrap().chars().count() <= MAX_FIELD_CHARS);
+
+        // With no filter it covers every boss; with no pulls or no damage it says so rather than send an empty field.
+        let all = DamageReport::build(&report, &fights, AbilityDamage::build(&tracked(1, "Fire"), HashMap::new()), None, 0);
+        assert_eq!(all.scope, "All Mythic bosses");
+        let value = serde_json::to_value(damage_embed(&all)).unwrap();
+        let nobody = value["fields"][0]["value"].as_str().unwrap();
+        assert!(nobody.starts_with("Nobody took damage from this in those pulls.") && nobody.contains("check the ability ID") && nobody.len() <= MAX_FIELD_CHARS);
+        let empty = DamageReport::build(&report, &[], AbilityDamage::build(&tracked(1, "Fire"), HashMap::new()), None, 0);
+        let value = serde_json::to_value(damage_embed(&empty)).unwrap();
+        assert!(value["description"].as_str().unwrap().contains("No Mythic boss pulls") && value["fields"].is_null());
+    }
+
     /// Calls the real API with a public report:
     /// `WCL_CLIENT_ID=... WCL_CLIENT_SECRET=... WCL_TEST_REPORT=<code> WCL_TEST_GUILD=<id> WCL_TEST_UPLOADER=<id>
-    /// cargo test -- --ignored --nocapture`.
+    /// WCL_TEST_ABILITY=<id> cargo test -- --ignored --nocapture`.
     #[tokio::test]
-    #[ignore = "needs WCL_CLIENT_ID, WCL_CLIENT_SECRET, WCL_TEST_REPORT, WCL_TEST_GUILD and WCL_TEST_UPLOADER, and calls the real Warcraft Logs API"]
+    #[ignore = "needs WCL_CLIENT_ID, WCL_CLIENT_SECRET, WCL_TEST_REPORT, WCL_TEST_GUILD, WCL_TEST_UPLOADER and WCL_TEST_ABILITY, and calls the real Warcraft Logs API"]
     async fn the_real_api_returns_an_overview_and_finds_the_newest_report() {
         let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} must be set"));
         let client = WarcraftLogs::new(reqwest::Client::new(), var("WCL_CLIENT_ID"), var("WCL_CLIENT_SECRET"));
+        let ability = tracked(var("WCL_TEST_ABILITY").parse().unwrap(), "Tracked ability");
 
-        let overview = client.overview(&var("WCL_TEST_REPORT")).await.unwrap();
+        let overview = client.overview(&var("WCL_TEST_REPORT"), std::slice::from_ref(&ability), &[]).await.unwrap();
         let pulls: u32 = overview.encounters.iter().map(|encounter| encounter.pulls).sum();
         let counted: u32 = overview.deaths.iter().map(|player| player.count).sum();
-        println!("{}\n{}", overview_description(&overview), ranked_list(&overview.deaths, MOST_DEATHS_SHOWN, MAX_FIELD_CHARS));
-        println!("{}", ranked_list(&overview.first_deaths, FIRST_DEATHS_SHOWN, MAX_FIELD_CHARS));
+        println!("{}\n{}", overview_description(&overview), ranked_list(&death_rows(&overview.deaths), MOST_DEATHS_SHOWN, MAX_FIELD_CHARS));
+        println!("{}", ranked_list(&death_rows(&overview.first_deaths), FIRST_DEATHS_SHOWN, MAX_FIELD_CHARS));
 
         assert!(pulls > 0 && counted > 0);
         // Two deaths per pull, or a few more where several died at the very moment of the cutoff.
         assert!(counted <= pulls * 3, "{counted} deaths counted in {pulls} pulls: the cutoff wasn't applied");
+
+        // The overview's damage for the ability is the same as asking for it alone, over every pull.
+        let (name, value) = damage_field(&overview.damage[0], DAMAGE_SHOWN_IN_OVERVIEW, pulls);
+        println!("{name}\n{value}");
+        assert!(!overview.damage[0].players.is_empty());
+        let alone = client.damage_report(&var("WCL_TEST_REPORT"), None, &ability, &[]).await.unwrap();
+        assert_eq!(alone.ability.players, overview.damage[0].players);
+        assert_eq!(alone.pulls as u32, pulls);
+        println!("{}", ranked_list(&damage_rows(&alone.ability), DAMAGE_SHOWN, MAX_FIELD_CHARS));
+
+        // One boss only, and a boss the report doesn't have.
+        let boss = overview.encounters[0].name.clone();
+        let one = client.damage_report(&var("WCL_TEST_REPORT"), Some(&boss.to_uppercase()), &ability, &[]).await.unwrap();
+        assert!(one.ability.total <= alone.ability.total);
+        assert!(client.damage_report(&var("WCL_TEST_REPORT"), Some("no such boss"), &ability, &[]).await.is_err());
+
+        // Ignoring the two players who took the most (one typed in capitals) removes them everywhere,
+        // and their damage from the total.
+        let (first, second) = (alone.ability.players[0].clone(), alone.ability.players[1].clone());
+        let ignored = [first.name.to_uppercase(), second.name.clone()];
+        let hidden = client.damage_report(&var("WCL_TEST_REPORT"), None, &ability, &ignored).await.unwrap();
+        assert!(hidden.ability.players.iter().all(|player| player.name != first.name && player.name != second.name));
+        assert_eq!(hidden.ability.total, alone.ability.total - first.total - second.total);
+        assert_eq!(hidden.ignored, 2);
+        let without = client.overview(&var("WCL_TEST_REPORT"), std::slice::from_ref(&ability), &ignored).await.unwrap();
+        assert!(without.deaths.iter().chain(&without.first_deaths).all(|player| player.name != first.name && player.name != second.name));
+        assert!(footer_text(without.ignored).contains("2 ignored players are left out."));
+        println!("with {} and {} ignored:\n{}", first.name, second.name, damage_field(&without.damage[0], DAMAGE_SHOWN_IN_OVERVIEW, pulls).1);
 
         let source = WclSource { guild_id: var("WCL_TEST_GUILD").parse().unwrap(), uploader_id: var("WCL_TEST_UPLOADER").parse().unwrap() };
         let newest = client.latest_report_code(&source).await.unwrap();
@@ -690,7 +1259,58 @@ mod tests {
 
         let nobody = WclSource { uploader_id: 1, ..source };
         assert_eq!(client.latest_report_code(&nobody).await.unwrap(), None);
-        assert!(client.overview("doesnotexist1234").await.is_err());
+        assert!(client.overview("doesnotexist1234", &[], &[]).await.is_err());
+    }
+
+    #[test]
+    fn ignored_players_are_matched_ignoring_case_and_left_out_of_damage_and_totals() {
+        let ignored = ignored_set(&["TRITONIAN".to_string(), "aâyo".to_string()]);
+        assert!(is_ignored(&ignored, "Tritonian"));
+        assert!(is_ignored(&ignored, "Aâyo"));
+        assert!(!is_ignored(&ignored, "Tritonia"));
+        assert!(!is_ignored(&HashSet::new(), "Tritonian"));
+
+        let entry = |name: &str, total: f64| DamageEntry { name: name.to_string(), class: "Rogue".to_string(), total };
+        let mut players = HashMap::new();
+        add_damage(&mut players, &[entry("Tritonian", 900.0), entry("Aâyo", 50.0), entry("Rè", 100.0)], &ignored);
+
+        let ability = AbilityDamage::build(&tracked(1, "Fire"), players);
+        // Only Rè is left, and the total is theirs alone, so their share is all of it.
+        assert_eq!(ability.players.len(), 1);
+        assert_eq!(ability.total, 100);
+        assert_eq!(damage_rows(&ability)[0].value, "100 (100.0%)");
+    }
+
+    #[test]
+    fn the_footer_says_how_many_players_are_left_out() {
+        assert!(!footer_text(0).contains("left out"));
+        assert!(footer_text(1).ends_with(" 1 ignored player is left out."));
+        assert!(footer_text(3).ends_with(" 3 ignored players are left out."));
+
+        // An overview and a damage report both carry it.
+        let overview = Overview::build(&report(&[("Zul'jan", false, false)]), &[], Vec::new(), 2);
+        let value = serde_json::to_value(overview_embed(&overview)).unwrap();
+        assert!(value["footer"]["text"].as_str().unwrap().ends_with("2 ignored players are left out."));
+        let night = report(&[("Zul'jan", false, false)]);
+        let damage = DamageReport::build(&night, &[&night.fights[0]], AbilityDamage::build(&tracked(1, "Fire"), HashMap::new()), None, 1);
+        let value = serde_json::to_value(damage_embed(&damage)).unwrap();
+        assert!(value["footer"]["text"].as_str().unwrap().ends_with("1 ignored player is left out."));
+    }
+
+    #[test]
+    fn the_total_of_an_ability_is_the_sum_over_the_night() {
+        // Two players' damage added up is the total shown, however many pulls it came from.
+        let mut players = HashMap::new();
+        players.insert("A".to_string(), ("Rogue".to_string(), 600_000_000u64));
+        players.insert("B".to_string(), ("Druid".to_string(), 97_716_688u64));
+        let ability = AbilityDamage::build(&tracked(1285017, "Axegrinder"), players);
+
+        let (name, value) = damage_field(&ability, DAMAGE_SHOWN_IN_OVERVIEW, 34);
+        assert_eq!(name, "Axegrinder — damage taken");
+        assert_eq!(value.lines().next().unwrap(), "Total: **697.7M** over 34 pulls");
+        assert_eq!(plural(1, "pull"), "1 pull");
+        assert_eq!(plural(0, "pull"), "0 pulls");
+        assert!(value.chars().count() <= MAX_FIELD_CHARS);
     }
 
     #[test]

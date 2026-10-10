@@ -60,7 +60,7 @@ pub async fn help(
 /// Shown under the command list. Says who can use what, which the generated list doesn't.
 const HELP_FOOTER: &str = "\
 Use /help <command> for details and subcommands, e.g. /help settings.
-Settings: administrators and moderators. Announcements, Warcraft Logs and Debug: moderators.
+Settings and Warcraft Logs: administrators and moderators. Announcements and Debug: moderators.
 get_timeline_reminders and submit_droptimizer: raiders, trials and moderators.";
 
 /// Resolves a query like `settings raid_voice` (a leading `/` or `?` is ignored) to that command,

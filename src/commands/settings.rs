@@ -6,6 +6,8 @@ use crate::personal_officer_channels;
 use crate::raid_notes;
 use crate::schedules;
 use crate::types::bot::{Context, Error};
+use crate::wcl_ignored_players::{self, AddOutcome as IgnoreOutcome};
+use crate::wcl_mechanics::{self, AddOutcome};
 
 const TEXT_CHANNEL_TYPES: &[ChannelType] = &[ChannelType::Text, ChannelType::News];
 
@@ -47,6 +49,12 @@ const MAX_LIST_CHARS: usize = 4000;
         "wowutils",
         "wcl_channel",
         "wcl_source",
+        "wcl_mechanic_add",
+        "wcl_mechanic_remove",
+        "wcl_mechanic_list",
+        "wcl_ignore_add",
+        "wcl_ignore_remove",
+        "wcl_ignore_list",
         "clear",
     ),
     subcommand_required,
@@ -100,6 +108,22 @@ async fn show(ctx: Context<'_>) -> Result<(), Error> {
         None => "Not set".to_string(),
     };
 
+    // Names are limited when they're added (`wcl_mechanics::MAX_NAME_CHARS`, `MAX_TRACKED`), so
+    // the list always fits in one field.
+    let wcl_abilities = wcl_mechanics::list(&ctx.data().db, guild_id).await?;
+    let wcl_abilities = if wcl_abilities.is_empty() {
+        "None".to_string()
+    } else {
+        wcl_abilities.iter().map(|ability| ability.name.as_str()).collect::<Vec<_>>().join(", ")
+    };
+
+    // Only how many: the names can add up to more than a field holds, and `wcl_ignore_list` has them.
+    let wcl_ignored = match wcl_ignored_players::list(&ctx.data().db, guild_id).await?.len() {
+        0 => "None".to_string(),
+        1 => "1 player".to_string(),
+        count => format!("{count} players"),
+    };
+
     let embed = crate::helper::create_base_embed(&ctx)
         .title("Server Settings")
         .field(Setting::ModRole.name(), role(settings.mod_role_id), true)
@@ -115,7 +139,9 @@ async fn show(ctx: Context<'_>) -> Result<(), Error> {
         .field(ClearTarget::BartToken.name(), if settings.bart_token.is_some() { "Set" } else { "Not set" }, true)
         .field(ClearTarget::WowUtils.name(), if settings.wowutils_token.is_some() { "Set" } else { "Not set" }, true)
         .field(Setting::WclChannel.name(), channel(settings.wcl_channel_id), true)
-        .field(ClearTarget::WclSource.name(), wcl_source, true);
+        .field(ClearTarget::WclSource.name(), wcl_source, true)
+        .field("Warcraft Logs abilities", wcl_abilities, false)
+        .field("Warcraft Logs ignored players", wcl_ignored, true);
 
     ctx.send(CreateReply::default().embed(embed)).await?;
     Ok(())
@@ -431,6 +457,124 @@ async fn wcl_source(
 
     ctx.data().guild_settings.set_wcl_source(guild_id, Some(WclSource { guild_id: guild, uploader_id: uploader })).await?;
     reply(ctx, format!("{} set to guild {guild}, uploader {uploader}.", ClearTarget::WclSource.name())).await
+}
+
+/// Track an ability in the Warcraft Logs overview, to see who took damage from it
+///
+/// Give a name to show and the ability's ID as Warcraft Logs logs its damage: click the ability in a
+/// report's Damage Taken tab. It can differ from the ID on Wowhead, and one ability can be logged
+/// under more than one ID. Adding an ability that is already tracked renames it.
+#[poise::command(prefix_command, slash_command, ephemeral)]
+async fn wcl_mechanic_add(
+    ctx: Context<'_>,
+    #[description = "Name to show, e.g. Coalesced Venom"] name: String,
+    #[description = "The game's ability (spell) ID"] ability_id: u32,
+) -> Result<(), Error> {
+    let guild_id = require_guild(ctx)?;
+
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > wcl_mechanics::MAX_NAME_CHARS {
+        return reply(ctx, format!("The name has to be 1 to {} characters.", wcl_mechanics::MAX_NAME_CHARS)).await;
+    }
+    // The API's IDs are signed 32-bit integers, and zero is never one.
+    if !(1..=i32::MAX as u32).contains(&ability_id) {
+        return reply(ctx, "That isn't a valid ability ID. It's a positive whole number.".to_string()).await;
+    }
+
+    let message = match wcl_mechanics::add(&ctx.data().db, guild_id, ability_id, name).await? {
+        AddOutcome::Added => format!("Tracking **{name}** (ability {ability_id})."),
+        AddOutcome::Renamed => format!("Ability {ability_id} is now called **{name}**."),
+        AddOutcome::NameTaken(other) => format!("Another ability (ID {other}) is already called **{name}**. Pick a different name."),
+        AddOutcome::Full => format!(
+            "This server already tracks {} abilities. Remove one with `/settings wcl_mechanic_remove` first.",
+            wcl_mechanics::MAX_TRACKED
+        ),
+    };
+    reply(ctx, message).await
+}
+
+/// Stop tracking an ability in the Warcraft Logs overview
+#[poise::command(prefix_command, slash_command, ephemeral)]
+async fn wcl_mechanic_remove(
+    ctx: Context<'_>,
+    #[description = "Tracked ability to remove"]
+    #[autocomplete = "crate::commands::wcl::autocomplete_ability"]
+    name: String,
+) -> Result<(), Error> {
+    let guild_id = require_guild(ctx)?;
+
+    if wcl_mechanics::remove(&ctx.data().db, guild_id, name.trim()).await? {
+        reply(ctx, format!("No longer tracking **{}**.", name.trim())).await
+    } else {
+        reply(ctx, format!("No tracked ability is called **{}**. See `/settings wcl_mechanic_list`.", name.trim())).await
+    }
+}
+
+/// List the abilities tracked in the Warcraft Logs overview
+#[poise::command(prefix_command, slash_command, ephemeral)]
+async fn wcl_mechanic_list(ctx: Context<'_>) -> Result<(), Error> {
+    let guild_id = require_guild(ctx)?;
+
+    let tracked = wcl_mechanics::list(&ctx.data().db, guild_id).await?;
+    if tracked.is_empty() {
+        return reply(ctx, "No abilities are tracked. Add one with `/settings wcl_mechanic_add`.".to_string()).await;
+    }
+
+    let lines: Vec<String> = tracked.iter().map(|ability| format!("**{}** — ability {}", ability.name, ability.ability_id)).collect();
+    reply(ctx, format!("Tracked abilities ({} of {}):\n{}", tracked.len(), wcl_mechanics::MAX_TRACKED, lines.join("\n"))).await
+}
+
+/// Leave a player out of the Warcraft Logs overview
+///
+/// An ignored player appears in no ranking, and what they took doesn't count towards any total. Give
+/// the character name; capitals don't matter. A server can ignore 50 players.
+#[poise::command(prefix_command, slash_command, ephemeral)]
+async fn wcl_ignore_add(ctx: Context<'_>, #[description = "Character name, e.g. Tritonian"] name: String) -> Result<(), Error> {
+    let guild_id = require_guild(ctx)?;
+
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > wcl_ignored_players::MAX_NAME_CHARS {
+        return reply(ctx, format!("The name has to be 1 to {} characters.", wcl_ignored_players::MAX_NAME_CHARS)).await;
+    }
+
+    let message = match wcl_ignored_players::add(&ctx.data().db, guild_id, name).await? {
+        IgnoreOutcome::Added => format!("**{name}** is now left out of the Warcraft Logs overview."),
+        IgnoreOutcome::AlreadyIgnored => format!("**{name}** is already ignored."),
+        IgnoreOutcome::Full => format!(
+            "This server already ignores {} players. Remove one with `/settings wcl_ignore_remove` first.",
+            wcl_ignored_players::MAX_IGNORED
+        ),
+    };
+    reply(ctx, message).await
+}
+
+/// Show a player in the Warcraft Logs overview again
+#[poise::command(prefix_command, slash_command, ephemeral)]
+async fn wcl_ignore_remove(
+    ctx: Context<'_>,
+    #[description = "Ignored character to show again"]
+    #[autocomplete = "crate::commands::wcl::autocomplete_ignored_player"]
+    name: String,
+) -> Result<(), Error> {
+    let guild_id = require_guild(ctx)?;
+
+    if wcl_ignored_players::remove(&ctx.data().db, guild_id, name.trim()).await? {
+        reply(ctx, format!("**{}** is no longer ignored.", name.trim())).await
+    } else {
+        reply(ctx, format!("**{}** isn't ignored. See `/settings wcl_ignore_list`.", name.trim())).await
+    }
+}
+
+/// List the players left out of the Warcraft Logs overview
+#[poise::command(prefix_command, slash_command, ephemeral)]
+async fn wcl_ignore_list(ctx: Context<'_>) -> Result<(), Error> {
+    let guild_id = require_guild(ctx)?;
+
+    let ignored = wcl_ignored_players::list(&ctx.data().db, guild_id).await?;
+    if ignored.is_empty() {
+        return reply(ctx, "No players are ignored. Add one with `/settings wcl_ignore_add`.".to_string()).await;
+    }
+    reply(ctx, format!("Ignored players ({} of {}): {}", ignored.len(), wcl_ignored_players::MAX_IGNORED, ignored.join(", "))).await
 }
 
 /// Everything `/settings clear` can clear: each ID setting, plus the credentials.

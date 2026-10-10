@@ -1,4 +1,4 @@
-use poise::serenity_prelude::RoleId;
+use poise::serenity_prelude::{GuildId, RoleId};
 use crate::types::bot::{Context, Error};
 
 pub async fn check_is_moderator(ctx: Context<'_>) -> Result<bool, Error> {
@@ -48,12 +48,19 @@ pub async fn check_is_admin_or_moderator(ctx: Context<'_>) -> Result<bool, Error
         return Ok(false);
     };
 
-    let mod_role_id = ctx.data().guild_settings.get(guild_id).mod_role_id;
-    let allowed = is_administrator(ctx) || mod_role_id.is_some_and(|role_id| is_some_role(ctx, &role_id));
+    let allowed = is_admin_or_moderator(ctx, guild_id);
     if !allowed {
         reply_denied(ctx, "This command is only available to administrators and moderators.").await?;
     }
     Ok(allowed)
+}
+
+/// Whether the invoking member is an administrator or holds `guild_id`'s registered moderator role.
+/// Unlike the checks above this never replies, so it can gate things a check can't, such as a
+/// command's autocomplete (poise doesn't run a command's checks for those).
+pub fn is_admin_or_moderator(ctx: Context<'_>, guild_id: GuildId) -> bool {
+    let mod_role_id = ctx.data().guild_settings.get(guild_id).mod_role_id;
+    is_administrator(ctx) || mod_role_id.is_some_and(|role_id| is_some_role(ctx, &role_id))
 }
 
 /// Gate for changing which role is the moderator role. Moderators can use the rest of
