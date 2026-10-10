@@ -121,11 +121,12 @@ always restricted to administrators:
 | `/settings officer_category <category>` | Category that personal officer channels are created under |
 | `/settings raid_notes_channel <channel>` | Forum channel for the weekly raid notes post |
 | `/settings raid_notes_cron <expression>` | When the raid notes post is created (cron expression, Eastern time) |
-| `/settings replay_user <user>` | Member whose self-deleted messages are reposted |
+| `/settings raid_voice <channel> <start> <end>` | Raid voice channel, and the cron schedules for the start and end of raid, for attendance |
+| `/settings replay_add <user>` / `replay_remove <user>` | Members whose self-deleted messages are reposted |
 | `/settings clips_add <channel>` / `clips_remove <channel>` | Channels restricted to video-only messages |
 | `/settings bart_token <token>` | Bart Timeline Reminders token shown to this server's raiders |
 | `/settings wowutils <token> <group_id>` | WowUtils API token and the group droptimizer reports are submitted to |
-| `/settings clear <setting>` | Clears one of the settings above (clips channels use `clips_remove`) |
+| `/settings clear <setting>` | Clears one of the settings above (clips channels and replay users have their own `_remove` commands) |
 
 Before saving, the bot checks with Discord that the role, channel or member actually belongs to the
 server the command was run in, and that a channel is the right type (a forum for raid notes, a
@@ -145,8 +146,8 @@ Note: the bot needs the **Manage Messages** permission in any clips channel to d
 
 ### Delete-and-replay
 
-If a replay user is registered (`/settings replay_user`), the bot keeps the last few messages that
-user posts in that server in memory, and
+A server can register any number of replay users (`/settings replay_add`, and `replay_remove` to
+take one off). The bot keeps the last few messages those users post in that server in memory, and
 when one of them is deleted it reposts the content in the same channel as an embed (author line
 with their name/avatar, the message text as the description, the original timestamp, and the
 first image attachment rendered inline — other attachments are listed as links). It **doesn't**
@@ -192,7 +193,7 @@ The bot needs the **Manage Channels** permission and must be able to see the off
 ### Weekly raid notes
 
 On a cron schedule (default: every **Friday at 9:00 AM Eastern**), the bot creates a new forum post
-titled `Week of <Mon> <day> - <Sun> <day>` in each server's registered raid notes channel
+titled `Week of <Tue> <day> - <Mon> <day>` in each server's registered raid notes channel
 (`/settings raid_notes_channel`), with a placeholder starter message. It must be a **forum channel** —
 the bot needs permission to create posts there.
 
@@ -203,6 +204,38 @@ expression (`sec min hour day-of-month month day-of-week [year]`); a server that
 `0 0 9 * * Tue *` (Tuesdays 9:00 AM), `0 30 17 * * Fri *` (Fridays 5:30 PM). Expressions that never
 fire, or fire more than once an hour, are rejected. A changed schedule is picked up within a minute,
 without a restart. See `src/raid_notes.rs`.
+
+A week runs Tuesday (the weekly reset) to Monday: a post or snapshot on a Tuesday belongs
+to the week starting that day, and one on a Monday belongs to the week that started six days earlier.
+The bot records the thread it creates for each week in the `raid_notes_posts` table and never creates
+a second one for the same week. If raid attendance (below) has already opened the week's thread, the
+schedule finds it there and does nothing.
+
+### Raid attendance
+
+With `/settings raid_voice <channel> <start> <end>`, a server marks its raid voice channel and gives
+two cron schedules, one firing at the start of each raid and one at the end, e.g.
+`0 0 20 * * Tue,Thu *` and `0 0 23 * * Tue,Thu *` for 8 to 11 PM on Tuesdays and Thursdays. They use
+the same format, timezone (`America/New_York`) and once-an-hour limit as the raid notes schedule.
+
+Each time either schedule fires, the bot lists everyone connected to that voice channel at that
+moment and posts the list as an embed, titled "start" or "end" with the time, in the raid notes thread for that
+week (Tuesday to Monday). If the week has no thread yet, which is the usual case when raids happen
+before the raid notes schedule fires, the bot creates it then. Members are shown as mentions but are
+not pinged, and bot accounts are left out.
+
+This needs a registered raid notes channel, and the bot must be able to see the voice channel.
+`/test_raid_attendance` (moderators) takes a snapshot immediately, and `/settings clear` with "Raid
+attendance" turns the feature off.
+
+After the end snapshot the bot posts a third embed, a summary comparing it with that raid's start
+snapshot: how many were there at both, who left before the end, and who joined after the start. The
+start snapshot is kept in the `raid_attendance_starts` table until then, so a bot restart mid-raid
+doesn't lose it. A start is only compared with an end in the same voice channel within 12 hours;
+otherwise the summary says there was no start to compare against.
+
+Only the two moments are recorded: someone who joins and leaves in between appears in neither list.
+See `src/raid_attendance.rs`.
 
 ### Announcements
 

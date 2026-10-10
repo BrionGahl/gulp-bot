@@ -15,7 +15,8 @@ pub struct GuildSettings {
     pub trial_role_id: Option<RoleId>,
     pub personal_officer_category_id: Option<ChannelId>,
     pub raid_notes_channel_id: Option<ChannelId>,
-    pub replay_user_id: Option<UserId>,
+    /// Members whose self-deleted messages the bot reposts.
+    pub replay_user_ids: HashSet<UserId>,
     pub clips_channel_ids: HashSet<ChannelId>,
     /// Bart Timeline Reminders access token handed to this server's raiders.
     pub bart_token: Option<String>,
@@ -25,6 +26,18 @@ pub struct GuildSettings {
     pub wowutils_group_id: Option<String>,
     /// When the raid notes post is created; `None` means `raid_notes::DEFAULT_RAID_NOTES_CRON`.
     pub raid_notes_cron: Option<Schedule>,
+    /// Raid attendance tracking; `None` means it's off for this guild.
+    pub raid_voice: Option<RaidVoice>,
+}
+
+/// A guild's raid voice channel and when to record who is in it. See `raid_attendance.rs`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RaidVoice {
+    pub channel_id: ChannelId,
+    /// Fires at the start of each raid.
+    pub start: Schedule,
+    /// Fires at the end of each raid.
+    pub end: Schedule,
 }
 
 /// A single-valued ID setting, i.e. one of the BIGINT columns of the `guild_settings` table.
@@ -40,8 +53,6 @@ pub enum Setting {
     PersonalOfficerCategory,
     #[name = "Raid notes channel"]
     RaidNotesChannel,
-    #[name = "Replay user"]
-    ReplayUser,
 }
 
 impl Setting {
@@ -52,7 +63,6 @@ impl Setting {
             Setting::TrialRole => "trial_role_id",
             Setting::PersonalOfficerCategory => "personal_officer_category_id",
             Setting::RaidNotesChannel => "raid_notes_channel_id",
-            Setting::ReplayUser => "replay_user_id",
         }
     }
 }
@@ -74,8 +84,9 @@ impl GuildSettingsStore {
 
         let rows = sqlx::query(
             "SELECT guild_id, mod_role_id, raider_role_id, trial_role_id, personal_officer_category_id, \
-             raid_notes_channel_id, replay_user_id, \
-             bart_token, wowutils_token, wowutils_group_id, raid_notes_cron FROM guild_settings",
+             raid_notes_channel_id, \
+             bart_token, wowutils_token, wowutils_group_id, raid_notes_cron, \
+             raid_voice_channel_id, raid_voice_start_cron, raid_voice_end_cron FROM guild_settings",
         )
         .fetch_all(&pool)
         .await?;
@@ -95,18 +106,36 @@ impl GuildSettingsStore {
                     .ok()
             });
 
+            // Same reasoning as the raid notes cron above: an unreadable expression turns the
+            // feature off for that guild rather than stopping the bot.
+            let raid_voice = match (
+                id("raid_voice_channel_id")?,
+                row.try_get::<Option<String>, _>("raid_voice_start_cron")?,
+                row.try_get::<Option<String>, _>("raid_voice_end_cron")?,
+            ) {
+                (Some(channel_id), Some(start), Some(end)) => match (start.parse::<Schedule>(), end.parse::<Schedule>()) {
+                    (Ok(start), Ok(end)) => Some(RaidVoice { channel_id: ChannelId::new(channel_id), start, end }),
+                    _ => {
+                        warn!("Ignoring unreadable raid attendance schedule (`{start}` / `{end}`) for guild {guild_id}");
+                        None
+                    }
+                },
+                _ => None,
+            };
+
             cache.insert(guild_id, GuildSettings {
                 mod_role_id: id("mod_role_id")?.map(RoleId::new),
                 raider_role_id: id("raider_role_id")?.map(RoleId::new),
                 trial_role_id: id("trial_role_id")?.map(RoleId::new),
                 personal_officer_category_id: id("personal_officer_category_id")?.map(ChannelId::new),
                 raid_notes_channel_id: id("raid_notes_channel_id")?.map(ChannelId::new),
-                replay_user_id: id("replay_user_id")?.map(UserId::new),
+                replay_user_ids: HashSet::new(),
                 clips_channel_ids: HashSet::new(),
                 bart_token: row.try_get("bart_token")?,
                 wowutils_token: row.try_get("wowutils_token")?,
                 wowutils_group_id: row.try_get("wowutils_group_id")?,
                 raid_notes_cron,
+                raid_voice,
             });
         }
 
@@ -118,6 +147,16 @@ impl GuildSettingsStore {
             let guild_id = GuildId::new(row.try_get::<i64, _>("guild_id")? as u64);
             let channel_id = ChannelId::new(row.try_get::<i64, _>("channel_id")? as u64);
             cache.entry(guild_id).or_default().clips_channel_ids.insert(channel_id);
+        }
+
+        let rows = sqlx::query("SELECT guild_id, user_id FROM guild_replay_users")
+            .fetch_all(&pool)
+            .await?;
+
+        for row in rows {
+            let guild_id = GuildId::new(row.try_get::<i64, _>("guild_id")? as u64);
+            let user_id = UserId::new(row.try_get::<i64, _>("user_id")? as u64);
+            cache.entry(guild_id).or_default().replay_user_ids.insert(user_id);
         }
 
         Ok(Self { pool, cache: RwLock::new(cache) })
@@ -155,7 +194,6 @@ impl GuildSettingsStore {
             Setting::TrialRole => settings.trial_role_id = value.map(RoleId::new),
             Setting::PersonalOfficerCategory => settings.personal_officer_category_id = value.map(ChannelId::new),
             Setting::RaidNotesChannel => settings.raid_notes_channel_id = value.map(ChannelId::new),
-            Setting::ReplayUser => settings.replay_user_id = value.map(UserId::new),
         }
         Ok(())
     }
@@ -211,6 +249,49 @@ impl GuildSettingsStore {
         Ok(())
     }
 
+    /// Registers this guild's raid voice channel and schedules, or turns attendance tracking off
+    /// when `None`.
+    pub async fn set_raid_voice(&self, guild_id: GuildId, raid_voice: Option<RaidVoice>) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO guild_settings (guild_id, raid_voice_channel_id, raid_voice_start_cron, raid_voice_end_cron) \
+             VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (guild_id) DO UPDATE SET raid_voice_channel_id = EXCLUDED.raid_voice_channel_id, \
+             raid_voice_start_cron = EXCLUDED.raid_voice_start_cron, raid_voice_end_cron = EXCLUDED.raid_voice_end_cron, \
+             updated_at = now()",
+        )
+        .bind(guild_id.get() as i64)
+        .bind(raid_voice.as_ref().map(|raid_voice| raid_voice.channel_id.get() as i64))
+        .bind(raid_voice.as_ref().map(|raid_voice| raid_voice.start.source()))
+        .bind(raid_voice.as_ref().map(|raid_voice| raid_voice.end.source()))
+        .execute(&self.pool)
+        .await?;
+
+        self.cache.write().unwrap().entry(guild_id).or_default().raid_voice = raid_voice;
+        Ok(())
+    }
+
+    pub async fn add_replay_user(&self, guild_id: GuildId, user_id: UserId) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT INTO guild_replay_users (guild_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+            .bind(guild_id.get() as i64)
+            .bind(user_id.get() as i64)
+            .execute(&self.pool)
+            .await?;
+
+        self.cache.write().unwrap().entry(guild_id).or_default().replay_user_ids.insert(user_id);
+        Ok(())
+    }
+
+    /// Returns whether `user_id` was registered as a replay user before this call.
+    pub async fn remove_replay_user(&self, guild_id: GuildId, user_id: UserId) -> Result<bool, sqlx::Error> {
+        sqlx::query("DELETE FROM guild_replay_users WHERE guild_id = $1 AND user_id = $2")
+            .bind(guild_id.get() as i64)
+            .bind(user_id.get() as i64)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(self.cache.write().unwrap().entry(guild_id).or_default().replay_user_ids.remove(&user_id))
+    }
+
     pub async fn add_clips_channel(&self, guild_id: GuildId, channel_id: ChannelId) -> Result<(), sqlx::Error> {
         sqlx::query("INSERT INTO guild_clips_channels (guild_id, channel_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
             .bind(guild_id.get() as i64)
@@ -245,7 +326,7 @@ mod tests {
         let url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
         let pool = PgPool::connect(&url).await.unwrap();
         sqlx::migrate!().run(&pool).await.unwrap();
-        sqlx::query("TRUNCATE guild_settings, guild_clips_channels").execute(&pool).await.unwrap();
+        sqlx::query("TRUNCATE guild_settings, guild_clips_channels, guild_replay_users").execute(&pool).await.unwrap();
 
         let guild_a = GuildId::new(111);
         let guild_b = GuildId::new(222);
@@ -255,12 +336,26 @@ mod tests {
         let store = GuildSettingsStore::load(pool.clone()).await.unwrap();
         store.set(guild_a, Setting::ModRole, Some(big_role)).await.unwrap();
         store.set(guild_a, Setting::RaidNotesChannel, Some(42)).await.unwrap();
-        store.set(guild_a, Setting::ReplayUser, Some(7)).await.unwrap();
-        store.set(guild_a, Setting::ReplayUser, None).await.unwrap();
+        store.set(guild_a, Setting::TrialRole, Some(7)).await.unwrap();
+        store.set(guild_a, Setting::TrialRole, None).await.unwrap();
+        store.add_replay_user(guild_a, UserId::new(8)).await.unwrap();
+        store.add_replay_user(guild_a, UserId::new(9)).await.unwrap();
+        store.add_replay_user(guild_a, UserId::new(9)).await.unwrap();
+        store.add_replay_user(guild_b, UserId::new(8)).await.unwrap();
+        assert!(store.remove_replay_user(guild_a, UserId::new(8)).await.unwrap());
+        assert!(!store.remove_replay_user(guild_a, UserId::new(8)).await.unwrap());
         let tuesdays: Schedule = "0 30 17 * * Tue *".parse().unwrap();
         store.set_raid_notes_cron(guild_a, Some(tuesdays.clone())).await.unwrap();
         store.set_raid_notes_cron(guild_b, Some(tuesdays.clone())).await.unwrap();
         store.set_raid_notes_cron(guild_b, None).await.unwrap();
+        let raid_voice = RaidVoice {
+            channel_id: ChannelId::new(77),
+            start: "0 0 20 * * Tue,Thu *".parse().unwrap(),
+            end: "0 0 23 * * Tue,Thu *".parse().unwrap(),
+        };
+        store.set_raid_voice(guild_a, Some(raid_voice.clone())).await.unwrap();
+        store.set_raid_voice(guild_b, Some(raid_voice.clone())).await.unwrap();
+        store.set_raid_voice(guild_b, None).await.unwrap();
         store.set_bart_token(guild_a, Some("bart-a")).await.unwrap();
         store.set_wowutils(guild_a, Some(("wow-a", "group-a"))).await.unwrap();
         store.set_bart_token(guild_b, Some("bart-b")).await.unwrap();
@@ -278,13 +373,17 @@ mod tests {
             let a = store.get(guild_a);
             assert_eq!(a.mod_role_id, Some(RoleId::new(big_role)));
             assert_eq!(a.raid_notes_channel_id, Some(ChannelId::new(42)));
-            assert_eq!(a.replay_user_id, None);
+            assert_eq!(a.trial_role_id, None);
+            // Removing one replay user leaves the guild's others, and other guilds, alone.
+            assert_eq!(a.replay_user_ids, HashSet::from([UserId::new(9)]));
+            assert_eq!(store.get(guild_b).replay_user_ids, HashSet::from([UserId::new(8)]));
             assert_eq!(a.raider_role_id, None);
             assert_eq!(a.clips_channel_ids, HashSet::from([ChannelId::new(5)]));
             assert_eq!(a.bart_token.as_deref(), Some("bart-a"));
             assert_eq!(a.wowutils_token.as_deref(), Some("wow-a"));
             assert_eq!(a.wowutils_group_id.as_deref(), Some("group-a"));
             assert_eq!(a.raid_notes_cron.as_ref(), Some(&tuesdays));
+            assert_eq!(a.raid_voice.as_ref(), Some(&raid_voice));
 
             let b = store.get(guild_b);
             assert_eq!(b.mod_role_id, None);
@@ -295,6 +394,7 @@ mod tests {
             assert_eq!(b.wowutils_token, None);
             assert_eq!(b.wowutils_group_id, None);
             assert_eq!(b.raid_notes_cron, None);
+            assert_eq!(b.raid_voice, None);
         }
     }
 }

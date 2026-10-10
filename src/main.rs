@@ -12,6 +12,7 @@ mod mentions;
 mod message_replay;
 mod guild_settings;
 mod schedules;
+mod raid_attendance;
 
 use poise::serenity_prelude::{self as serenity, GatewayIntents};
 use tracing_subscriber::prelude::*;
@@ -79,6 +80,7 @@ async fn main() {
             commands::utilities::help(),
             commands::utilities::register(),
             commands::mod_debug::test_raid_notes(),
+            commands::mod_debug::test_raid_attendance(),
             commands::mod_debug::test_replay(),
             commands::settings::settings(),
             commands::announcement::announcement(),
@@ -130,7 +132,8 @@ async fn main() {
         .unwrap();
 
     tokio::spawn(health::serve());
-    tokio::spawn(raid_notes::schedule_weekly_posts(client.http.clone(), guild_settings.clone()));
+    tokio::spawn(raid_notes::schedule_weekly_posts(client.http.clone(), pool.clone(), guild_settings.clone()));
+    tokio::spawn(raid_attendance::schedule_snapshots(client.http.clone(), client.cache.clone(), pool.clone(), guild_settings.clone()));
     tokio::spawn(announcements::schedule_announcements(client.http.clone(), pool, guild_settings));
 
     client.start().await.unwrap()

@@ -33,8 +33,11 @@ struct AnnouncementModal {
 
 /// Schedule, list and delete this server's recurring announcements. Officers only.
 ///
-/// The moderator check and `guild_only` are set here once: poise applies a parent command's
-/// checks to all of its subcommands.
+/// Slash commands only. Schedules are cron expressions evaluated in Eastern time.
+//
+// The moderator check and `guild_only` are set here once: poise applies a parent command's
+// checks to all of its subcommands. (Kept out of the doc comment, which poise shows to users in
+// `/help announcement`.)
 #[poise::command(
     slash_command,
     guild_only,

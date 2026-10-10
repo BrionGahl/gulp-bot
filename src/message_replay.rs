@@ -55,15 +55,17 @@ struct SeenDeletion {
     count: u64,
 }
 
-/// Remembers each guild's replay user's recent messages and, when one is deleted, reposts it — unless
+/// Remembers each guild's replay users' recent messages and, when one is deleted, reposts it — unless
 /// the audit log shows someone other than the author (i.e. a moderator) deleted it.
 #[derive(Debug)]
 pub struct MessageReplay {
     messages: Mutex<MessageBuffer>,
-    /// The most recent MESSAGE_DELETE audit log entry we've already attributed to a moderator.
-    /// Discord coalesces repeat deletions by the same mod into a single entry (bumping its
-    /// `count`), so tracking this lets us still recognise each subsequent deletion.
-    last_seen_deletion: Mutex<Option<SeenDeletion>>,
+    /// The most recent MESSAGE_DELETE audit log entry we've already seen for each (guild, author,
+    /// channel). Discord coalesces repeat deletions by the same mod into a single entry (bumping
+    /// its `count`), so tracking this lets us still recognise each subsequent deletion. It's kept
+    /// per author and channel because the lookup is: with several replay users, one user's entry
+    /// must not be compared against another's.
+    last_seen_deletion: Mutex<HashMap<(GuildId, UserId, ChannelId), SeenDeletion>>,
 }
 
 #[derive(Debug, Default)]
@@ -76,7 +78,7 @@ impl MessageReplay {
     pub fn new() -> Self {
         Self {
             messages: Mutex::new(MessageBuffer::default()),
-            last_seen_deletion: Mutex::new(None),
+            last_seen_deletion: Mutex::new(HashMap::new()),
         }
     }
 
@@ -104,12 +106,11 @@ impl MessageReplay {
     }
 }
 
-/// Stores the message if it was written by the replay user registered for the guild it was posted
-/// in. No-op otherwise.
+/// Stores the message if it was written by one of the replay users registered for the guild it was
+/// posted in. No-op otherwise.
 pub async fn remember_message(data: &Data, message: &Message) {
     let Some(guild_id) = message.guild_id else { return };
-    let Some(target) = data.guild_settings.get(guild_id).replay_user_id else { return };
-    if message.author.id != target {
+    if !data.guild_settings.get(guild_id).replay_user_ids.contains(&message.author.id) {
         return;
     }
 
@@ -212,14 +213,15 @@ async fn deleted_by_moderator(
     let age_secs = Timestamp::now().unix_timestamp() - entry.id.created_at().unix_timestamp();
 
     let mut last_seen = replay.last_seen_deletion.lock().await;
-    let attributable = match *last_seen {
+    let key = (guild_id, target, channel_id);
+    let attributable = match last_seen.get(&key) {
         // Discord coalesces repeat deletions by one mod into a single entry, keeping its id and
         // bumping `count`, so a genuinely new deletion is either a new id or a higher count.
         Some(prev) => entry.id != prev.entry_id || count > prev.count,
         // Nothing to diff against yet: trust it only if it's recent enough to be this deletion.
         None => age_secs <= COLD_START_RECENT_SECS,
     };
-    *last_seen = Some(SeenDeletion { entry_id: entry.id, count });
+    last_seen.insert(key, SeenDeletion { entry_id: entry.id, count });
 
     Ok(attributable)
 }

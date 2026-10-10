@@ -1,7 +1,7 @@
 use poise::serenity_prelude::{ChannelId, ChannelType, CreateAllowedMentions, GuildId, RoleId, UserId};
 use poise::{ChoiceParameter, CreateReply};
 
-use crate::guild_settings::Setting;
+use crate::guild_settings::{RaidVoice, Setting};
 use crate::personal_officer_channels;
 use crate::raid_notes;
 use crate::schedules;
@@ -14,9 +14,13 @@ const MAX_LIST_CHARS: usize = 4000;
 
 /// View or change what this server has registered with the bot. Administrators and moderators.
 ///
-/// The check and `guild_only` are set here once: poise applies a parent command's checks to all
-/// of its subcommands. There is deliberately no `default_member_permissions`: Discord would hide
-/// the command from moderators who aren't administrators.
+/// Everything here applies only to the server the command is used in. Setting the moderator role
+/// is limited to administrators.
+//
+// The check and `guild_only` are set here once: poise applies a parent command's checks to all
+// of its subcommands. There is deliberately no `default_member_permissions`: Discord would hide
+// the command from moderators who aren't administrators. (Kept out of the doc comment, which
+// poise shows to users in `/help settings`.)
 #[poise::command(
     prefix_command,
     slash_command,
@@ -34,7 +38,9 @@ const MAX_LIST_CHARS: usize = 4000;
         "officer_channel_list",
         "raid_notes_channel",
         "raid_notes_cron",
-        "replay_user",
+        "raid_voice",
+        "replay_add",
+        "replay_remove",
         "clips_add",
         "clips_remove",
         "bart_token",
@@ -55,7 +61,6 @@ async fn show(ctx: Context<'_>) -> Result<(), Error> {
 
     let role = |id: Option<RoleId>| id.map_or("Not set".to_string(), |id| format!("<@&{id}>"));
     let channel = |id: Option<ChannelId>| id.map_or("Not set".to_string(), |id| format!("<#{id}>"));
-    let user = |id: Option<UserId>| id.map_or("Not set".to_string(), |id| format!("<@{id}>"));
 
     let mut clips: Vec<ChannelId> = settings.clips_channel_ids.iter().copied().collect();
     clips.sort();
@@ -63,6 +68,24 @@ async fn show(ctx: Context<'_>) -> Result<(), Error> {
         "None".to_string()
     } else {
         clips.iter().map(|id| format!("<#{id}>")).collect::<Vec<_>>().join(", ")
+    };
+
+    let mut replay_users: Vec<UserId> = settings.replay_user_ids.iter().copied().collect();
+    replay_users.sort();
+    let replay_users = if replay_users.is_empty() {
+        "None".to_string()
+    } else {
+        replay_users.iter().map(|id| format!("<@{id}>")).collect::<Vec<_>>().join(", ")
+    };
+
+    let raid_voice = match &settings.raid_voice {
+        Some(raid_voice) => format!(
+            "<#{}> — start `{}`, end `{}`",
+            raid_voice.channel_id,
+            raid_voice.start.source(),
+            raid_voice.end.source(),
+        ),
+        None => "Not set".to_string(),
     };
 
     let raid_notes_schedule = match &settings.raid_notes_cron {
@@ -78,8 +101,9 @@ async fn show(ctx: Context<'_>) -> Result<(), Error> {
         .field(Setting::PersonalOfficerCategory.name(), channel(settings.personal_officer_category_id), true)
         .field(Setting::RaidNotesChannel.name(), channel(settings.raid_notes_channel_id), true)
         .field(ClearTarget::RaidNotesCron.name(), raid_notes_schedule, true)
-        .field(Setting::ReplayUser.name(), user(settings.replay_user_id), true)
+        .field(ClearTarget::RaidVoice.name(), raid_voice, false)
         .field("Clips channels", clips, false)
+        .field("Replay users", replay_users, false)
         // Credentials are never echoed back, only whether they're registered.
         .field(ClearTarget::BartToken.name(), if settings.bart_token.is_some() { "Set" } else { "Not set" }, true)
         .field(ClearTarget::WowUtils.name(), if settings.wowutils_token.is_some() { "Set" } else { "Not set" }, true);
@@ -150,17 +174,78 @@ async fn raid_notes_cron(
     reply(ctx, format!("{} set to `{source}`. Next post: {next}.", ClearTarget::RaidNotesCron.name())).await
 }
 
-/// Register the member whose self-deleted messages the bot reposts
+/// Record who is in the raid voice channel at the start and end of each raid (Eastern time)
+///
+/// Both schedules are quartz-style cron expressions. Through the prefix form, each one has to be
+/// wrapped in quotes, since they contain spaces.
 #[poise::command(prefix_command, slash_command, ephemeral)]
-async fn replay_user(ctx: Context<'_>, #[description = "Member to replay deleted messages for"] user: UserId) -> Result<(), Error> {
+async fn raid_voice(
+    ctx: Context<'_>,
+    #[description = "Voice channel the raid happens in"]
+    #[channel_types("Voice", "Stage")]
+    channel: ChannelId,
+    #[description = "Raid start: sec min hour day-of-month month day-of-week [year], e.g. 0 0 20 * * Tue,Thu *"]
+    start: String,
+    #[description = "Raid end, same format, e.g. 0 0 23 * * Tue,Thu *"]
+    end: String,
+) -> Result<(), Error> {
+    let guild_id = require_guild(ctx)?;
+
+    let allowed = &[ChannelType::Voice, ChannelType::Stage];
+    if let Some(problem) = channel_problem(ctx, guild_id, channel, allowed, "a voice channel").await? {
+        return reply(ctx, problem).await;
+    }
+    let start = match schedules::parse_schedule(start.trim()) {
+        Ok(schedule) => schedule,
+        Err(problem) => return reply(ctx, format!("Start: {problem}")).await,
+    };
+    let end = match schedules::parse_schedule(end.trim()) {
+        Ok(schedule) => schedule,
+        Err(problem) => return reply(ctx, format!("End: {problem}")).await,
+    };
+
+    // `parse_schedule` only accepts schedules with an upcoming fire time.
+    let next = |schedule: &cron::Schedule| {
+        schedules::next_fire_time(schedule).map_or("unknown".to_string(), |next| format!("<t:{}:F>", next.timestamp()))
+    };
+    let mut message = format!(
+        "{} set to <#{channel}>. Next start: {}. Next end: {}.",
+        ClearTarget::RaidVoice.name(),
+        next(&start),
+        next(&end),
+    );
+    if ctx.data().guild_settings.get(guild_id).raid_notes_channel_id.is_none() {
+        message.push_str("\nAttendance is posted in the week's raid notes thread, and no raid notes channel is registered yet; set one with `/settings raid_notes_channel`.");
+    }
+
+    ctx.data().guild_settings.set_raid_voice(guild_id, Some(RaidVoice { channel_id: channel, start, end })).await?;
+    reply(ctx, message).await
+}
+
+/// Add a member whose self-deleted messages the bot reposts
+#[poise::command(prefix_command, slash_command, ephemeral)]
+async fn replay_add(ctx: Context<'_>, #[description = "Member to replay deleted messages for"] user: UserId) -> Result<(), Error> {
     let guild_id = require_guild(ctx)?;
 
     if guild_id.member(ctx, user).await.is_err() {
         return reply(ctx, format!("<@{user}> isn't a member of this server, so they can't be registered here.")).await;
     }
 
-    ctx.data().guild_settings.set(guild_id, Setting::ReplayUser, Some(user.get())).await?;
-    reply(ctx, format!("{} set to <@{user}>.", Setting::ReplayUser.name())).await
+    ctx.data().guild_settings.add_replay_user(guild_id, user).await?;
+    reply(ctx, format!("<@{user}> is now a replay user.")).await
+}
+
+/// Stop reposting a member's self-deleted messages
+#[poise::command(prefix_command, slash_command, ephemeral)]
+async fn replay_remove(ctx: Context<'_>, #[description = "Replay user to remove"] user: UserId) -> Result<(), Error> {
+    let guild_id = require_guild(ctx)?;
+
+    // No membership check: the member may have left the server since they were added.
+    if ctx.data().guild_settings.remove_replay_user(guild_id, user).await? {
+        reply(ctx, format!("<@{user}> is no longer a replay user.")).await
+    } else {
+        reply(ctx, format!("<@{user}> isn't a replay user in this server.")).await
+    }
 }
 
 /// Restrict a channel to messages that contain a video
@@ -274,8 +359,7 @@ async fn officer_channel_list(ctx: Context<'_>) -> Result<(), Error> {
 
 /// Register the Bart Timeline Reminders token shown to this server's raiders
 ///
-/// Slash-only, like `wowutils`: a prefix command is an ordinary chat message, which would leave
-/// the token readable in the channel.
+/// Slash command only, so the token is never typed into a channel as a normal message.
 #[poise::command(slash_command, ephemeral)]
 async fn bart_token(ctx: Context<'_>, #[description = "Bart Timeline Reminders access token"] token: String) -> Result<(), Error> {
     let guild_id = require_guild(ctx)?;
@@ -322,8 +406,8 @@ enum ClearTarget {
     RaidNotesChannel,
     #[name = "Raid notes schedule"]
     RaidNotesCron,
-    #[name = "Replay user"]
-    ReplayUser,
+    #[name = "Raid attendance"]
+    RaidVoice,
     #[name = "Bart token"]
     BartToken,
     #[name = "WowUtils credentials"]
@@ -347,8 +431,8 @@ async fn clear(ctx: Context<'_>, #[description = "Setting to clear"] setting: Cl
         ClearTarget::TrialRole => store.set(guild_id, Setting::TrialRole, None).await?,
         ClearTarget::PersonalOfficerCategory => store.set(guild_id, Setting::PersonalOfficerCategory, None).await?,
         ClearTarget::RaidNotesChannel => store.set(guild_id, Setting::RaidNotesChannel, None).await?,
-        ClearTarget::ReplayUser => store.set(guild_id, Setting::ReplayUser, None).await?,
         ClearTarget::RaidNotesCron => store.set_raid_notes_cron(guild_id, None).await?,
+        ClearTarget::RaidVoice => store.set_raid_voice(guild_id, None).await?,
         ClearTarget::BartToken => store.set_bart_token(guild_id, None).await?,
         ClearTarget::WowUtils => store.set_wowutils(guild_id, None).await?,
     }

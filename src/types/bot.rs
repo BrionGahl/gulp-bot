@@ -13,7 +13,7 @@ pub struct Data {
     /// Database pool, for the tables that are queried directly rather than cached in memory.
     pub db: sqlx::PgPool,
     pub http_client: reqwest::Client,
-    /// Buffers each guild's replay user's recent messages so a deleted one can be reposted.
+    /// Buffers each guild's replay users' recent messages so a deleted one can be reposted.
     pub message_replay: MessageReplay,
 }
 
