@@ -2,7 +2,7 @@ use poise::CreateReply;
 
 use crate::types::bot::{Context, Error};
 
-/// Fetches Liquid WeakAura / Addon info if you have a raider role.
+/// Fetches Bart Timeline Reminders addon info if you have a raider role.
 #[poise::command(
     prefix_command,
     slash_command,
@@ -10,8 +10,14 @@ use crate::types::bot::{Context, Error};
     category = "WoW Guild",
     check = "crate::checks::check_is_raider",
 )]
-pub async fn get_liquid_info(ctx: Context<'_>) -> Result<(), Error> {
-    let bart_token = &ctx.data().config.bart_token;
+pub async fn get_timeline_reminders(ctx: Context<'_>) -> Result<(), Error> {
+    // `check_is_raider` has already established this is a guild.
+    let Some(guild_id) = ctx.guild_id() else { return Ok(()) };
+    // Only ever the token this server registered, never another server's.
+    let Some(bart_token) = ctx.data().guild_settings.get(guild_id).bart_token else {
+        ctx.say("No Bart token is registered for this server. An administrator or moderator can set one with `/settings bart_token`.").await?;
+        return Ok(());
+    };
 
     let embed = crate::helper::create_base_embed(&ctx)
         .title("Bart Timeline Reminders Addon Information")

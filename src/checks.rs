@@ -2,31 +2,112 @@ use poise::serenity_prelude::RoleId;
 use crate::types::bot::{Context, Error};
 
 pub async fn check_is_moderator(ctx: Context<'_>) -> Result<bool, Error> {
-    let mod_role_id = &ctx.data().config.mod_role_id;
-    let user_is_moderator = is_some_role(ctx, mod_role_id);
+    let Some(guild_id) = ctx.guild_id() else {
+        reply_denied(ctx, "This command is only available in a server.").await?;
+        return Ok(false);
+    };
+    // Looked up by the guild the command was used in, so a role registered for another server
+    // never grants access here.
+    let Some(mod_role_id) = ctx.data().guild_settings.get(guild_id).mod_role_id else {
+        reply_denied(ctx, "No moderator role is registered for this server. An administrator can set one with `/settings mod_role`.").await?;
+        return Ok(false);
+    };
+
+    let user_is_moderator = is_some_role(ctx, &mod_role_id);
     if !user_is_moderator {
-        ctx.send(
-            poise::CreateReply::default()
-                .content("This command is only available to moderators.")
-                .ephemeral(true),
-        ).await?;
+        reply_denied(ctx, "This command is only available to moderators.").await?;
     }
     Ok(user_is_moderator)
 }
 
 pub async fn check_is_raider(ctx: Context<'_>) -> Result<bool, Error> {
-    let raider_role_id = &ctx.data().config.raider_role_id;
-    let mod_role_id = &ctx.data().config.mod_role_id;
-    let trial_role_id = &ctx.data().config.trial_role_id;
-    let user_is_raider = is_some_role(ctx, raider_role_id) || is_some_role(ctx, mod_role_id) || is_some_role(ctx, trial_role_id);
+    let Some(guild_id) = ctx.guild_id() else {
+        reply_denied(ctx, "This command is only available in a server.").await?;
+        return Ok(false);
+    };
+    let settings = ctx.data().guild_settings.get(guild_id);
+    let allowed_roles = [settings.raider_role_id, settings.mod_role_id, settings.trial_role_id];
+    if allowed_roles.iter().all(Option::is_none) {
+        reply_denied(ctx, "No raider roles are registered for this server. An administrator or moderator can set them with `/settings`.").await?;
+        return Ok(false);
+    }
+
+    let user_is_raider = allowed_roles.iter().flatten().any(|role_id| is_some_role(ctx, role_id));
     if !user_is_raider {
-        ctx.send(
-            poise::CreateReply::default()
-                .content("This command is only available to raiders.")
-                .ephemeral(true),
-        ).await?;
+        reply_denied(ctx, "This command is only available to raiders.").await?;
     }
     Ok(user_is_raider)
+}
+
+/// Gate for the `/settings` commands: server administrators, plus holders of the registered
+/// moderator role. Administrators are always allowed so that a server with no moderator role
+/// registered yet (or one registered wrongly) can still be configured.
+pub async fn check_is_admin_or_moderator(ctx: Context<'_>) -> Result<bool, Error> {
+    let Some(guild_id) = ctx.guild_id() else {
+        reply_denied(ctx, "This command is only available in a server.").await?;
+        return Ok(false);
+    };
+
+    let mod_role_id = ctx.data().guild_settings.get(guild_id).mod_role_id;
+    let allowed = is_administrator(ctx) || mod_role_id.is_some_and(|role_id| is_some_role(ctx, &role_id));
+    if !allowed {
+        reply_denied(ctx, "This command is only available to administrators and moderators.").await?;
+    }
+    Ok(allowed)
+}
+
+/// Gate for changing which role is the moderator role. Moderators can use the rest of
+/// `/settings`, but if they could also reassign the moderator role they could hand `/settings`
+/// access to anyone, or lock the other moderators out.
+pub async fn check_is_administrator(ctx: Context<'_>) -> Result<bool, Error> {
+    let allowed = is_administrator(ctx);
+    if !allowed {
+        reply_denied(ctx, "Only administrators can change the moderator role.").await?;
+    }
+    Ok(allowed)
+}
+
+/// Whether the invoking member has the Administrator permission in the guild the command was
+/// used in (the guild owner always does).
+pub fn is_administrator(ctx: Context<'_>) -> bool {
+    match ctx {
+        // Discord sends the member's resolved permissions with every interaction.
+        Context::Application(app_context) => app_context
+            .interaction
+            .member
+            .as_ref()
+            .and_then(|member| member.permissions)
+            .is_some_and(|permissions| permissions.administrator()),
+        // A message carries only the member's role IDs, so resolve them against the cached guild.
+        // If the guild isn't cached this is `false`, which errs on the side of denying.
+        Context::Prefix(msg_context) => {
+            let Some(guild) = msg_context.msg.guild(&msg_context.serenity_context().cache) else {
+                return false;
+            };
+            if guild.owner_id == msg_context.msg.author.id {
+                return true;
+            }
+            let Some(member) = &msg_context.msg.member else {
+                return false;
+            };
+            let everyone_role = guild.id.everyone_role();
+            member
+                .roles
+                .iter()
+                .chain(std::iter::once(&everyone_role))
+                .filter_map(|role_id| guild.roles.get(role_id))
+                .any(|role| role.permissions.administrator())
+        }
+    }
+}
+
+async fn reply_denied(ctx: Context<'_>, content: &str) -> Result<(), Error> {
+    ctx.send(
+        poise::CreateReply::default()
+            .content(content)
+            .ephemeral(true),
+    ).await?;
+    Ok(())
 }
 
 fn is_some_role(ctx: Context<'_>, role_id: &RoleId) -> bool {

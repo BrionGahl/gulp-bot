@@ -1,27 +1,31 @@
+use std::sync::Arc;
+
 use crate::config::Config;
+use crate::guild_settings::GuildSettingsStore;
 use crate::message_replay::MessageReplay;
 
 #[derive(Debug)]
 pub struct Data {
     pub config: Config,
+    /// Per-guild role/channel/user IDs registered by server administrators. Shared with the
+    /// scheduled jobs, which run outside the framework and so can't reach `Data`.
+    pub guild_settings: Arc<GuildSettingsStore>,
+    /// Database pool, for the tables that are queried directly rather than cached in memory.
+    pub db: sqlx::PgPool,
     pub http_client: reqwest::Client,
-    /// Serializes the "does this member already have a personal officer channel, if not create
-    /// one" sequence so that two GuildMemberUpdate events for the same member firing close
-    /// together can't both pass the check before either has created a channel.
-    pub personal_officer_channel_lock: tokio::sync::Mutex<()>,
-    /// Buffers the configured replay user's recent messages so a deleted one can be reposted.
+    /// Buffers each guild's replay user's recent messages so a deleted one can be reposted.
     pub message_replay: MessageReplay,
 }
 
 impl Data {
-    pub fn new() -> Self {
-        let config = Config::from_env();
+    pub fn new(config: Config, db: sqlx::PgPool, guild_settings: Arc<GuildSettingsStore>) -> Self {
         let http_client = reqwest::Client::new();
 
         Self {
             config,
+            guild_settings,
+            db,
             http_client,
-            personal_officer_channel_lock: tokio::sync::Mutex::new(()),
             message_replay: MessageReplay::new(),
         }
     }

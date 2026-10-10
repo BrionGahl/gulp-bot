@@ -13,7 +13,8 @@ use tokio::sync::Mutex;
 use crate::types::bot::Data;
 
 /// How many of the target user's most recent messages to keep so we can repost one if it's
-/// deleted. Only messages authored by `REPLAY_USER_ID` are ever stored, so this stays cheap.
+/// deleted. Only messages authored by a guild's registered replay user are ever stored, so this
+/// stays cheap.
 const MAX_STORED_MESSAGES: usize = 200;
 
 /// Discord writes the audit log entry for a moderator deletion a beat after the gateway delivers
@@ -54,7 +55,7 @@ struct SeenDeletion {
     count: u64,
 }
 
-/// Remembers the configured user's recent messages and, when one is deleted, reposts it — unless
+/// Remembers each guild's replay user's recent messages and, when one is deleted, reposts it — unless
 /// the audit log shows someone other than the author (i.e. a moderator) deleted it.
 #[derive(Debug)]
 pub struct MessageReplay {
@@ -103,9 +104,11 @@ impl MessageReplay {
     }
 }
 
-/// Stores the message if it was written by the configured replay user. No-op otherwise.
+/// Stores the message if it was written by the replay user registered for the guild it was posted
+/// in. No-op otherwise.
 pub async fn remember_message(data: &Data, message: &Message) {
-    let Some(target) = data.config.replay_user_id else { return };
+    let Some(guild_id) = message.guild_id else { return };
+    let Some(target) = data.guild_settings.get(guild_id).replay_user_id else { return };
     if message.author.id != target {
         return;
     }
@@ -136,9 +139,6 @@ pub async fn remember_message(data: &Data, message: &Message) {
 /// A bulk delete always needs Manage Messages and is always logged, so it's definitionally a
 /// moderator action — we never replay those, just drop any we were holding.
 pub async fn forget_messages(data: &Data, ids: &[MessageId]) {
-    if data.config.replay_user_id.is_none() {
-        return;
-    }
     for id in ids {
         data.message_replay.forget(*id).await;
     }
@@ -152,9 +152,6 @@ pub async fn handle_message_delete(
     message_id: MessageId,
     guild_id: Option<GuildId>,
 ) {
-    if data.config.replay_user_id.is_none() {
-        return;
-    }
     let Some(stored) = data.message_replay.take(message_id).await else { return };
 
     if stored.content.is_empty() && stored.attachments.is_empty() {

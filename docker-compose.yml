@@ -1,0 +1,48 @@
+services:
+  gulp-bot:
+    image: localhost/gulp-bot:latest
+    container_name: gulp-bot
+    restart: unless-stopped
+    pull_policy: never
+    environment:
+      # required
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      # optional
+      # BOT_NAME and LOG_LEVEL need a non-empty fallback: the bot does not treat an empty value
+      # as unset for these two.
+      BOT_NAME: ${BOT_NAME:-gulp-bot}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # database; `db` is the service name below, reachable on the stack's private network
+      DATABASE_URL: postgres://gulp:${POSTGRES_PASSWORD}@db:5432/gulp
+    depends_on:
+      db:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  db:
+    image: postgres:17
+    container_name: gulp-bot-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gulp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: gulp
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gulp -d gulp"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  db-data:

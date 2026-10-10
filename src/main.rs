@@ -6,11 +6,12 @@ mod helper;
 mod clips;
 mod health;
 mod raid_notes;
-#[allow(dead_code)] // feature disabled in the event handler; kept for easy re-enable
 mod personal_officer_channels;
 mod announcements;
 mod mentions;
 mod message_replay;
+mod guild_settings;
+mod schedules;
 
 use poise::serenity_prelude::{self as serenity, GatewayIntents};
 use tracing_subscriber::prelude::*;
@@ -18,21 +19,35 @@ use tracing_subscriber::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
 use log::info;
+use crate::config::Config;
+use crate::guild_settings::GuildSettingsStore;
 use crate::types::bot::{Error, Data};
 
 #[tokio::main]
 async fn main() {
-    let data = Data::new();
-    let raid_notes_channel_id = data.config.raid_notes_channel_id;
-    let raid_notes_cron = data.config.raid_notes_cron.clone();
-    let announcement_channel_id = data.config.announcement_channel_id;
-    let raider_role_id = data.config.raider_role_id;
-    let trial_role_id = data.config.trial_role_id;
+    let config = Config::from_env();
 
     tracing_subscriber::registry()
-        .with(data.config.log_level)
+        .with(config.log_level)
         .with(tracing_stackdriver::layer())
         .init();
+
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&config.database_url)
+        .await
+        .expect("Failed to connect to the database at `DATABASE_URL`.");
+    sqlx::migrate!()
+        .run(&pool)
+        .await
+        .expect("Failed to run database migrations.");
+    let guild_settings = Arc::new(
+        GuildSettingsStore::load(pool.clone())
+            .await
+            .expect("Failed to load guild settings from the database."),
+    );
+
+    let data = Data::new(config, pool.clone(), guild_settings.clone());
     let token = data.config.discord_token.clone();
 
     let intents = GatewayIntents::non_privileged()
@@ -57,17 +72,16 @@ async fn main() {
 
     let options = poise::FrameworkOptions {
         commands: vec![
-            commands::wow_guild::get_liquid_info(),
+            commands::wow_guild::get_timeline_reminders(),
             commands::wow_guild::class_discords(),
             commands::wow_utils::submit_droptimizer(),
             commands::utilities::source(),
             commands::utilities::help(),
             commands::utilities::register(),
-            commands::gambling::roll(),
-            commands::gambling::gamble(),
-            commands::mod_debug::test_announcement(),
             commands::mod_debug::test_raid_notes(),
             commands::mod_debug::test_replay(),
+            commands::settings::settings(),
+            commands::announcement::announcement(),
         ],
         // Call to the event handler
         event_handler: |ctx, event, framework, data| {
@@ -116,18 +130,8 @@ async fn main() {
         .unwrap();
 
     tokio::spawn(health::serve());
-    tokio::spawn(raid_notes::schedule_weekly_posts(client.http.clone(), raid_notes_channel_id, raid_notes_cron));
-
-    if let Some(channel_id) = announcement_channel_id {
-        tokio::spawn(announcements::schedule_weekly_announcement(
-            client.http.clone(),
-            channel_id,
-            raider_role_id,
-            trial_role_id,
-        ));
-    } else {
-        info!("ANNOUNCEMENT_CHANNEL_ID not set; skipping weekly Tuesday noon announcement.");
-    }
+    tokio::spawn(raid_notes::schedule_weekly_posts(client.http.clone(), guild_settings.clone()));
+    tokio::spawn(announcements::schedule_announcements(client.http.clone(), pool, guild_settings));
 
     client.start().await.unwrap()
 }
@@ -153,9 +157,7 @@ async fn event_handler(
             message_replay::forget_messages(data, multiple_deleted_messages_ids).await;
         }
         serenity::FullEvent::GuildMemberUpdate { new, .. } => {
-            // Personal officer channel creation is disabled.
-            // personal_officer_channels::handle_role_update(ctx, data, new).await;
-            let _ = new;
+            personal_officer_channels::handle_role_update(ctx, data, new).await;
         }
         _ => {}
     }

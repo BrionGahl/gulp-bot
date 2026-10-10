@@ -1,0 +1,29 @@
+name: Tag
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create and push tag
+        # Tag is `v<commit date, UTC>-<short sha>`, e.g. `v2026.10.09-c97a8ec`. It is derived
+        # entirely from the commit, so re-running the workflow produces the same tag and the
+        # existence check below turns the re-run into a no-op.
+        run: |
+          TAG="v$(TZ=UTC git show -s --format=%cd --date=format-local:%Y.%m.%d HEAD)-$(git rev-parse --short=7 HEAD)"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+            echo "Tag $TAG already exists, nothing to do."
+            exit 0
+          fi
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "Created tag $TAG"

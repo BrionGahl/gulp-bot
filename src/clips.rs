@@ -15,7 +15,8 @@ pub async fn enforce_clips_channel(ctx: &Context, data: &Data, message: &Message
     if message.author.bot {
         return;
     }
-    if !data.config.clips_channel_ids.contains(&message.channel_id) {
+    let Some(guild_id) = message.guild_id else { return };
+    if !data.guild_settings.get(guild_id).clips_channel_ids.contains(&message.channel_id) {
         return;
     }
     if has_video(message) {

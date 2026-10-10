@@ -28,11 +28,17 @@ pub async fn submit_droptimizer(
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
 
-    let token = &ctx.data().config.wowutils_token;
-    let group_id = &ctx.data().config.wowutils_group_id;
+    // `check_is_raider` has already established this is a guild.
+    let Some(guild_id) = ctx.guild_id() else { return Ok(()) };
+    // Reports only ever go to the group this server registered, never another server's.
+    let settings = ctx.data().guild_settings.get(guild_id);
+    let (Some(token), Some(group_id)) = (settings.wowutils_token, settings.wowutils_group_id) else {
+        ctx.say("WowUtils isn't set up for this server. An administrator or moderator can register it with `/settings wowutils`.").await?;
+        return Ok(());
+    };
     let http = &ctx.data().http_client;
 
-    submit_droptimizer_report(http, token, group_id, &url, &profile_key).await?;
+    submit_droptimizer_report(http, &token, &group_id, &url, &profile_key).await?;
 
     let embed = crate::helper::create_base_embed(&ctx)
         .title("Droptimizer Submitted")
