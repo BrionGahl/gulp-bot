@@ -13,6 +13,7 @@ mod message_replay;
 mod guild_settings;
 mod schedules;
 mod raid_attendance;
+mod warcraftlogs;
 
 use poise::serenity_prelude::{self as serenity, GatewayIntents};
 use tracing_subscriber::prelude::*;
@@ -77,6 +78,7 @@ async fn main() {
             commands::mod_debug::test_replay(),
             commands::settings::settings(),
             commands::announcement::announcement(),
+            commands::wcl::wcl(),
         ],
         // Call to the event handler
         event_handler: |ctx, event, framework, data| {

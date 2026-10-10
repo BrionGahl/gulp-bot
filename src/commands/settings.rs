@@ -1,7 +1,7 @@
 use poise::serenity_prelude::{ChannelId, ChannelType, CreateAllowedMentions, GuildId, RoleId, UserId};
 use poise::{ChoiceParameter, CreateReply};
 
-use crate::guild_settings::{RaidVoice, Setting};
+use crate::guild_settings::{RaidVoice, Setting, WclSource};
 use crate::personal_officer_channels;
 use crate::raid_notes;
 use crate::schedules;
@@ -45,6 +45,8 @@ const MAX_LIST_CHARS: usize = 4000;
         "clips_remove",
         "bart_token",
         "wowutils",
+        "wcl_channel",
+        "wcl_source",
         "clear",
     ),
     subcommand_required,
@@ -93,6 +95,11 @@ async fn show(ctx: Context<'_>) -> Result<(), Error> {
         None => format!("Default (`{}`)", raid_notes::DEFAULT_RAID_NOTES_CRON),
     };
 
+    let wcl_source = match &settings.wcl_source {
+        Some(source) => format!("Guild {}, uploader {}", source.guild_id, source.uploader_id),
+        None => "Not set".to_string(),
+    };
+
     let embed = crate::helper::create_base_embed(&ctx)
         .title("Server Settings")
         .field(Setting::ModRole.name(), role(settings.mod_role_id), true)
@@ -106,7 +113,9 @@ async fn show(ctx: Context<'_>) -> Result<(), Error> {
         .field("Replay users", replay_users, false)
         // Credentials are never echoed back, only whether they're registered.
         .field(ClearTarget::BartToken.name(), if settings.bart_token.is_some() { "Set" } else { "Not set" }, true)
-        .field(ClearTarget::WowUtils.name(), if settings.wowutils_token.is_some() { "Set" } else { "Not set" }, true);
+        .field(ClearTarget::WowUtils.name(), if settings.wowutils_token.is_some() { "Set" } else { "Not set" }, true)
+        .field(Setting::WclChannel.name(), channel(settings.wcl_channel_id), true)
+        .field(ClearTarget::WclSource.name(), wcl_source, true);
 
     ctx.send(CreateReply::default().embed(embed)).await?;
     Ok(())
@@ -391,6 +400,39 @@ async fn wowutils(
     reply(ctx, format!("{} registered for this server.", ClearTarget::WowUtils.name())).await
 }
 
+/// Register the channel where Warcraft Logs results are posted, and the only one `/wcl` works in
+#[poise::command(prefix_command, slash_command, ephemeral)]
+async fn wcl_channel(
+    ctx: Context<'_>,
+    #[description = "Officer channel for Warcraft Logs results"]
+    #[channel_types("Text", "News")]
+    channel: ChannelId,
+) -> Result<(), Error> {
+    register_channel(ctx, Setting::WclChannel, channel, TEXT_CHANNEL_TYPES, "a text channel").await
+}
+
+/// Register where this server's Warcraft Logs reports are found: the guild and the uploader
+///
+/// Both are the numeric IDs Warcraft Logs uses. Only reports from this uploader are picked when
+/// `/wcl report` is run without a link.
+#[poise::command(prefix_command, slash_command, ephemeral)]
+async fn wcl_source(
+    ctx: Context<'_>,
+    #[description = "Warcraft Logs guild ID the reports are uploaded to"] guild: u32,
+    #[description = "Warcraft Logs user ID of the account that uploads the logs"] uploader: u32,
+) -> Result<(), Error> {
+    let guild_id = require_guild(ctx)?;
+
+    // The API's IDs are signed 32-bit integers, and zero is never one.
+    let valid = |id: u32| (1..=i32::MAX as u32).contains(&id);
+    if !valid(guild) || !valid(uploader) {
+        return reply(ctx, "Those aren't valid Warcraft Logs IDs. Both are positive whole numbers.".to_string()).await;
+    }
+
+    ctx.data().guild_settings.set_wcl_source(guild_id, Some(WclSource { guild_id: guild, uploader_id: uploader })).await?;
+    reply(ctx, format!("{} set to guild {guild}, uploader {uploader}.", ClearTarget::WclSource.name())).await
+}
+
 /// Everything `/settings clear` can clear: each ID setting, plus the credentials.
 #[derive(Debug, Clone, Copy, poise::ChoiceParameter)]
 enum ClearTarget {
@@ -412,6 +454,10 @@ enum ClearTarget {
     BartToken,
     #[name = "WowUtils credentials"]
     WowUtils,
+    #[name = "Warcraft Logs channel"]
+    WclChannel,
+    #[name = "Warcraft Logs source"]
+    WclSource,
 }
 
 /// Clear one of this server's registered settings
@@ -435,6 +481,8 @@ async fn clear(ctx: Context<'_>, #[description = "Setting to clear"] setting: Cl
         ClearTarget::RaidVoice => store.set_raid_voice(guild_id, None).await?,
         ClearTarget::BartToken => store.set_bart_token(guild_id, None).await?,
         ClearTarget::WowUtils => store.set_wowutils(guild_id, None).await?,
+        ClearTarget::WclChannel => store.set(guild_id, Setting::WclChannel, None).await?,
+        ClearTarget::WclSource => store.set_wcl_source(guild_id, None).await?,
     }
     reply(ctx, format!("{} cleared.", setting.name())).await
 }

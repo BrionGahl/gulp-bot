@@ -12,6 +12,7 @@ The bot is written with the `poise` crate and uses a few others for requests / l
 
 - **WoW Guild** — Bart Timeline Reminders addon info, class Discord links, and droptimizer report submission via WowUtils
 - **Clips channels** — deletes any message posted in a configured channel that doesn't contain a video (uploaded video file or an unfurled video link embed)
+- **Warcraft Logs** — officers get an overview of a raid night's report (Mythic pulls, who died the most, who died first) with `/wcl report`, posted in a registered officer channel
 - **Personal officer channels** — when a member is given the trial or raider role, creates a private text channel for them under a configured category, visible only to them and the officer (moderator) role
 
 ## Deployment
@@ -95,6 +96,10 @@ DATABASE_URL=<Postgres connection URL, e.g. postgres://gulp:<password>@db:5432/g
 
 # Other (optional)
 LOG_LEVEL=<TRACE, DEBUG, INFO, WARN or ERROR; defaults to INFO>
+
+# Warcraft Logs (optional, both or neither; the /wcl commands are off without them)
+WCL_CLIENT_ID=<API client ID>
+WCL_CLIENT_SECRET=<API client secret>
 ```
 
 With `docker-compose.yml`, `DATABASE_URL` is built for you from `POSTGRES_PASSWORD`; see `example.env`
@@ -126,6 +131,8 @@ always restricted to administrators:
 | `/settings clips_add <channel>` / `clips_remove <channel>` | Channels restricted to video-only messages |
 | `/settings bart_token <token>` | Bart Timeline Reminders token shown to this server's raiders |
 | `/settings wowutils <token> <group_id>` | WowUtils API token and the group droptimizer reports are submitted to |
+| `/settings wcl_channel <channel>` | The officer channel Warcraft Logs results are posted in, and the only one `/wcl` works in |
+| `/settings wcl_source <guild> <uploader>` | Warcraft Logs guild ID the reports are uploaded to, and the user ID of the account that uploads them |
 | `/settings clear <setting>` | Clears one of the settings above (clips channels and replay users have their own `_remove` commands) |
 
 Before saving, the bot checks with Discord that the role, channel or member actually belongs to the
@@ -261,3 +268,33 @@ An announcement can only be listed, posted or deleted from the server it was cre
 can have at most 25. Additions and deletions take effect within a minute, without a restart. The bot
 needs permission to send messages in the chosen channel. See `src/announcements.rs` and
 `src/commands/announcement.rs`.
+
+### Warcraft Logs
+
+Officers (members with the registered moderator role) can get an overview of a raid night from
+[Warcraft Logs](https://www.warcraftlogs.com). The commands are slash-only, and they only work in the
+channel registered with `/settings wcl_channel`; anywhere else they reply, privately, with where to go.
+
+| Command | Does |
+| --- | --- |
+| `/wcl report [report]` | Posts the overview of a report. `report` is a report link or code; without it, the newest report from the registered uploader is used |
+
+The overview has the report's Mythic boss pulls (kills and wipes for each boss), who died the most, and
+who was the first to die in a pull. **Only the first two deaths in each pull are counted**: after that
+the raid is wiping, and those deaths say nothing about anyone's play. Players are shown by their
+character name as Warcraft Logs has it; nobody is linked to a Discord account.
+
+Setting it up:
+
+1. Create an API client at warcraftlogs.com (Profile, then Manage Your Clients) and give its ID and
+   secret to the bot as `WCL_CLIENT_ID` and `WCL_CLIENT_SECRET`. They are shared by every server, so
+   all servers draw on one API allowance (720 points per hour; an overview costs a few points).
+   Only public and unlisted reports can be read; private ones can't.
+2. Register the officer channel with `/settings wcl_channel`.
+3. Register where the reports are found with `/settings wcl_source <guild> <uploader>`, the Warcraft
+   Logs guild the reports are uploaded to and the user ID of the account that uploads them. Only
+   reports from that account are picked when `/wcl report` is used without a link, and only among
+   the guild's 25 newest.
+
+A report that is still being uploaded is shown without its unfinished pulls. See `src/warcraftlogs.rs`
+and `src/commands/wcl.rs`.
