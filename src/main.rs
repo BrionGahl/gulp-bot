@@ -58,13 +58,6 @@ async fn main() {
 
     let prefix = poise::PrefixFrameworkOptions {
         prefix: Some("?".to_string()),
-        additional_prefixes: vec![
-            poise::Prefix::Regex(
-                "(yo |hey )? kail, can you (please |pwease )?"
-                    .parse()
-                    .unwrap(),
-            )
-        ],
         edit_tracker: Some(Arc::new(poise::EditTracker::for_timespan(
             Duration::from_secs(60 * 5), // 5 minutes
         ))),
