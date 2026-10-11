@@ -12,7 +12,7 @@ use crate::wcl_mechanics::{self, TrackedAbility};
 /// Warcraft Logs overviews of raid nights, for administrators and moderators
 ///
 /// Only in the Warcraft Logs channel, and nothing is posted unless one of them runs a command.
-/// Results go in the channel registered with `/settings wcl_channel`; the commands refuse to run
+/// Results go in the channel registered with `/settings wcl channel`; the commands refuse to run
 /// anywhere else.
 //
 // The check and `guild_only` are set here once: poise applies a parent command's checks to all of
@@ -33,8 +33,8 @@ pub async fn wcl(_ctx: Context<'_>) -> Result<(), Error> {
 ///
 /// Only the first two deaths in each pull are counted, since the rest is the raid wiping, and damage
 /// taken is counted up to the same moment. Only Mythic boss pulls are included. The abilities shown
-/// are the ones registered with `/settings wcl_mechanic_add`. Without a report, the newest report
-/// from the uploader registered with `/settings wcl_source` is used.
+/// are the ones registered with `/settings wcl mechanic_add`. Without a report, the newest report
+/// from the uploader registered with `/settings wcl source` is used.
 #[poise::command(slash_command)]
 async fn report(
     ctx: Context<'_>,
@@ -63,10 +63,10 @@ async fn report(
 
 /// Post who took damage from one ability in a raid night's report
 ///
-/// The ability is one registered with `/settings wcl_mechanic_add`, or any spell ID. Damage is
+/// The ability is one registered with `/settings wcl mechanic_add`, or any spell ID. Damage is
 /// counted up to the second death in each pull, since the rest is the raid wiping. Only Mythic boss
 /// pulls are included. Without a report, the newest report from the uploader registered with
-/// `/settings wcl_source` is used.
+/// `/settings wcl source` is used.
 #[poise::command(slash_command)]
 async fn damage_taken(
     ctx: Context<'_>,
@@ -84,7 +84,7 @@ async fn damage_taken(
     let tracked = wcl_mechanics::list(&ctx.data().db, ready.guild_id).await?;
     let ignored = wcl_ignored_players::list(&ctx.data().db, ready.guild_id).await?;
     let Some(ability) = resolve_ability(&tracked, &ability) else {
-        return refuse(ctx, format!("`{}` isn't a tracked ability or a spell ID. Track one with `/settings wcl_mechanic_add`, or give its spell ID.", ability.trim())).await;
+        return refuse(ctx, format!("`{}` isn't a tracked ability or a spell ID. Track one with `/settings wcl mechanic_add`, or give its spell ID.", ability.trim())).await;
     };
 
     ctx.defer().await?;
@@ -102,9 +102,9 @@ async fn damage_taken(
 /// Post how many healthstones and health potions were used in a raid night's report
 ///
 /// Every use counts, in every pull, including once the raid had started wiping: this is about what the
-/// raid consumed. The abilities that count are the ones registered with `/settings wcl_consumable_add`.
+/// raid consumed. The abilities that count are the ones registered with `/settings wcl consumable_add`.
 /// Only Mythic boss pulls are included. Without a report, the newest report from the uploader
-/// registered with `/settings wcl_source` is used.
+/// registered with `/settings wcl source` is used.
 #[poise::command(slash_command)]
 async fn consumables(
     ctx: Context<'_>,
@@ -118,7 +118,7 @@ async fn consumables(
     };
     let registered = wcl_consumables::list(&ctx.data().db, ready.guild_id).await?;
     if registered.is_empty() {
-        return refuse(ctx, "No healthstone or health potion abilities are registered for this server. Add them with `/settings wcl_consumable_add`.".to_string()).await;
+        return refuse(ctx, "No healthstone or health potion abilities are registered for this server. Add them with `/settings wcl consumable_add`.".to_string()).await;
     }
     let ignored = wcl_ignored_players::list(&ctx.data().db, ready.guild_id).await?;
 
@@ -191,7 +191,7 @@ async fn ready(ctx: Context<'_>) -> Result<Option<Ready<'_>>, Error> {
     let settings = ctx.data().guild_settings.get(guild_id);
 
     let Some(channel_id) = settings.wcl_channel_id else {
-        refuse(ctx, "No Warcraft Logs channel is registered for this server. An administrator or moderator can set one with `/settings wcl_channel`.".to_string()).await?;
+        refuse(ctx, "No Warcraft Logs channel is registered for this server. An administrator or moderator can set one with `/settings wcl channel`.".to_string()).await?;
         return Ok(None);
     };
     if ctx.channel_id() != channel_id {
@@ -224,7 +224,7 @@ fn target(report: Option<String>, settings: &GuildSettings) -> Result<Target, St
             .wcl_source
             .clone()
             .map(Target::Newest)
-            .ok_or_else(|| "Give a report link or code, or register the uploader with `/settings wcl_source` to use the newest report.".to_string()),
+            .ok_or_else(|| "Give a report link or code, or register the uploader with `/settings wcl source` to use the newest report.".to_string()),
     }
 }
 
@@ -306,7 +306,7 @@ mod tests {
         // A link wins over the registered uploader.
         assert!(matches!(target(Some("ABC".to_string()), &with_source), Ok(Target::Code(_))));
 
-        assert!(target(None, &without_source).unwrap_err().contains("/settings wcl_source"));
+        assert!(target(None, &without_source).unwrap_err().contains("/settings wcl source"));
         assert!(target(Some("not a code!".to_string()), &with_source).unwrap_err().contains("`not a code!`"));
     }
 }

@@ -166,19 +166,50 @@ mod tests {
         assert!(total <= MAX_MESSAGE_CHARS, "help overview is about {total} characters");
     }
 
+    /// Every command with its full name, at every depth: `settings`, `settings wcl`,
+    /// `settings wcl channel`, and so on.
+    fn with_paths<'a>(commands: &'a [poise::Command<Data, Error>], prefix: &str, found: &mut Vec<(String, &'a poise::Command<Data, Error>)>) {
+        for command in commands {
+            let path = if prefix.is_empty() { command.name.clone() } else { format!("{prefix} {}", command.name) };
+            with_paths(&command.subcommands, &path, found);
+            found.push((path, command));
+        }
+    }
+
     #[test]
     fn help_for_every_command_and_subcommand_fits_in_an_embed() {
         let commands = all_commands();
-        for command in &commands {
-            let page = render_command_help(&command.name, command);
-            assert!(page.chars().count() <= MAX_EMBED_DESCRIPTION_CHARS, "/help {} is {} characters", command.name, page.len());
+        let mut all = Vec::new();
+        with_paths(&commands, "", &mut all);
 
-            for subcommand in &command.subcommands {
-                let path = format!("{} {}", command.name, subcommand.name);
-                let (found_path, found) = find_command(&commands, &path).expect("subcommand is findable by its full name");
-                assert_eq!(found_path, path);
-                assert!(render_command_help(&found_path, found).chars().count() <= MAX_EMBED_DESCRIPTION_CHARS);
+        for (path, command) in all {
+            // `register` is hidden from help, so it has no page.
+            if command.hide_in_help {
+                continue;
             }
+            let (found_path, found) = find_command(&commands, &path).expect("command is findable by its full name");
+            assert_eq!(found_path, path);
+            let page = render_command_help(&found_path, found);
+            assert!(page.chars().count() <= MAX_EMBED_DESCRIPTION_CHARS, "/help {path} is {} characters", page.chars().count());
+        }
+    }
+
+    /// Discord rejects the whole registration, and the bot never finishes starting, if any
+    /// command or group has more than 25 subcommands or parameters, or if groups nest deeper
+    /// than command, group, subcommand.
+    #[test]
+    fn commands_fit_discords_registration_limits() {
+        const MAX_OPTIONS: usize = 25;
+        const MAX_DEPTH: usize = 3;
+
+        let commands = all_commands();
+        let mut all = Vec::new();
+        with_paths(&commands, "", &mut all);
+
+        for (path, command) in all {
+            assert!(command.subcommands.len() <= MAX_OPTIONS, "/{path} has {} subcommands", command.subcommands.len());
+            assert!(command.parameters.len() <= MAX_OPTIONS, "/{path} has {} parameters", command.parameters.len());
+            assert!(path.split(' ').count() <= MAX_DEPTH, "/{path} is nested too deeply");
         }
     }
 
@@ -190,7 +221,10 @@ mod tests {
         assert_eq!(find_command(&commands, " /Settings  raid_voice ").unwrap().0, "settings raid_voice");
         assert_eq!(find_command(&commands, "?announcement add").unwrap().0, "announcement add");
 
+        assert_eq!(find_command(&commands, "settings wcl mechanic_add").unwrap().0, "settings wcl mechanic_add");
+
         assert!(find_command(&commands, "settings nope").is_none());
+        assert!(find_command(&commands, "settings wcl_channel").is_none());
         assert!(find_command(&commands, "nope").is_none());
         // `register` is hidden from help, so it isn't offered here either.
         assert!(find_command(&commands, "register").is_none());
@@ -198,6 +232,9 @@ mod tests {
         let page = render_command_help("settings", find_command(&commands, "settings").unwrap().1);
         assert!(page.contains("**Subcommands**\n`/settings show` — "));
         assert!(page.contains("`/settings raid_voice` — "));
+        assert!(page.contains("`/settings wcl` — "));
+        let page = render_command_help("settings wcl", find_command(&commands, "settings wcl").unwrap().1);
+        assert!(page.contains("**Subcommands**\n`/settings wcl channel` — "));
         let page = render_command_help("settings raid_voice", find_command(&commands, "settings raid_voice").unwrap().1);
         assert!(page.contains("**Parameters**\n`channel` (required) — "));
     }

@@ -133,11 +133,11 @@ always restricted to administrators:
 | `/settings clips_add <channel>` / `clips_remove <channel>` | Channels restricted to video-only messages |
 | `/settings bart_token <token>` | Bart Timeline Reminders token shown to this server's raiders |
 | `/settings wowutils <token> <group_id>` | WowUtils API token and the group droptimizer reports are submitted to |
-| `/settings wcl_channel <channel>` | The officer channel Warcraft Logs results are posted in, and the only one `/wcl` works in |
-| `/settings wcl_source <guild> <uploader>` | Warcraft Logs guild ID the reports are uploaded to, and the user ID of the account that uploads them |
-| `/settings wcl_mechanic_add <name> <ability_id>` / `wcl_mechanic_remove <name>` / `wcl_mechanic_list` | The abilities whose damage taken the Warcraft Logs overview shows (see [Warcraft Logs](#warcraft-logs)) |
-| `/settings wcl_ignore_add <name>` / `wcl_ignore_remove <name>` / `wcl_ignore_list` | Players left out of the Warcraft Logs overview |
-| `/settings wcl_consumable_add <kind> <ability_id>` / `wcl_consumable_remove <ability_id>` / `wcl_consumable_list` | The abilities counted as healthstones and health potions by `/wcl consumables` |
+| `/settings wcl channel <channel>` | The officer channel Warcraft Logs results are posted in, and the only one `/wcl` works in |
+| `/settings wcl source <guild> <uploader>` | Warcraft Logs guild ID the reports are uploaded to, and the user ID of the account that uploads them |
+| `/settings wcl mechanic_add <name> <ability_id>` / `wcl mechanic_remove <name>` / `wcl mechanic_list` | The abilities whose damage taken the Warcraft Logs overview shows (see [Warcraft Logs](#warcraft-logs)) |
+| `/settings wcl ignore_add <name>` / `wcl ignore_remove <name>` / `wcl ignore_list` | Players left out of the Warcraft Logs overview |
+| `/settings wcl consumable_add <kind> <ability_id>` / `wcl consumable_remove <ability_id>` / `wcl consumable_list` | The abilities counted as healthstones and health potions by `/wcl consumables` |
 | `/settings clear <setting>` | Clears one of the settings above (clips channels and replay users have their own `_remove` commands) |
 
 Before saving, the bot checks with Discord that the role, channel or member actually belongs to the
@@ -279,7 +279,7 @@ needs permission to send messages in the chosen channel. See `src/announcements.
 Administrators and moderators (members with the registered moderator role) can get an overview of a
 raid night from [Warcraft Logs](https://www.warcraftlogs.com). The bot never posts one by itself: it
 only happens when one of them runs a command. The commands are slash-only, and they only work in the
-channel registered with `/settings wcl_channel`; anywhere else they reply, privately, with where to go.
+channel registered with `/settings wcl channel`; anywhere else they reply, privately, with where to go.
 
 | Command | Does |
 | --- | --- |
@@ -302,9 +302,9 @@ out the last abilities and says how many, and `/wcl damage_taken` shows any of t
 
 | Command | Does |
 | --- | --- |
-| `/settings wcl_mechanic_add <name> <ability_id>` | Tracks an ability under a name; adding one that is already tracked renames it |
-| `/settings wcl_mechanic_remove <name>` | Stops tracking an ability |
-| `/settings wcl_mechanic_list` | Lists the tracked abilities |
+| `/settings wcl mechanic_add <name> <ability_id>` | Tracks an ability under a name; adding one that is already tracked renames it |
+| `/settings wcl mechanic_remove <name>` | Stops tracking an ability |
+| `/settings wcl mechanic_list` | Lists the tracked abilities |
 
 Players can be left out of the overview, for example someone who isn't part of the raid group, or a tank
 who takes an ability on purpose. An ignored player appears in no ranking, and what they took doesn't
@@ -315,9 +315,9 @@ ignore 50 players.
 
 | Command | Does |
 | --- | --- |
-| `/settings wcl_ignore_add <name>` | Leaves a player out of the overview |
-| `/settings wcl_ignore_remove <name>` | Shows the player again (the name autocompletes) |
-| `/settings wcl_ignore_list` | Lists the ignored players |
+| `/settings wcl ignore_add <name>` | Leaves a player out of the overview |
+| `/settings wcl ignore_remove <name>` | Shows the player again (the name autocompletes) |
+| `/settings wcl ignore_list` | Lists the ignored players |
 
 `/wcl consumables` counts how many **healthstones and health potions** the raid used over the whole
 night, and who used the most of each. Unlike deaths and damage taken it counts **every use in every
@@ -328,9 +328,9 @@ each. Ignored players are left out here too, with their uses.
 
 | Command | Does |
 | --- | --- |
-| `/settings wcl_consumable_add <kind> <ability_id>` | Counts an ability as a healthstone or a health potion |
-| `/settings wcl_consumable_remove <ability_id>` | Stops counting an ability |
-| `/settings wcl_consumable_list` | Lists the registered IDs for each kind |
+| `/settings wcl consumable_add <kind> <ability_id>` | Counts an ability as a healthstone or a health potion |
+| `/settings wcl consumable_remove <ability_id>` | Stops counting an ability |
+| `/settings wcl consumable_list` | Lists the registered IDs for each kind |
 
 Setting it up:
 
@@ -339,8 +339,8 @@ Setting it up:
    all servers draw on one API allowance (720 points per hour; an overview costs a few points, plus
    one or two for each tracked ability).
    Only public and unlisted reports can be read; private ones can't.
-2. Register the officer channel with `/settings wcl_channel`.
-3. Register where the reports are found with `/settings wcl_source <guild> <uploader>`, the Warcraft
+2. Register the officer channel with `/settings wcl channel`.
+3. Register where the reports are found with `/settings wcl source <guild> <uploader>`, the Warcraft
    Logs guild the reports are uploaded to and the user ID of the account that uploads them. Only
    reports from that account are picked when `/wcl report` is used without a link, and only among
    the guild's 25 newest.

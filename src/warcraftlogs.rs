@@ -925,7 +925,7 @@ pub fn consumables_embed(report: &ConsumablesReport) -> CreateEmbed {
 /// value, since Discord turns down an empty one.
 fn consumable_field(used: &ConsumableUse) -> (String, String, bool) {
     if !used.registered {
-        return (used.kind.plural().to_string(), "None registered. Add one with `/settings wcl_consumable_add`.".to_string(), false);
+        return (used.kind.plural().to_string(), "None registered. Add one with `/settings wcl consumable_add`.".to_string(), false);
     }
 
     let name = format!("{} — {} used", used.kind.plural(), used.total);
@@ -1138,7 +1138,7 @@ mod tests {
         assert_eq!(fields.len(), 2);
         assert_eq!((fields[0]["name"].as_str().unwrap(), fields[0]["value"].as_str().unwrap()), ("Healthstones — 0 used", "None used."));
         assert_eq!(fields[1]["name"], "Health potions");
-        assert!(fields[1]["value"].as_str().unwrap().contains("/settings wcl_consumable_add"));
+        assert!(fields[1]["value"].as_str().unwrap().contains("/settings wcl consumable_add"));
 
         // No pulls at all: no fields, and nothing Discord would turn down as empty.
         let empty = ConsumablesReport::build(&night, &[], None, &[], Vec::new(), 0);

@@ -48,17 +48,7 @@ const MAX_LIST_CHARS: usize = 4000;
         "clips_remove",
         "bart_token",
         "wowutils",
-        "wcl_channel",
-        "wcl_source",
-        "wcl_mechanic_add",
-        "wcl_mechanic_remove",
-        "wcl_mechanic_list",
-        "wcl_ignore_add",
-        "wcl_ignore_remove",
-        "wcl_ignore_list",
-        "wcl_consumable_add",
-        "wcl_consumable_remove",
-        "wcl_consumable_list",
+        "wcl",
         "clear",
     ),
     subcommand_required,
@@ -121,7 +111,7 @@ async fn show(ctx: Context<'_>) -> Result<(), Error> {
         wcl_abilities.iter().map(|ability| ability.name.as_str()).collect::<Vec<_>>().join(", ")
     };
 
-    // Only how many: the names can add up to more than a field holds, and `wcl_ignore_list` has them.
+    // Only how many: the names can add up to more than a field holds, and `/settings wcl ignore_list` has them.
     let wcl_ignored = match wcl_ignored_players::list(&ctx.data().db, guild_id).await?.len() {
         0 => "None".to_string(),
         1 => "1 player".to_string(),
@@ -443,8 +433,34 @@ async fn wowutils(
     reply(ctx, format!("{} registered for this server.", ClearTarget::WowUtils.name())).await
 }
 
+/// Warcraft Logs settings: channel, report source, abilities, ignored players, consumables
+//
+// A group of its own because Discord allows a command at most 25 subcommands, and `/settings`
+// had more than that with these directly under it.
+#[poise::command(
+    prefix_command,
+    slash_command,
+    subcommands(
+        "wcl_channel",
+        "wcl_source",
+        "wcl_mechanic_add",
+        "wcl_mechanic_remove",
+        "wcl_mechanic_list",
+        "wcl_ignore_add",
+        "wcl_ignore_remove",
+        "wcl_ignore_list",
+        "wcl_consumable_add",
+        "wcl_consumable_remove",
+        "wcl_consumable_list",
+    ),
+    subcommand_required,
+)]
+async fn wcl(_ctx: Context<'_>) -> Result<(), Error> {
+    Ok(())
+}
+
 /// Register the channel where Warcraft Logs results are posted, and the only one `/wcl` works in
-#[poise::command(prefix_command, slash_command, ephemeral)]
+#[poise::command(prefix_command, slash_command, ephemeral, rename = "channel")]
 async fn wcl_channel(
     ctx: Context<'_>,
     #[description = "Officer channel for Warcraft Logs results"]
@@ -458,7 +474,7 @@ async fn wcl_channel(
 ///
 /// Both are the numeric IDs Warcraft Logs uses. Only reports from this uploader are picked when
 /// `/wcl report` is run without a link.
-#[poise::command(prefix_command, slash_command, ephemeral)]
+#[poise::command(prefix_command, slash_command, ephemeral, rename = "source")]
 async fn wcl_source(
     ctx: Context<'_>,
     #[description = "Warcraft Logs guild ID the reports are uploaded to"] guild: u32,
@@ -481,7 +497,7 @@ async fn wcl_source(
 /// Give a name to show and the ability's ID as Warcraft Logs logs its damage: click the ability in a
 /// report's Damage Taken tab. It can differ from the ID on Wowhead, and one ability can be logged
 /// under more than one ID. Adding an ability that is already tracked renames it.
-#[poise::command(prefix_command, slash_command, ephemeral)]
+#[poise::command(prefix_command, slash_command, ephemeral, rename = "mechanic_add")]
 async fn wcl_mechanic_add(
     ctx: Context<'_>,
     #[description = "Name to show, e.g. Coalesced Venom"] name: String,
@@ -503,7 +519,7 @@ async fn wcl_mechanic_add(
         AddOutcome::Renamed => format!("Ability {ability_id} is now called **{name}**."),
         AddOutcome::NameTaken(other) => format!("Another ability (ID {other}) is already called **{name}**. Pick a different name."),
         AddOutcome::Full => format!(
-            "This server already tracks {} abilities. Remove one with `/settings wcl_mechanic_remove` first.",
+            "This server already tracks {} abilities. Remove one with `/settings wcl mechanic_remove` first.",
             wcl_mechanics::MAX_TRACKED
         ),
     };
@@ -511,7 +527,7 @@ async fn wcl_mechanic_add(
 }
 
 /// Stop tracking an ability in the Warcraft Logs overview
-#[poise::command(prefix_command, slash_command, ephemeral)]
+#[poise::command(prefix_command, slash_command, ephemeral, rename = "mechanic_remove")]
 async fn wcl_mechanic_remove(
     ctx: Context<'_>,
     #[description = "Tracked ability to remove"]
@@ -523,18 +539,18 @@ async fn wcl_mechanic_remove(
     if wcl_mechanics::remove(&ctx.data().db, guild_id, name.trim()).await? {
         reply(ctx, format!("No longer tracking **{}**.", name.trim())).await
     } else {
-        reply(ctx, format!("No tracked ability is called **{}**. See `/settings wcl_mechanic_list`.", name.trim())).await
+        reply(ctx, format!("No tracked ability is called **{}**. See `/settings wcl mechanic_list`.", name.trim())).await
     }
 }
 
 /// List the abilities tracked in the Warcraft Logs overview
-#[poise::command(prefix_command, slash_command, ephemeral)]
+#[poise::command(prefix_command, slash_command, ephemeral, rename = "mechanic_list")]
 async fn wcl_mechanic_list(ctx: Context<'_>) -> Result<(), Error> {
     let guild_id = require_guild(ctx)?;
 
     let tracked = wcl_mechanics::list(&ctx.data().db, guild_id).await?;
     if tracked.is_empty() {
-        return reply(ctx, "No abilities are tracked. Add one with `/settings wcl_mechanic_add`.".to_string()).await;
+        return reply(ctx, "No abilities are tracked. Add one with `/settings wcl mechanic_add`.".to_string()).await;
     }
 
     let lines: Vec<String> = tracked.iter().map(|ability| format!("**{}** — ability {}", ability.name, ability.ability_id)).collect();
@@ -545,7 +561,7 @@ async fn wcl_mechanic_list(ctx: Context<'_>) -> Result<(), Error> {
 ///
 /// An ignored player appears in no ranking, and what they took doesn't count towards any total. Give
 /// the character name; capitals don't matter. A server can ignore 50 players.
-#[poise::command(prefix_command, slash_command, ephemeral)]
+#[poise::command(prefix_command, slash_command, ephemeral, rename = "ignore_add")]
 async fn wcl_ignore_add(ctx: Context<'_>, #[description = "Character name, e.g. Tritonian"] name: String) -> Result<(), Error> {
     let guild_id = require_guild(ctx)?;
 
@@ -558,7 +574,7 @@ async fn wcl_ignore_add(ctx: Context<'_>, #[description = "Character name, e.g. 
         IgnoreOutcome::Added => format!("**{name}** is now left out of the Warcraft Logs overview."),
         IgnoreOutcome::AlreadyIgnored => format!("**{name}** is already ignored."),
         IgnoreOutcome::Full => format!(
-            "This server already ignores {} players. Remove one with `/settings wcl_ignore_remove` first.",
+            "This server already ignores {} players. Remove one with `/settings wcl ignore_remove` first.",
             wcl_ignored_players::MAX_IGNORED
         ),
     };
@@ -566,7 +582,7 @@ async fn wcl_ignore_add(ctx: Context<'_>, #[description = "Character name, e.g. 
 }
 
 /// Show a player in the Warcraft Logs overview again
-#[poise::command(prefix_command, slash_command, ephemeral)]
+#[poise::command(prefix_command, slash_command, ephemeral, rename = "ignore_remove")]
 async fn wcl_ignore_remove(
     ctx: Context<'_>,
     #[description = "Ignored character to show again"]
@@ -578,18 +594,18 @@ async fn wcl_ignore_remove(
     if wcl_ignored_players::remove(&ctx.data().db, guild_id, name.trim()).await? {
         reply(ctx, format!("**{}** is no longer ignored.", name.trim())).await
     } else {
-        reply(ctx, format!("**{}** isn't ignored. See `/settings wcl_ignore_list`.", name.trim())).await
+        reply(ctx, format!("**{}** isn't ignored. See `/settings wcl ignore_list`.", name.trim())).await
     }
 }
 
 /// List the players left out of the Warcraft Logs overview
-#[poise::command(prefix_command, slash_command, ephemeral)]
+#[poise::command(prefix_command, slash_command, ephemeral, rename = "ignore_list")]
 async fn wcl_ignore_list(ctx: Context<'_>) -> Result<(), Error> {
     let guild_id = require_guild(ctx)?;
 
     let ignored = wcl_ignored_players::list(&ctx.data().db, guild_id).await?;
     if ignored.is_empty() {
-        return reply(ctx, "No players are ignored. Add one with `/settings wcl_ignore_add`.".to_string()).await;
+        return reply(ctx, "No players are ignored. Add one with `/settings wcl ignore_add`.".to_string()).await;
     }
     reply(ctx, format!("Ignored players ({} of {}): {}", ignored.len(), wcl_ignored_players::MAX_IGNORED, ignored.join(", "))).await
 }
@@ -598,7 +614,7 @@ async fn wcl_ignore_list(ctx: Context<'_>) -> Result<(), Error> {
 ///
 /// Give the ability's ID as Warcraft Logs logs it: click it in a report's Casts tab. A kind can have
 /// several (a plain and a demonic healthstone, two potions), and only the IDs you add are counted.
-#[poise::command(prefix_command, slash_command, ephemeral)]
+#[poise::command(prefix_command, slash_command, ephemeral, rename = "consumable_add")]
 async fn wcl_consumable_add(
     ctx: Context<'_>,
     #[description = "Healthstone or health potion"] kind: Kind,
@@ -615,11 +631,11 @@ async fn wcl_consumable_add(
         ConsumableOutcome::Added => format!("Ability {ability_id} now counts as a **{}**.", kind.name().to_lowercase()),
         ConsumableOutcome::AlreadyRegistered => format!("Ability {ability_id} already counts as a **{}**.", kind.name().to_lowercase()),
         ConsumableOutcome::OtherKind(other) => format!(
-            "Ability {ability_id} is registered as a **{}**. Remove it with `/settings wcl_consumable_remove` first.",
+            "Ability {ability_id} is registered as a **{}**. Remove it with `/settings wcl consumable_remove` first.",
             other.name().to_lowercase()
         ),
         ConsumableOutcome::Full => format!(
-            "This server already has {} abilities registered as a {}. Remove one with `/settings wcl_consumable_remove` first.",
+            "This server already has {} abilities registered as a {}. Remove one with `/settings wcl consumable_remove` first.",
             wcl_consumables::MAX_PER_KIND,
             kind.name().to_lowercase()
         ),
@@ -628,24 +644,24 @@ async fn wcl_consumable_add(
 }
 
 /// Stop counting an ability in the Warcraft Logs consumables overview
-#[poise::command(prefix_command, slash_command, ephemeral)]
-async fn wcl_consumable_remove(ctx: Context<'_>, #[description = "The ability's ID, as in wcl_consumable_list"] ability_id: u32) -> Result<(), Error> {
+#[poise::command(prefix_command, slash_command, ephemeral, rename = "consumable_remove")]
+async fn wcl_consumable_remove(ctx: Context<'_>, #[description = "The ability's ID, as in wcl consumable_list"] ability_id: u32) -> Result<(), Error> {
     let guild_id = require_guild(ctx)?;
 
     match wcl_consumables::remove(&ctx.data().db, guild_id, ability_id).await? {
         Some(kind) => reply(ctx, format!("Ability {ability_id} no longer counts as a **{}**.", kind.name().to_lowercase())).await,
-        None => reply(ctx, format!("Ability {ability_id} isn't registered. See `/settings wcl_consumable_list`.")).await,
+        None => reply(ctx, format!("Ability {ability_id} isn't registered. See `/settings wcl consumable_list`.")).await,
     }
 }
 
 /// List the abilities counted as healthstones and health potions
-#[poise::command(prefix_command, slash_command, ephemeral)]
+#[poise::command(prefix_command, slash_command, ephemeral, rename = "consumable_list")]
 async fn wcl_consumable_list(ctx: Context<'_>) -> Result<(), Error> {
     let guild_id = require_guild(ctx)?;
 
     let registered = wcl_consumables::list(&ctx.data().db, guild_id).await?;
     if registered.is_empty() {
-        return reply(ctx, "No abilities are registered. Add one with `/settings wcl_consumable_add`.".to_string()).await;
+        return reply(ctx, "No abilities are registered. Add one with `/settings wcl consumable_add`.".to_string()).await;
     }
 
     let lines: Vec<String> = Kind::ALL
