@@ -11,6 +11,8 @@ use crate::guild_settings::GuildSettingsStore;
 use crate::raid_notes;
 use crate::schedules;
 use crate::types::bot::Error;
+use crate::warcraftlogs::WarcraftLogsClients;
+use crate::wcl_raid_report;
 
 /// The longest the scheduler sleeps before re-reading every guild's settings, which bounds how
 /// long a change made through `/settings raid_voice` takes to be picked up.
@@ -27,7 +29,7 @@ const EMBED_COLOUR: u32 = 0xAF69EE;
 /// How long before a raid-end snapshot a raid-start snapshot can have been taken and still be
 /// treated as the start of that same raid. Anything older is a start whose end never fired (the
 /// bot was down, or the schedules don't pair up), and comparing against it would be misleading.
-const MAX_RAID_HOURS: i64 = 12;
+pub const MAX_RAID_HOURS: i64 = 12;
 
 /// Which point of the raid a snapshot was taken at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,7 +53,16 @@ impl Moment {
 /// Runs forever, recording who is in each guild's raid voice channel whenever that guild's raid
 /// start or raid end schedule fires (`/settings raid_voice`), and posting the list to that week's
 /// raid notes thread. Uses the same wake-up scheme as `raid_notes::schedule_weekly_posts`.
-pub async fn schedule_snapshots(http: Arc<Http>, cache: Arc<Cache>, db: PgPool, guild_settings: Arc<GuildSettingsStore>) {
+///
+/// The raid end schedule is also what the Warcraft Logs overview of the night goes by: it is
+/// posted to the same thread a little later, see `wcl_raid_report.rs`.
+pub async fn schedule_snapshots(
+    http: Arc<Http>,
+    cache: Arc<Cache>,
+    db: PgPool,
+    guild_settings: Arc<GuildSettingsStore>,
+    warcraft_logs: Arc<WarcraftLogsClients>,
+) {
     let mut last_checked = schedules::now();
 
     loop {
@@ -74,6 +85,19 @@ pub async fn schedule_snapshots(http: Arc<Http>, cache: Arc<Cache>, db: PgPool, 
                             }
                         }
                         None => error!("Skipping raid {} attendance for guild {}: no raid notes channel is registered", moment.label(), guild_id),
+                    }
+
+                    // On a task of its own: it waits for the log to finish uploading, and the
+                    // other guilds' snapshots can't wait with it.
+                    if moment == Moment::End {
+                        tokio::spawn(wcl_raid_report::post_after_raid(
+                            http.clone(),
+                            db.clone(),
+                            guild_settings.clone(),
+                            warcraft_logs.clone(),
+                            guild_id,
+                            fire_time,
+                        ));
                     }
                 }
 

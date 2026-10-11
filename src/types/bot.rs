@@ -17,14 +17,15 @@ pub struct Data {
     /// Buffers each guild's replay users' recent messages so a deleted one can be reposted.
     pub message_replay: MessageReplay,
     /// Warcraft Logs API clients, one per guild that has registered its client credentials.
-    pub warcraft_logs: WarcraftLogsClients,
+    /// Shared with the raid attendance scheduler, which posts an overview after each raid.
+    pub warcraft_logs: Arc<WarcraftLogsClients>,
 }
 
 impl Data {
     pub fn new(config: Config, db: sqlx::PgPool, guild_settings: Arc<GuildSettingsStore>) -> Self {
         let http_client = reqwest::Client::new();
 
-        let warcraft_logs = WarcraftLogsClients::new(http_client.clone());
+        let warcraft_logs = Arc::new(WarcraftLogsClients::new(http_client.clone()));
 
         Self {
             config,

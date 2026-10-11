@@ -12,7 +12,7 @@ The bot is written with the `poise` crate and uses a few others for requests / l
 
 - **WoW Guild** — Bart Timeline Reminders addon info, class Discord links, and droptimizer report submission via WowUtils
 - **Clips channels** — deletes any message posted in a configured channel that doesn't contain a video (uploaded video file or an unfurled video link embed)
-- **Warcraft Logs** — officers get an overview of a raid night's report (Mythic pulls, who died the most, who died first, damage taken from tracked abilities, healthstones and health potions used) with `/wcl report`, `/wcl damage_taken` and `/wcl consumables`, posted in a registered officer channel
+- **Warcraft Logs** — officers get an overview of a raid night's report (Mythic pulls, who died the most, who died first, damage taken from tracked abilities, healthstones and health potions used) with `/wcl report`, `/wcl damage_taken` and `/wcl consumables`, posted in that week's raid notes thread; the overview is also posted there by itself after each raid
 - **Personal officer channels** — when a member is given the trial or raider role, creates a private text channel for them under a configured category, visible only to them and the officer (moderator) role
 
 ## Deployment
@@ -130,7 +130,6 @@ always restricted to administrators:
 | `/settings bart_token <token>` | Bart Timeline Reminders token shown to this server's raiders |
 | `/settings wowutils <token> <group_id>` | WowUtils API token and the group droptimizer reports are submitted to |
 | `/settings wcl client <client_id> <client_secret>` | Warcraft Logs API client this server's `/wcl` commands use |
-| `/settings wcl channel <channel>` | The officer channel Warcraft Logs results are posted in, and the only one `/wcl` works in |
 | `/settings wcl source <guild> <uploader>` | Warcraft Logs guild ID the reports are uploaded to, and the user ID of the account that uploads them |
 | `/settings wcl mechanic_add <name> <ability_id>` / `wcl mechanic_remove <name>` / `wcl mechanic_list` | The abilities whose damage taken the Warcraft Logs overview shows (see [Warcraft Logs](#warcraft-logs)) |
 | `/settings wcl ignore_add <name>` / `wcl ignore_remove <name>` / `wcl ignore_list` | Players left out of the Warcraft Logs overview |
@@ -274,9 +273,18 @@ needs permission to send messages in the chosen channel. See `src/announcements.
 ### Warcraft Logs
 
 Administrators and moderators (members with the registered moderator role) can get an overview of a
-raid night from [Warcraft Logs](https://www.warcraftlogs.com). The bot never posts one by itself: it
-only happens when one of them runs a command. The commands are slash-only, and they only work in the
-channel registered with `/settings wcl channel`; anywhere else they reply, privately, with where to go.
+raid night from [Warcraft Logs](https://www.warcraftlogs.com). The commands are slash-only, and they
+only work in the threads of the raid notes forum (`/settings raid_notes_channel`), where each week has
+its own (see [Weekly raid notes](#weekly-raid-notes)); anywhere else they reply, privately, with where
+to go. Results are visible to everyone who can see that forum.
+
+The overview is also posted by itself: 10 minutes after a raid's scheduled end (the end schedule of
+`/settings raid_voice`, see [Raid attendance](#raid-attendance)), the bot posts the overview of the
+night's report to that week's thread, the same one `/wcl report` gives. The wait is for the last pulls
+to finish uploading. The report used is the registered uploader's newest, and only if it was started
+within the 12 hours before the raid's end; if there is none, the bot says so in the thread and
+`/wcl report` can be run there once the log is up. This needs the API client, the source and the raid
+notes channel to be registered, and raid attendance to be set up; without them nothing is posted.
 
 | Command | Does |
 | --- | --- |
@@ -336,11 +344,13 @@ Setting it up:
    own, so each has its own API allowance (720 points per hour; an overview costs a few points,
    plus one or two for each tracked ability).
    Only public and unlisted reports can be read; private ones can't.
-2. Register the officer channel with `/settings wcl channel`.
+2. Register the raid notes forum with `/settings raid_notes_channel`, if it isn't already.
 3. Register where the reports are found with `/settings wcl source <guild> <uploader>`, the Warcraft
    Logs guild the reports are uploaded to and the user ID of the account that uploads them. Only
    reports from that account are picked when `/wcl report` is used without a link, and only among
    the guild's 25 newest.
+4. For the overview after each raid, set up raid attendance with `/settings raid_voice`.
 
 A report that is still being uploaded is shown without its unfinished pulls. See `src/warcraftlogs.rs`,
-`src/wcl_mechanics.rs`, `src/wcl_ignored_players.rs`, `src/wcl_consumables.rs` and `src/commands/wcl.rs`.
+`src/wcl_mechanics.rs`, `src/wcl_ignored_players.rs`, `src/wcl_consumables.rs`, `src/wcl_raid_report.rs`
+and `src/commands/wcl.rs`.

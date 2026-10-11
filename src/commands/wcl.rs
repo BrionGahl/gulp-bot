@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use log::error;
-use poise::serenity_prelude::CreateAllowedMentions;
+use poise::serenity_prelude::{ChannelId, CreateAllowedMentions};
 use poise::CreateReply;
 
 use crate::guild_settings::{GuildSettings, WclSource};
@@ -13,9 +13,9 @@ use crate::wcl_mechanics::{self, TrackedAbility};
 
 /// Warcraft Logs overviews of raid nights, for administrators and moderators
 ///
-/// Only in the Warcraft Logs channel, and nothing is posted unless one of them runs a command.
-/// Results go in the channel registered with `/settings wcl channel`; the commands refuse to run
-/// anywhere else.
+/// Only in the threads of the raid notes forum (`/settings raid_notes_channel`), where each
+/// week has its own; the commands refuse to run anywhere else. The overview of a raid night is
+/// also posted to that week's thread by itself, shortly after the raid's scheduled end.
 //
 // The check and `guild_only` are set here once: poise applies a parent command's checks to all of
 // its subcommands. (Kept out of the doc comment, which poise shows to users in `/help wcl`.)
@@ -184,7 +184,7 @@ struct Ready {
     settings: GuildSettings,
 }
 
-/// Checks that the command runs in the Warcraft Logs channel and that the server has API credentials.
+/// Checks that the command runs in a raid notes thread and that the server has API credentials.
 /// If not, tells only the officer who ran it and returns `None`. Everything here is checked before
 /// the command is deferred, so that a refusal is private rather than a public follow-up.
 async fn ready(ctx: Context<'_>) -> Result<Option<Ready>, Error> {
@@ -192,12 +192,12 @@ async fn ready(ctx: Context<'_>) -> Result<Option<Ready>, Error> {
     let Some(guild_id) = ctx.guild_id() else { return Ok(None) };
     let settings = ctx.data().guild_settings.get(guild_id);
 
-    let Some(channel_id) = settings.wcl_channel_id else {
-        refuse(ctx, "No Warcraft Logs channel is registered for this server. An administrator or moderator can set one with `/settings wcl channel`.".to_string()).await?;
+    let Some(raid_notes_channel_id) = settings.raid_notes_channel_id else {
+        refuse(ctx, "No raid notes channel is registered for this server. An administrator or moderator can set one with `/settings raid_notes_channel`.".to_string()).await?;
         return Ok(None);
     };
-    if ctx.channel_id() != channel_id {
-        refuse(ctx, format!("Warcraft Logs results are only posted in <#{channel_id}>. Use the command there.")).await?;
+    if !in_thread_of(ctx, raid_notes_channel_id).await? {
+        refuse(ctx, format!("Warcraft Logs results are only posted in the weekly threads of <#{raid_notes_channel_id}>. Use the command in one of them.")).await?;
         return Ok(None);
     }
     let Some(credentials) = settings.wcl_credentials.as_ref() else {
@@ -207,6 +207,12 @@ async fn ready(ctx: Context<'_>) -> Result<Option<Ready>, Error> {
     let warcraft_logs = ctx.data().warcraft_logs.for_guild(guild_id, credentials);
 
     Ok(Some(Ready { warcraft_logs, guild_id, settings }))
+}
+
+/// Whether the command was used in a thread (a forum post) of `forum_id`.
+async fn in_thread_of(ctx: Context<'_>, forum_id: ChannelId) -> Result<bool, Error> {
+    let channel = ctx.channel_id().to_channel(ctx.serenity_context()).await?;
+    Ok(channel.guild().is_some_and(|channel| channel.thread_metadata.is_some() && channel.parent_id == Some(forum_id)))
 }
 
 /// Which report a command was asked for.

@@ -3,6 +3,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use chrono::{DateTime, Utc};
 use log::info;
 use poise::serenity_prelude::{Colour, CreateEmbed, CreateEmbedFooter, GuildId};
 use reqwest::StatusCode;
@@ -135,10 +136,24 @@ impl WarcraftLogs {
     /// The newest report in the guild's recent uploads that came from the registered uploader,
     /// as its report code, or `None` if there isn't one among the guild's newest reports.
     pub async fn latest_report_code(&self, source: &WclSource) -> Result<Option<String>, Error> {
+        let reports = self.guild_reports(source).await?;
+        Ok(newest_by_uploader(&reports, source.uploader_id).map(|report| report.code.clone()))
+    }
+
+    /// `latest_report_code`, but only if that report was started at or after `earliest_start`.
+    /// For telling one raid night's report from the night before's.
+    pub async fn latest_report_code_since(&self, source: &WclSource, earliest_start: DateTime<Utc>) -> Result<Option<String>, Error> {
+        let reports = self.guild_reports(source).await?;
+        Ok(newest_by_uploader(&reports, source.uploader_id)
+            .filter(|report| report.started_at_or_after(earliest_start))
+            .map(|report| report.code.clone()))
+    }
+
+    /// The guild's newest reports, from any uploader.
+    async fn guild_reports(&self, source: &WclSource) -> Result<Vec<ReportSummary>, Error> {
         let variables = json!({ "guildID": source.guild_id, "limit": REPORTS_TO_SEARCH });
         let response: GuildReportsQuery = self.query(GUILD_REPORTS_QUERY, variables).await?;
-
-        Ok(newest_by_uploader(&response.report_data.reports.data, source.uploader_id).map(|report| report.code.clone()))
+        Ok(response.report_data.reports.data)
     }
 
     /// Everything the overview shows for one report: its Mythic boss pulls, the deaths in them with
@@ -478,6 +493,13 @@ struct ReportSummary {
     code: String,
     start_time: f64,
     owner: Option<Owner>,
+}
+
+impl ReportSummary {
+    /// `start_time` is in milliseconds since the Unix epoch.
+    fn started_at_or_after(&self, time: DateTime<Utc>) -> bool {
+        self.start_time >= time.timestamp_millis() as f64
+    }
 }
 
 #[derive(Deserialize)]
@@ -1387,6 +1409,12 @@ mod tests {
         assert_eq!(newest_by_uploader(&reports, 8).unwrap().code, "other");
         assert!(newest_by_uploader(&reports, 9).is_none());
         assert!(newest_by_uploader(&[], 7).is_none());
+
+        let at = |millis: i64| DateTime::<Utc>::from_timestamp_millis(millis).unwrap();
+        let newest = newest_by_uploader(&reports, 7).unwrap();
+        assert!(newest.started_at_or_after(at(499)));
+        assert!(newest.started_at_or_after(at(500)));
+        assert!(!newest.started_at_or_after(at(501)));
     }
 
     fn report(fights: &[(&str, bool, bool)]) -> Report {

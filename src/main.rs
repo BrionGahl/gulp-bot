@@ -17,6 +17,7 @@ mod warcraftlogs;
 mod wcl_mechanics;
 mod wcl_ignored_players;
 mod wcl_consumables;
+mod wcl_raid_report;
 
 use poise::serenity_prelude::{self as serenity, GatewayIntents};
 use tracing_subscriber::prelude::*;
@@ -54,6 +55,7 @@ async fn main() {
 
     let data = Data::new(config, pool.clone(), guild_settings.clone());
     let token = data.config.discord_token.clone();
+    let warcraft_logs = data.warcraft_logs.clone();
 
     let intents = GatewayIntents::non_privileged()
         | GatewayIntents::MESSAGE_CONTENT
@@ -131,7 +133,7 @@ async fn main() {
 
     tokio::spawn(health::serve());
     tokio::spawn(raid_notes::schedule_weekly_posts(client.http.clone(), pool.clone(), guild_settings.clone()));
-    tokio::spawn(raid_attendance::schedule_snapshots(client.http.clone(), client.cache.clone(), pool.clone(), guild_settings.clone()));
+    tokio::spawn(raid_attendance::schedule_snapshots(client.http.clone(), client.cache.clone(), pool.clone(), guild_settings.clone(), warcraft_logs));
     tokio::spawn(announcements::schedule_announcements(client.http.clone(), pool, guild_settings));
 
     // The bot is PID 1 in its container, and the kernel only delivers a signal to PID 1 if the

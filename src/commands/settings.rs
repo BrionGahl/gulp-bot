@@ -144,7 +144,6 @@ async fn show(ctx: Context<'_>) -> Result<(), Error> {
         // Credentials are never echoed back, only whether they're registered.
         .field(ClearTarget::BartToken.name(), if settings.bart_token.is_some() { "Set" } else { "Not set" }, true)
         .field(ClearTarget::WowUtils.name(), if settings.wowutils_token.is_some() { "Set" } else { "Not set" }, true)
-        .field(Setting::WclChannel.name(), channel(settings.wcl_channel_id), true)
         .field(ClearTarget::WclSource.name(), wcl_source, true)
         .field(ClearTarget::WclClient.name(), if settings.wcl_credentials.is_some() { "Set" } else { "Not set" }, true)
         .field("Warcraft Logs abilities", wcl_abilities, false)
@@ -434,7 +433,7 @@ async fn wowutils(
     reply(ctx, format!("{} registered for this server.", ClearTarget::WowUtils.name())).await
 }
 
-/// Warcraft Logs settings: API client, channel, report source, abilities, ignored players, consumables
+/// Warcraft Logs settings: API client, report source, abilities, ignored players, consumables
 //
 // A group of its own because Discord allows a command at most 25 subcommands, and `/settings`
 // had more than that with these directly under it.
@@ -443,7 +442,6 @@ async fn wowutils(
     slash_command,
     subcommands(
         "wcl_client",
-        "wcl_channel",
         "wcl_source",
         "wcl_mechanic_add",
         "wcl_mechanic_remove",
@@ -480,17 +478,6 @@ async fn wcl_client(
     let credentials = WclCredentials { client_id: client_id.to_string(), client_secret: client_secret.to_string() };
     ctx.data().guild_settings.set_wcl_credentials(guild_id, Some(credentials)).await?;
     reply(ctx, format!("{} registered for this server.", ClearTarget::WclClient.name())).await
-}
-
-/// Register the channel where Warcraft Logs results are posted, and the only one `/wcl` works in
-#[poise::command(prefix_command, slash_command, ephemeral, rename = "channel")]
-async fn wcl_channel(
-    ctx: Context<'_>,
-    #[description = "Officer channel for Warcraft Logs results"]
-    #[channel_types("Text", "News")]
-    channel: ChannelId,
-) -> Result<(), Error> {
-    register_channel(ctx, Setting::WclChannel, channel, TEXT_CHANNEL_TYPES, "a text channel").await
 }
 
 /// Register where this server's Warcraft Logs reports are found: the guild and the uploader
@@ -719,8 +706,6 @@ enum ClearTarget {
     BartToken,
     #[name = "WowUtils credentials"]
     WowUtils,
-    #[name = "Warcraft Logs channel"]
-    WclChannel,
     #[name = "Warcraft Logs source"]
     WclSource,
     #[name = "Warcraft Logs API client"]
@@ -748,7 +733,6 @@ async fn clear(ctx: Context<'_>, #[description = "Setting to clear"] setting: Cl
         ClearTarget::RaidVoice => store.set_raid_voice(guild_id, None).await?,
         ClearTarget::BartToken => store.set_bart_token(guild_id, None).await?,
         ClearTarget::WowUtils => store.set_wowutils(guild_id, None).await?,
-        ClearTarget::WclChannel => store.set(guild_id, Setting::WclChannel, None).await?,
         ClearTarget::WclSource => store.set_wcl_source(guild_id, None).await?,
         ClearTarget::WclClient => store.set_wcl_credentials(guild_id, None).await?,
     }

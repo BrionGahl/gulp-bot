@@ -167,7 +167,7 @@ mod tests {
     }
 
     /// Every command with its full name, at every depth: `settings`, `settings wcl`,
-    /// `settings wcl channel`, and so on.
+    /// `settings wcl source`, and so on.
     fn with_paths<'a>(commands: &'a [poise::Command<Data, Error>], prefix: &str, found: &mut Vec<(String, &'a poise::Command<Data, Error>)>) {
         for command in commands {
             let path = if prefix.is_empty() { command.name.clone() } else { format!("{prefix} {}", command.name) };
@@ -230,7 +230,7 @@ mod tests {
         assert_eq!(find_command(&commands, "settings wcl mechanic_add").unwrap().0, "settings wcl mechanic_add");
 
         assert!(find_command(&commands, "settings nope").is_none());
-        assert!(find_command(&commands, "settings wcl_channel").is_none());
+        assert!(find_command(&commands, "settings wcl_source").is_none());
         assert!(find_command(&commands, "nope").is_none());
         // `register` is hidden from help, so it isn't offered here either.
         assert!(find_command(&commands, "register").is_none());
@@ -241,7 +241,7 @@ mod tests {
         assert!(page.contains("`/settings wcl` — "));
         let page = render_command_help("settings wcl", find_command(&commands, "settings wcl").unwrap().1);
         assert!(page.contains("**Subcommands**\n`/settings wcl client` — "));
-        assert!(page.contains("`/settings wcl channel` — "));
+        assert!(page.contains("`/settings wcl source` — "));
         let page = render_command_help("settings raid_voice", find_command(&commands, "settings raid_voice").unwrap().1);
         assert!(page.contains("**Parameters**\n`channel` (required) — "));
     }
