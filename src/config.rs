@@ -3,7 +3,7 @@ use std::env;
 use tracing_subscriber::filter::LevelFilter;
 
 /// Process-wide configuration from the environment. Per-server values (role, channel and user
-/// IDs, the Bart / WowUtils credentials, the raid notes schedule) are not here: administrators register those per
+/// IDs, the Bart / WowUtils / Warcraft Logs credentials, the raid notes schedule) are not here: administrators register those per
 /// guild, see `guild_settings.rs`.
 #[derive(Debug)]
 pub struct Config {

@@ -13,6 +13,11 @@ mod message_replay;
 mod guild_settings;
 mod schedules;
 mod raid_attendance;
+mod warcraftlogs;
+mod wcl_mechanics;
+mod wcl_ignored_players;
+mod wcl_consumables;
+mod wcl_raid_report;
 
 use poise::serenity_prelude::{self as serenity, GatewayIntents};
 use tracing_subscriber::prelude::*;
@@ -50,6 +55,7 @@ async fn main() {
 
     let data = Data::new(config, pool.clone(), guild_settings.clone());
     let token = data.config.discord_token.clone();
+    let warcraft_logs = data.warcraft_logs.clone();
 
     let intents = GatewayIntents::non_privileged()
         | GatewayIntents::MESSAGE_CONTENT
@@ -77,6 +83,7 @@ async fn main() {
             commands::mod_debug::test_replay(),
             commands::settings::settings(),
             commands::announcement::announcement(),
+            commands::wcl::wcl(),
         ],
         // Call to the event handler
         event_handler: |ctx, event, framework, data| {
@@ -126,10 +133,29 @@ async fn main() {
 
     tokio::spawn(health::serve());
     tokio::spawn(raid_notes::schedule_weekly_posts(client.http.clone(), pool.clone(), guild_settings.clone()));
-    tokio::spawn(raid_attendance::schedule_snapshots(client.http.clone(), client.cache.clone(), pool.clone(), guild_settings.clone()));
+    tokio::spawn(raid_attendance::schedule_snapshots(client.http.clone(), client.cache.clone(), pool.clone(), guild_settings.clone(), warcraft_logs));
     tokio::spawn(announcements::schedule_announcements(client.http.clone(), pool, guild_settings));
 
-    client.start().await.unwrap()
+    // The bot is PID 1 in its container, and the kernel only delivers a signal to PID 1 if the
+    // process handles it: without this, `docker stop` waits out its timeout and then kills the
+    // bot (exit code 137) instead of letting it close its Discord connection.
+    let shard_manager = client.shard_manager.clone();
+    tokio::select! {
+        result = client.start() => result.unwrap(),
+        () = shutdown_signal() => {
+            info!("Shutdown signal received, closing the Discord connection.");
+            shard_manager.shutdown_all().await;
+        }
+    }
+}
+
+/// Resolves when the process is asked to stop: SIGTERM (`docker stop`) or SIGINT (Ctrl-C).
+async fn shutdown_signal() {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("Failed to listen for SIGTERM.");
+    tokio::select! {
+        _ = terminate.recv() => {}
+        _ = tokio::signal::ctrl_c() => {}
+    }
 }
 
 async fn event_handler(

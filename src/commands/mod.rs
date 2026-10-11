@@ -4,3 +4,4 @@ pub mod utilities;
 pub mod mod_debug;
 pub mod settings;
 pub mod announcement;
+pub mod wcl;

@@ -12,6 +12,7 @@ The bot is written with the `poise` crate and uses a few others for requests / l
 
 - **WoW Guild** — Bart Timeline Reminders addon info, class Discord links, and droptimizer report submission via WowUtils
 - **Clips channels** — deletes any message posted in a configured channel that doesn't contain a video (uploaded video file or an unfurled video link embed)
+- **Warcraft Logs** — officers get an overview of a raid night's report (Mythic pulls, who died the most, who died first, damage taken from tracked abilities, healthstones and health potions used) with `/wcl report`, `/wcl damage_taken` and `/wcl consumables`, posted in that week's raid notes thread; the overview is also posted there by itself after each raid
 - **Personal officer channels** — when a member is given the trial or raider role, creates a private text channel for them under a configured category, visible only to them and the officer (moderator) role
 
 ## Deployment
@@ -32,8 +33,10 @@ tarball:
 
 Every build is tagged twice: with a version derived from the current commit, in the same form as the
 [release tags](#release-tags) (e.g. `v2026.10.09-c97a8ec`, with `-dirty` appended if there are
-uncommitted changes), and with `latest`. The tarball is named `gulp-bot-<version>.tar` and contains
-both tags.
+uncommitted changes), and with a moving channel tag. A build from `master` moves `latest`; a build
+from any other branch moves `dev` instead, so loading it never changes what a stack running `latest`
+gets. Set `CHANNEL` to pick the tag yourself, e.g. `CHANNEL=latest ./build-image.sh` to release from
+another branch. The tarball is named `gulp-bot-<version>.tar` and contains both tags.
 
 ### Loading it onto the host
 
@@ -44,8 +47,8 @@ scp gulp-bot-<version>.tar <user>@<host>:/tmp/
 ssh <user>@<host> docker load -i /tmp/gulp-bot-<version>.tar
 ```
 
-Loading moves `latest` to the new build and leaves every previously loaded version on the host under
-its own tag. An image built with podman is loaded as `localhost/gulp-bot:<tag>`, which is the name
+Loading moves the build's channel tag (`latest` or `dev`) to the new build and leaves every
+previously loaded version on the host under its own tag. An image built with podman is loaded as `localhost/gulp-bot:<tag>`, which is the name
 `docker-compose.yml` expects. If it was built with docker instead, the name is `gulp-bot:<tag>` and
 the `image:` line needs to match.
 
@@ -100,7 +103,7 @@ LOG_LEVEL=<TRACE, DEBUG, INFO, WARN or ERROR; defaults to INFO>
 With `docker-compose.yml`, `DATABASE_URL` is built for you from `POSTGRES_PASSWORD`; see `example.env`
 for the variables the stack expects.
 
-Role, channel and user IDs, the Bart and WowUtils credentials, and the raid notes schedule are not
+Role, channel and user IDs, the Bart, WowUtils and Warcraft Logs credentials, and the raid notes schedule are not
 environment variables.
 They are registered per server with the `/settings` commands below.
 
@@ -126,6 +129,11 @@ always restricted to administrators:
 | `/settings clips_add <channel>` / `clips_remove <channel>` | Channels restricted to video-only messages |
 | `/settings bart_token <token>` | Bart Timeline Reminders token shown to this server's raiders |
 | `/settings wowutils <token> <group_id>` | WowUtils API token and the group droptimizer reports are submitted to |
+| `/settings wcl client <client_id> <client_secret>` | Warcraft Logs API client this server's `/wcl` commands use |
+| `/settings wcl source <guild> <uploader>` | Warcraft Logs guild ID the reports are uploaded to, and the user ID of the account that uploads them |
+| `/settings wcl mechanic_add <name> <ability_id>` / `wcl mechanic_remove <name>` / `wcl mechanic_list` | The abilities whose damage taken the Warcraft Logs overview shows (see [Warcraft Logs](#warcraft-logs)) |
+| `/settings wcl ignore_add <name>` / `wcl ignore_remove <name>` / `wcl ignore_list` | Players left out of the Warcraft Logs overview |
+| `/settings wcl consumable_add <kind> <ability_id>` / `wcl consumable_remove <ability_id>` / `wcl consumable_list` | The abilities counted as healthstones and health potions by `/wcl consumables` |
 | `/settings clear <setting>` | Clears one of the settings above (clips channels and replay users have their own `_remove` commands) |
 
 Before saving, the bot checks with Discord that the role, channel or member actually belongs to the
@@ -261,3 +269,88 @@ An announcement can only be listed, posted or deleted from the server it was cre
 can have at most 25. Additions and deletions take effect within a minute, without a restart. The bot
 needs permission to send messages in the chosen channel. See `src/announcements.rs` and
 `src/commands/announcement.rs`.
+
+### Warcraft Logs
+
+Administrators and moderators (members with the registered moderator role) can get an overview of a
+raid night from [Warcraft Logs](https://www.warcraftlogs.com). The commands are slash-only, and they
+only work in the threads of the raid notes forum (`/settings raid_notes_channel`), where each week has
+its own (see [Weekly raid notes](#weekly-raid-notes)); anywhere else they reply, privately, with where
+to go. Results are visible to everyone who can see that forum.
+
+The overview is also posted by itself: 10 minutes after a raid's scheduled end (the end schedule of
+`/settings raid_voice`, see [Raid attendance](#raid-attendance)), the bot posts the overview of the
+night's report to that week's thread, the same one `/wcl report` gives. The wait is for the last pulls
+to finish uploading. The report used is the registered uploader's newest, and only if it was started
+within the 12 hours before the raid's end; if there is none, the bot says so in the thread and
+`/wcl report` can be run there once the log is up. This needs the API client, the source and the raid
+notes channel to be registered, and raid attendance to be set up; without them nothing is posted.
+
+| Command | Does |
+| --- | --- |
+| `/wcl report [report]` | Posts the overview of a report. `report` is a report link or code; without it, the newest report from the registered uploader is used |
+| `/wcl consumables [boss] [report]` | Posts how many healthstones and health potions were used, and by whom. `boss` narrows it to the pulls of the boss whose name contains it |
+| `/wcl damage_taken <ability> [boss] [report]` | Posts who took damage from one ability. `ability` is a tracked ability (autocompleted) or any spell ID; `boss` narrows it to the pulls of the boss whose name contains it |
+
+The overview has the report's Mythic boss pulls (kills and wipes for each boss), who died the most,
+who was the first to die in a pull, and for each tracked ability the players who took the most damage
+from it. **Only the first two deaths in each pull are counted, and damage taken only up to the second
+death**: after that the raid is wiping, and what happens then says nothing about anyone's play. Players
+are shown by their character name as Warcraft Logs has it; nobody is linked to a Discord account.
+
+Only the abilities you add are tracked, by the ID you give, up to 6 per server; the bot doesn't look
+for abilities itself. The ID has to be the one Warcraft Logs logs the damage under, which you can see
+by clicking the ability in a report's Damage Taken tab. It can differ from the spell's ID on Wowhead,
+and one ability can be logged under more than one ID; if the overview says nobody took damage from an
+ability you know hit people, the ID is the first thing to check. An overview that would be too big for one Discord embed leaves
+out the last abilities and says how many, and `/wcl damage_taken` shows any of them in full.
+
+| Command | Does |
+| --- | --- |
+| `/settings wcl mechanic_add <name> <ability_id>` | Tracks an ability under a name; adding one that is already tracked renames it |
+| `/settings wcl mechanic_remove <name>` | Stops tracking an ability |
+| `/settings wcl mechanic_list` | Lists the tracked abilities |
+
+Players can be left out of the overview, for example someone who isn't part of the raid group, or a tank
+who takes an ability on purpose. An ignored player appears in no ranking, and what they took doesn't
+count towards any total or share, as if they weren't in the report. The footer says how many are left
+out. The first-two-deaths cutoff is Warcraft Logs' own, so an ignored player's death among the first two
+in a pull still uses up one of them. Names are character names; capitals don't matter. A server can
+ignore 50 players.
+
+| Command | Does |
+| --- | --- |
+| `/settings wcl ignore_add <name>` | Leaves a player out of the overview |
+| `/settings wcl ignore_remove <name>` | Shows the player again (the name autocompletes) |
+| `/settings wcl ignore_list` | Lists the ignored players |
+
+`/wcl consumables` counts how many **healthstones and health potions** the raid used over the whole
+night, and who used the most of each. Unlike deaths and damage taken it counts **every use in every
+pull**, including once the raid had started wiping, because it is about what the raid consumed. As with
+tracked abilities, only the IDs you register count, as Warcraft Logs logs them (click the ability in a
+report's Casts tab). A kind can have several: a plain and a demonic healthstone, two potions, up to 6 of
+each. Ignored players are left out here too, with their uses.
+
+| Command | Does |
+| --- | --- |
+| `/settings wcl consumable_add <kind> <ability_id>` | Counts an ability as a healthstone or a health potion |
+| `/settings wcl consumable_remove <ability_id>` | Stops counting an ability |
+| `/settings wcl consumable_list` | Lists the registered IDs for each kind |
+
+Setting it up:
+
+1. Create an API client at warcraftlogs.com (Profile, then Manage Your Clients) and register its ID
+   and secret with `/settings wcl client <client_id> <client_secret>`. Each server registers its
+   own, so each has its own API allowance (720 points per hour; an overview costs a few points,
+   plus one or two for each tracked ability).
+   Only public and unlisted reports can be read; private ones can't.
+2. Register the raid notes forum with `/settings raid_notes_channel`, if it isn't already.
+3. Register where the reports are found with `/settings wcl source <guild> <uploader>`, the Warcraft
+   Logs guild the reports are uploaded to and the user ID of the account that uploads them. Only
+   reports from that account are picked when `/wcl report` is used without a link, and only among
+   the guild's 25 newest.
+4. For the overview after each raid, set up raid attendance with `/settings raid_voice`.
+
+A report that is still being uploaded is shown without its unfinished pulls. See `src/warcraftlogs.rs`,
+`src/wcl_mechanics.rs`, `src/wcl_ignored_players.rs`, `src/wcl_consumables.rs`, `src/wcl_raid_report.rs`
+and `src/commands/wcl.rs`.
