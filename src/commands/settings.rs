@@ -1,7 +1,7 @@
 use poise::serenity_prelude::{ChannelId, ChannelType, CreateAllowedMentions, GuildId, RoleId, UserId};
 use poise::{ChoiceParameter, CreateReply};
 
-use crate::guild_settings::{RaidVoice, Setting, WclSource};
+use crate::guild_settings::{RaidVoice, Setting, WclCredentials, WclSource};
 use crate::personal_officer_channels;
 use crate::raid_notes;
 use crate::schedules;
@@ -146,6 +146,7 @@ async fn show(ctx: Context<'_>) -> Result<(), Error> {
         .field(ClearTarget::WowUtils.name(), if settings.wowutils_token.is_some() { "Set" } else { "Not set" }, true)
         .field(Setting::WclChannel.name(), channel(settings.wcl_channel_id), true)
         .field(ClearTarget::WclSource.name(), wcl_source, true)
+        .field(ClearTarget::WclClient.name(), if settings.wcl_credentials.is_some() { "Set" } else { "Not set" }, true)
         .field("Warcraft Logs abilities", wcl_abilities, false)
         .field("Warcraft Logs ignored players", wcl_ignored, true)
         .field("Warcraft Logs consumables", wcl_consumables, true);
@@ -433,7 +434,7 @@ async fn wowutils(
     reply(ctx, format!("{} registered for this server.", ClearTarget::WowUtils.name())).await
 }
 
-/// Warcraft Logs settings: channel, report source, abilities, ignored players, consumables
+/// Warcraft Logs settings: API client, channel, report source, abilities, ignored players, consumables
 //
 // A group of its own because Discord allows a command at most 25 subcommands, and `/settings`
 // had more than that with these directly under it.
@@ -441,6 +442,7 @@ async fn wowutils(
     prefix_command,
     slash_command,
     subcommands(
+        "wcl_client",
         "wcl_channel",
         "wcl_source",
         "wcl_mechanic_add",
@@ -457,6 +459,27 @@ async fn wowutils(
 )]
 async fn wcl(_ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
+}
+
+/// Register the Warcraft Logs API client this server's `/wcl` commands use
+///
+/// Create one at warcraftlogs.com (Profile, then Manage Your Clients) and give its ID and secret.
+#[poise::command(slash_command, ephemeral, rename = "client")]
+async fn wcl_client(
+    ctx: Context<'_>,
+    #[description = "Warcraft Logs API client ID"] client_id: String,
+    #[description = "Warcraft Logs API client secret"] client_secret: String,
+) -> Result<(), Error> {
+    let guild_id = require_guild(ctx)?;
+
+    let (client_id, client_secret) = (client_id.trim(), client_secret.trim());
+    if client_id.is_empty() || client_secret.is_empty() {
+        return reply(ctx, "The client ID and secret can't be empty.".to_string()).await;
+    }
+
+    let credentials = WclCredentials { client_id: client_id.to_string(), client_secret: client_secret.to_string() };
+    ctx.data().guild_settings.set_wcl_credentials(guild_id, Some(credentials)).await?;
+    reply(ctx, format!("{} registered for this server.", ClearTarget::WclClient.name())).await
 }
 
 /// Register the channel where Warcraft Logs results are posted, and the only one `/wcl` works in
@@ -700,6 +723,8 @@ enum ClearTarget {
     WclChannel,
     #[name = "Warcraft Logs source"]
     WclSource,
+    #[name = "Warcraft Logs API client"]
+    WclClient,
 }
 
 /// Clear one of this server's registered settings
@@ -725,6 +750,7 @@ async fn clear(ctx: Context<'_>, #[description = "Setting to clear"] setting: Cl
         ClearTarget::WowUtils => store.set_wowutils(guild_id, None).await?,
         ClearTarget::WclChannel => store.set(guild_id, Setting::WclChannel, None).await?,
         ClearTarget::WclSource => store.set_wcl_source(guild_id, None).await?,
+        ClearTarget::WclClient => store.set_wcl_credentials(guild_id, None).await?,
     }
     reply(ctx, format!("{} cleared.", setting.name())).await
 }

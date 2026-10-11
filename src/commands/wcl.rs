@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use log::error;
 use poise::serenity_prelude::CreateAllowedMentions;
 use poise::CreateReply;
@@ -50,7 +52,7 @@ async fn report(
 
     // The API takes a few seconds, longer than Discord waits for a first response.
     ctx.defer().await?;
-    let Some(code) = resolve_code(ctx, ready.warcraft_logs, target).await? else { return Ok(()) };
+    let Some(code) = resolve_code(ctx, &ready.warcraft_logs, target).await? else { return Ok(()) };
 
     match ready.warcraft_logs.overview(&code, &tracked, &ignored).await {
         Ok(overview) => {
@@ -88,7 +90,7 @@ async fn damage_taken(
     };
 
     ctx.defer().await?;
-    let Some(code) = resolve_code(ctx, ready.warcraft_logs, target).await? else { return Ok(()) };
+    let Some(code) = resolve_code(ctx, &ready.warcraft_logs, target).await? else { return Ok(()) };
 
     match ready.warcraft_logs.damage_report(&code, boss.as_deref(), &ability, &ignored).await {
         Ok(damage) => {
@@ -123,7 +125,7 @@ async fn consumables(
     let ignored = wcl_ignored_players::list(&ctx.data().db, ready.guild_id).await?;
 
     ctx.defer().await?;
-    let Some(code) = resolve_code(ctx, ready.warcraft_logs, target).await? else { return Ok(()) };
+    let Some(code) = resolve_code(ctx, &ready.warcraft_logs, target).await? else { return Ok(()) };
 
     match ready.warcraft_logs.consumables(&code, boss.as_deref(), &registered, &ignored).await {
         Ok(used) => {
@@ -176,16 +178,16 @@ fn resolve_ability(tracked: &[TrackedAbility], input: &str) -> Option<TrackedAbi
 }
 
 /// What the `/wcl` commands need once the checks that don't use the network have passed.
-struct Ready<'a> {
-    warcraft_logs: &'a WarcraftLogs,
+struct Ready {
+    warcraft_logs: Arc<WarcraftLogs>,
     guild_id: poise::serenity_prelude::GuildId,
     settings: GuildSettings,
 }
 
-/// Checks that the command runs in the Warcraft Logs channel and that the bot has API credentials.
+/// Checks that the command runs in the Warcraft Logs channel and that the server has API credentials.
 /// If not, tells only the officer who ran it and returns `None`. Everything here is checked before
 /// the command is deferred, so that a refusal is private rather than a public follow-up.
-async fn ready(ctx: Context<'_>) -> Result<Option<Ready<'_>>, Error> {
+async fn ready(ctx: Context<'_>) -> Result<Option<Ready>, Error> {
     // `check_is_admin_or_moderator` has already established this is a guild.
     let Some(guild_id) = ctx.guild_id() else { return Ok(None) };
     let settings = ctx.data().guild_settings.get(guild_id);
@@ -198,10 +200,11 @@ async fn ready(ctx: Context<'_>) -> Result<Option<Ready<'_>>, Error> {
         refuse(ctx, format!("Warcraft Logs results are only posted in <#{channel_id}>. Use the command there.")).await?;
         return Ok(None);
     }
-    let Some(warcraft_logs) = ctx.data().warcraft_logs.as_ref() else {
-        refuse(ctx, "Warcraft Logs isn't set up for this bot: `WCL_CLIENT_ID` and `WCL_CLIENT_SECRET` haven't been provided.".to_string()).await?;
+    let Some(credentials) = settings.wcl_credentials.as_ref() else {
+        refuse(ctx, "No Warcraft Logs API client is registered for this server. An administrator or moderator can set one with `/settings wcl client`.".to_string()).await?;
         return Ok(None);
     };
+    let warcraft_logs = ctx.data().warcraft_logs.for_guild(guild_id, credentials);
 
     Ok(Some(Ready { warcraft_logs, guild_id, settings }))
 }

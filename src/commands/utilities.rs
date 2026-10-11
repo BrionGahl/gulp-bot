@@ -195,12 +195,13 @@ mod tests {
     }
 
     /// Discord rejects the whole registration, and the bot never finishes starting, if any
-    /// command or group has more than 25 subcommands or parameters, or if groups nest deeper
-    /// than command, group, subcommand.
+    /// command or group has more than 25 subcommands or parameters, if groups nest deeper than
+    /// command, group, subcommand, or if a description is over 100 characters.
     #[test]
     fn commands_fit_discords_registration_limits() {
         const MAX_OPTIONS: usize = 25;
         const MAX_DEPTH: usize = 3;
+        const MAX_DESCRIPTION_CHARS: usize = 100;
 
         let commands = all_commands();
         let mut all = Vec::new();
@@ -210,6 +211,11 @@ mod tests {
             assert!(command.subcommands.len() <= MAX_OPTIONS, "/{path} has {} subcommands", command.subcommands.len());
             assert!(command.parameters.len() <= MAX_OPTIONS, "/{path} has {} parameters", command.parameters.len());
             assert!(path.split(' ').count() <= MAX_DEPTH, "/{path} is nested too deeply");
+
+            let descriptions = command.description.iter().chain(command.parameters.iter().filter_map(|parameter| parameter.description.as_ref()));
+            for description in descriptions {
+                assert!(description.chars().count() <= MAX_DESCRIPTION_CHARS, "/{path} has a description over the limit: {description}");
+            }
         }
     }
 
@@ -234,7 +240,8 @@ mod tests {
         assert!(page.contains("`/settings raid_voice` — "));
         assert!(page.contains("`/settings wcl` — "));
         let page = render_command_help("settings wcl", find_command(&commands, "settings wcl").unwrap().1);
-        assert!(page.contains("**Subcommands**\n`/settings wcl channel` — "));
+        assert!(page.contains("**Subcommands**\n`/settings wcl client` — "));
+        assert!(page.contains("`/settings wcl channel` — "));
         let page = render_command_help("settings raid_voice", find_command(&commands, "settings raid_voice").unwrap().1);
         assert!(page.contains("**Parameters**\n`channel` (required) — "));
     }

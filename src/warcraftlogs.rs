@@ -1,16 +1,17 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use log::info;
-use poise::serenity_prelude::{Colour, CreateEmbed, CreateEmbedFooter};
+use poise::serenity_prelude::{Colour, CreateEmbed, CreateEmbedFooter, GuildId};
 use reqwest::StatusCode;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
-use crate::guild_settings::WclSource;
+use crate::guild_settings::{WclCredentials, WclSource};
 use crate::types::bot::Error;
 use crate::wcl_consumables::{Kind, Registered};
 use crate::wcl_mechanics::TrackedAbility;
@@ -62,8 +63,38 @@ const DAMAGE_SHOWN_IN_OVERVIEW: usize = 5;
 const DAMAGE_SHOWN: usize = 15;
 const CONSUMABLE_PLAYERS_SHOWN: usize = 10;
 
-/// Client for the Warcraft Logs v2 API, which is public-data only: it authenticates with the
-/// bot's own client credentials (no user authorization), so it can read public and unlisted
+/// Each guild's Warcraft Logs client, built from the credentials the guild registered
+/// (`/settings wcl client`) the first time it is needed and kept, so that its access token is
+/// reused from one command to the next.
+#[derive(Debug)]
+pub struct WarcraftLogsClients {
+    http: reqwest::Client,
+    clients: std::sync::Mutex<HashMap<GuildId, (WclCredentials, Arc<WarcraftLogs>)>>,
+}
+
+impl WarcraftLogsClients {
+    pub fn new(http: reqwest::Client) -> Self {
+        Self { http, clients: std::sync::Mutex::new(HashMap::new()) }
+    }
+
+    /// The guild's client for `credentials`. A client built from credentials the guild has since
+    /// replaced is dropped, along with its token.
+    pub fn for_guild(&self, guild_id: GuildId, credentials: &WclCredentials) -> Arc<WarcraftLogs> {
+        let mut clients = self.clients.lock().unwrap();
+        if let Some((held, client)) = clients.get(&guild_id) {
+            if held == credentials {
+                return client.clone();
+            }
+        }
+
+        let client = Arc::new(WarcraftLogs::new(self.http.clone(), credentials.client_id.clone(), credentials.client_secret.clone()));
+        clients.insert(guild_id, (credentials.clone(), client.clone()));
+        client
+    }
+}
+
+/// Client for the Warcraft Logs v2 API, which is public-data only: it authenticates with a
+/// guild's own client credentials (no user authorization), so it can read public and unlisted
 /// reports but not private ones. See <https://www.warcraftlogs.com/api/docs>.
 pub struct WarcraftLogs {
     http: reqwest::Client,
@@ -1051,6 +1082,22 @@ mod tests {
 
     fn tracked(ability_id: u32, name: &str) -> TrackedAbility {
         TrackedAbility { ability_id, name: name.to_string() }
+    }
+
+    #[test]
+    fn a_guilds_client_is_kept_until_its_credentials_change() {
+        let credentials = |secret: &str| WclCredentials { client_id: "id".to_string(), client_secret: secret.to_string() };
+        let clients = WarcraftLogsClients::new(reqwest::Client::new());
+        let (guild_a, guild_b) = (GuildId::new(1), GuildId::new(2));
+
+        let first = clients.for_guild(guild_a, &credentials("one"));
+        assert!(Arc::ptr_eq(&first, &clients.for_guild(guild_a, &credentials("one"))));
+        // Another guild gets a client of its own even with the same credentials.
+        assert!(!Arc::ptr_eq(&first, &clients.for_guild(guild_b, &credentials("one"))));
+
+        let replaced = clients.for_guild(guild_a, &credentials("two"));
+        assert!(!Arc::ptr_eq(&first, &replaced));
+        assert_eq!(replaced.client_secret, "two");
     }
 
     #[test]

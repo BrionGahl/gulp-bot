@@ -98,16 +98,12 @@ DATABASE_URL=<Postgres connection URL, e.g. postgres://gulp:<password>@db:5432/g
 
 # Other (optional)
 LOG_LEVEL=<TRACE, DEBUG, INFO, WARN or ERROR; defaults to INFO>
-
-# Warcraft Logs (optional, both or neither; the /wcl commands are off without them)
-WCL_CLIENT_ID=<API client ID>
-WCL_CLIENT_SECRET=<API client secret>
 ```
 
 With `docker-compose.yml`, `DATABASE_URL` is built for you from `POSTGRES_PASSWORD`; see `example.env`
 for the variables the stack expects.
 
-Role, channel and user IDs, the Bart and WowUtils credentials, and the raid notes schedule are not
+Role, channel and user IDs, the Bart, WowUtils and Warcraft Logs credentials, and the raid notes schedule are not
 environment variables.
 They are registered per server with the `/settings` commands below.
 
@@ -133,6 +129,7 @@ always restricted to administrators:
 | `/settings clips_add <channel>` / `clips_remove <channel>` | Channels restricted to video-only messages |
 | `/settings bart_token <token>` | Bart Timeline Reminders token shown to this server's raiders |
 | `/settings wowutils <token> <group_id>` | WowUtils API token and the group droptimizer reports are submitted to |
+| `/settings wcl client <client_id> <client_secret>` | Warcraft Logs API client this server's `/wcl` commands use |
 | `/settings wcl channel <channel>` | The officer channel Warcraft Logs results are posted in, and the only one `/wcl` works in |
 | `/settings wcl source <guild> <uploader>` | Warcraft Logs guild ID the reports are uploaded to, and the user ID of the account that uploads them |
 | `/settings wcl mechanic_add <name> <ability_id>` / `wcl mechanic_remove <name>` / `wcl mechanic_list` | The abilities whose damage taken the Warcraft Logs overview shows (see [Warcraft Logs](#warcraft-logs)) |
@@ -334,10 +331,10 @@ each. Ignored players are left out here too, with their uses.
 
 Setting it up:
 
-1. Create an API client at warcraftlogs.com (Profile, then Manage Your Clients) and give its ID and
-   secret to the bot as `WCL_CLIENT_ID` and `WCL_CLIENT_SECRET`. They are shared by every server, so
-   all servers draw on one API allowance (720 points per hour; an overview costs a few points, plus
-   one or two for each tracked ability).
+1. Create an API client at warcraftlogs.com (Profile, then Manage Your Clients) and register its ID
+   and secret with `/settings wcl client <client_id> <client_secret>`. Each server registers its
+   own, so each has its own API allowance (720 points per hour; an overview costs a few points,
+   plus one or two for each tracked ability).
    Only public and unlisted reports can be read; private ones can't.
 2. Register the officer channel with `/settings wcl channel`.
 3. Register where the reports are found with `/settings wcl source <guild> <uploader>`, the Warcraft
