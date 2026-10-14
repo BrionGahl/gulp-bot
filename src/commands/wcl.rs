@@ -24,7 +24,7 @@ use crate::wcl_mechanics::{self, TrackedAbility};
     guild_only,
     category = "Warcraft Logs",
     check = "crate::checks::check_is_admin_or_moderator",
-    subcommands("report", "damage_taken", "consumables"),
+    subcommands("report", "damage_taken", "consumables", "replay"),
     subcommand_required,
 )]
 pub async fn wcl(_ctx: Context<'_>) -> Result<(), Error> {
@@ -130,6 +130,34 @@ async fn consumables(
     match ready.warcraft_logs.consumables(&code, boss.as_deref(), &registered, &ignored).await {
         Ok(used) => {
             ctx.send(CreateReply::default().embed(warcraftlogs::consumables_embed(&used))).await?;
+            Ok(())
+        }
+        Err(e) => failed(ctx, &e).await,
+    }
+}
+
+/// Post a replay link to the last wipe in a raid night's report
+///
+/// The last Mythic boss pull that was a wipe. The link starts 5 seconds before the first moment
+/// three players died within two seconds of each other. Without a report, the newest report from
+/// the uploader registered with `/settings wcl source` is used.
+#[poise::command(slash_command)]
+async fn replay(
+    ctx: Context<'_>,
+    #[description = "Report link or code; defaults to the newest report from the registered uploader"] report: Option<String>,
+) -> Result<(), Error> {
+    let Some(ready) = ready(ctx).await? else { return Ok(()) };
+    let target = match target(report, &ready.settings) {
+        Ok(target) => target,
+        Err(problem) => return refuse(ctx, problem).await,
+    };
+
+    ctx.defer().await?;
+    let Some(code) = resolve_code(ctx, &ready.warcraft_logs, target).await? else { return Ok(()) };
+
+    match ready.warcraft_logs.last_wipe(&code).await {
+        Ok(wipe) => {
+            ctx.send(CreateReply::default().embed(warcraftlogs::replay_embed(&wipe)).allowed_mentions(CreateAllowedMentions::new())).await?;
             Ok(())
         }
         Err(e) => failed(ctx, &e).await,

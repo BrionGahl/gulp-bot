@@ -57,6 +57,12 @@ const FOOTER_NOTE_RESERVE: usize = 100;
 /// The longest an ability name is shown as, in a title or a field name (Discord allows 256).
 const MAX_ABILITY_NAME_CHARS: usize = 100;
 
+/// A wipe is taken to start when this many players die within `WIPE_WINDOW_MS` of each other.
+const WIPE_DEATHS: usize = 3;
+const WIPE_WINDOW_MS: f64 = 2_000.0;
+/// The replay link starts this long before that moment, to show what led up to it.
+const REPLAY_LEAD_IN_MS: f64 = 5_000.0;
+
 /// How many players each ranking shows.
 const MOST_DEATHS_SHOWN: usize = 10;
 const FIRST_DEATHS_SHOWN: usize = 5;
@@ -209,6 +215,26 @@ impl WarcraftLogs {
         Ok(ConsumablesReport::build(&report, &fights, boss, registered, totals, ignored.len()))
     }
 
+    /// The last Mythic boss pull of the report that was a wipe, and where in it to start a replay:
+    /// `REPLAY_LEAD_IN_MS` before the first moment `WIPE_DEATHS` players died within
+    /// `WIPE_WINDOW_MS`. Pulls still being uploaded are skipped.
+    pub async fn last_wipe(&self, code: &str) -> Result<LastWipe, Error> {
+        let report = self.report(code).await?;
+        let finished: Vec<&Fight> = report.fights.iter().filter(|fight| fight.is_finished()).collect();
+        let Some(fight) = finished.iter().rev().copied().find(|fight| fight.kill == Some(false)) else {
+            return Err("This report has no Mythic boss wipes.".into());
+        };
+        let pull = finished.iter().filter(|other| other.name == fight.name && other.id <= fight.id).count();
+
+        let query = all_deaths_query();
+        let response: DeathsQuery = self.query(&query, json!({ "code": code, "fightIDs": [fight.id] })).await?;
+        let deaths = response.report_data.report.ok_or("That report doesn't exist, or isn't public.")?.table.data.entries;
+        let times: Vec<f64> = deaths.iter().filter(|death| death.fight == fight.id).map(|death| death.timestamp).collect();
+
+        info!("Fetched the last wipe of Warcraft Logs report {code}: fight {}, {} deaths", fight.id, times.len());
+        Ok(LastWipe::build(code, fight, pull, &times))
+    }
+
     /// A report with its Mythic boss fights.
     async fn report(&self, code: &str) -> Result<Report, Error> {
         let response: ReportQuery = self.query(&report_query(), json!({ "code": code })).await?;
@@ -355,7 +381,7 @@ fn report_query() -> String {
     format!(
         "query($code: String!) {{ reportData {{ report(code: $code) {{ \
          code title startTime owner {{ id }} \
-         fights(difficulty: {MYTHIC_DIFFICULTY}, killType: Encounters) {{ id name kill inProgress }} }} }} }}"
+         fights(difficulty: {MYTHIC_DIFFICULTY}, killType: Encounters) {{ id name kill inProgress startTime endTime }} }} }} }}"
     )
 }
 
@@ -367,6 +393,12 @@ fn deaths_query() -> String {
         "query($code: String!, $fightIDs: [Int]) {{ reportData {{ report(code: $code) {{ \
          table(dataType: Deaths, fightIDs: $fightIDs, wipeCutoff: {WIPE_CUTOFF}) }} }} }}"
     )
+}
+
+/// Every death in one pull, with no cutoff: the replay needs to see the wipe itself.
+fn all_deaths_query() -> String {
+    "query($code: String!, $fightIDs: [Int]) { reportData { report(code: $code) {      table(dataType: Deaths, fightIDs: $fightIDs) } } }"
+        .to_string()
 }
 
 /// The alias of the table for the ability at `index` in a damage query.
@@ -436,6 +468,12 @@ struct Fight {
     name: String,
     kill: Option<bool>,
     in_progress: Option<bool>,
+    /// Milliseconds since the start of the report.
+    #[serde(default)]
+    start_time: f64,
+    /// Milliseconds since the start of the report.
+    #[serde(default)]
+    end_time: f64,
 }
 
 impl Fight {
@@ -860,6 +898,70 @@ fn ignored_note(ignored: usize) -> String {
 fn embed_chars(title: &str, description: &str, footer: &str, fields: &[(String, String)]) -> usize {
     let fields: usize = fields.iter().map(|(name, value)| name.chars().count() + value.chars().count()).sum();
     title.chars().count() + description.chars().count() + footer.chars().count() + fields
+}
+
+/// The last wipe of a report, and the moment a replay of it should start at.
+#[derive(Debug, PartialEq)]
+pub struct LastWipe {
+    pub code: String,
+    pub fight_id: u32,
+    pub boss: String,
+    /// Which pull of this boss it was, counting from 1.
+    pub pull: usize,
+    /// Milliseconds since the start of the pull: where the replay starts (the link's `position`).
+    pub position_ms: f64,
+    /// Whether `WIPE_DEATHS` players really died within `WIPE_WINDOW_MS`. If not, the replay starts
+    /// before the end of the pull instead.
+    pub wipe_found: bool,
+}
+
+impl LastWipe {
+    fn build(code: &str, fight: &Fight, pull: usize, death_times: &[f64]) -> Self {
+        let (moment, wipe_found) = match wipe_moment(death_times) {
+            Some(moment) => (moment, true),
+            // Nobody went down together: the pull most likely ended some other way, so the end
+            // of the pull is the best place to look.
+            None => (death_times.iter().copied().fold(fight.end_time, f64::max), false),
+        };
+        let position_ms = (moment - REPLAY_LEAD_IN_MS).max(fight.start_time) - fight.start_time;
+        Self {
+            code: code.to_string(),
+            fight_id: fight.id,
+            boss: fight.name.clone(),
+            pull,
+            position_ms,
+            wipe_found,
+        }
+    }
+}
+
+/// The time of the first death in the first run of `WIPE_DEATHS` deaths that all fall within
+/// `WIPE_WINDOW_MS`. `None` if there is no such run.
+fn wipe_moment(death_times: &[f64]) -> Option<f64> {
+    let mut times = death_times.to_vec();
+    times.sort_by(f64::total_cmp);
+    times.windows(WIPE_DEATHS).find(|run| run[WIPE_DEATHS - 1] - run[0] <= WIPE_WINDOW_MS).map(|run| run[0])
+}
+
+/// The link to the replay of a pull, opened `position_ms` into the pull.
+pub fn replay_url(wipe: &LastWipe) -> String {
+    format!("{}?fight={}&view=replay&position={}", report_url(&wipe.code), wipe.fight_id, wipe.position_ms.round() as u64)
+}
+
+pub fn replay_embed(wipe: &LastWipe) -> CreateEmbed {
+    let minutes = (wipe.position_ms / 60_000.0).floor() as u64;
+    let seconds = ((wipe.position_ms / 1000.0) % 60.0).floor() as u64;
+    let how = if wipe.wipe_found {
+        format!("Starts 5 seconds before {WIPE_DEATHS} players died within {} seconds.", WIPE_WINDOW_MS / 1000.0)
+    } else {
+        "Nobody died together, so it starts near the end of the pull.".to_string()
+    };
+    CreateEmbed::new()
+        .colour(Colour::new(EMBED_COLOUR))
+        .title(truncate(&format!("{} — pull {}, wipe", wipe.boss, wipe.pull), MAX_TITLE_CHARS))
+        .url(replay_url(wipe))
+        .description(format!("[Open the replay]({})
+{how} That is {minutes}:{seconds:02} into the pull.", replay_url(wipe)))
 }
 
 pub fn overview_embed(overview: &Overview) -> CreateEmbed {
@@ -1430,6 +1532,8 @@ mod tests {
                     name: name.to_string(),
                     kill: Some(*kill),
                     in_progress: Some(*in_progress),
+                    start_time: 0.0,
+                    end_time: 0.0,
                 })
                 .collect(),
         }
@@ -1597,6 +1701,22 @@ mod tests {
         assert!(value["description"].as_str().unwrap().contains("No Mythic boss pulls") && value["fields"].is_null());
     }
 
+    /// Calls the real API with a public report: `WCL_CLIENT_ID=... WCL_CLIENT_SECRET=... WCL_TEST_REPORT=<code>
+    /// cargo test the_real_api_finds_the_last_wipe -- --ignored --nocapture`.
+    #[tokio::test]
+    #[ignore = "needs WCL_CLIENT_ID, WCL_CLIENT_SECRET and WCL_TEST_REPORT, and calls the real Warcraft Logs API"]
+    async fn the_real_api_finds_the_last_wipe() {
+        let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} must be set"));
+        let client = WarcraftLogs::new(reqwest::Client::new(), var("WCL_CLIENT_ID"), var("WCL_CLIENT_SECRET"));
+
+        let wipe = client.last_wipe(&var("WCL_TEST_REPORT")).await.unwrap();
+        println!("{wipe:?}\n{}", replay_url(&wipe));
+        assert!(wipe.wipe_found, "a 34-wipe night should have three deaths within two seconds");
+        assert!(wipe.position_ms >= 0.0);
+        assert!(client.last_wipe("doesnotexist1234").await.is_err());
+    }
+
+
     /// Calls the real API with a public report:
     /// `WCL_CLIENT_ID=... WCL_CLIENT_SECRET=... WCL_TEST_REPORT=<code> WCL_TEST_GUILD=<id> WCL_TEST_UPLOADER=<id>
     /// WCL_TEST_ABILITY=<id> cargo test -- --ignored --nocapture`.
@@ -1755,5 +1875,42 @@ mod tests {
         let cut = truncate(&"ä".repeat(300), 256);
         assert_eq!(cut.chars().count(), 256);
         assert!(cut.ends_with('…'));
+    }
+
+    #[test]
+    fn a_wipe_starts_when_three_players_die_within_two_seconds() {
+        // Two deaths early, then three within 1.5 s: the wipe starts at the first of those three.
+        assert_eq!(wipe_moment(&[10_000.0, 40_000.0, 90_000.0, 90_700.0, 91_500.0]), Some(90_000.0));
+        // Exactly two seconds apart still counts; a little more doesn't.
+        assert_eq!(wipe_moment(&[5_000.0, 6_000.0, 7_000.0]), Some(5_000.0));
+        assert_eq!(wipe_moment(&[5_000.0, 6_000.0, 7_001.0]), None);
+        // Out of order input is sorted, and fewer than three deaths is never a wipe.
+        assert_eq!(wipe_moment(&[91_500.0, 90_000.0, 90_700.0]), Some(90_000.0));
+        assert_eq!(wipe_moment(&[1_000.0, 1_100.0]), None);
+        assert_eq!(wipe_moment(&[]), None);
+    }
+
+    #[test]
+    fn the_replay_starts_five_seconds_before_the_wipe_but_not_before_the_pull() {
+        let fight = Fight { id: 7, name: "Boss".to_string(), kill: Some(false), in_progress: Some(false), start_time: 100_000.0, end_time: 200_000.0 };
+
+        let wipe = LastWipe::build("ABC", &fight, 3, &[150_000.0, 150_500.0, 151_000.0]);
+        assert_eq!((wipe.position_ms, wipe.wipe_found, wipe.pull), (45_000.0, true, 3));
+
+        // A wipe right at the start of the pull can't start before the pull.
+        let early = LastWipe::build("ABC", &fight, 1, &[102_000.0, 102_100.0, 102_200.0]);
+        assert_eq!(early.position_ms, 0.0);
+
+        // No cluster of deaths: fall back to the end of the pull, and say so.
+        let none = LastWipe::build("ABC", &fight, 1, &[120_000.0]);
+        assert!(!none.wipe_found);
+        assert_eq!(none.position_ms, 95_000.0);
+    }
+
+    #[test]
+    fn the_replay_link_has_the_fight_and_the_position_in_the_pull() {
+        let fight = Fight { id: 10, name: "Boss".to_string(), kill: Some(false), in_progress: Some(false), start_time: 2_699_531.0, end_time: 2_845_683.0 };
+        let wipe = LastWipe::build("YRwPxnJ4MKpWFyrg", &fight, 1, &[2_829_228.0, 2_829_500.0, 2_830_100.0]);
+        assert_eq!(replay_url(&wipe), "https://www.warcraftlogs.com/reports/YRwPxnJ4MKpWFyrg?fight=10&view=replay&position=124697");
     }
 }
