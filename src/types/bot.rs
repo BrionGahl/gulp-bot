@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::ai::Ai;
 use crate::config::Config;
 use crate::guild_settings::GuildSettingsStore;
 use crate::message_replay::MessageReplay;
@@ -19,6 +20,8 @@ pub struct Data {
     /// Warcraft Logs API clients, one per guild that has registered its client credentials.
     /// Shared with the raid attendance scheduler, which posts an overview after each raid.
     pub warcraft_logs: Arc<WarcraftLogsClients>,
+    /// The AI assistant behind `/ask` and "Bot please"; `None` without `ANTHROPIC_API_KEY`.
+    pub ai: Option<Ai>,
 }
 
 impl Data {
@@ -26,6 +29,7 @@ impl Data {
         let http_client = reqwest::Client::new();
 
         let warcraft_logs = Arc::new(WarcraftLogsClients::new(http_client.clone()));
+        let ai = Ai::from_config(http_client.clone(), &config);
 
         Self {
             config,
@@ -34,6 +38,7 @@ impl Data {
             http_client,
             message_replay: MessageReplay::new(),
             warcraft_logs,
+            ai,
         }
     }
 }

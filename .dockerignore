@@ -3,3 +3,4 @@ target
 .idea
 .github
 *.tar
+.env

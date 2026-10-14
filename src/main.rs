@@ -1,3 +1,4 @@
+mod ai;
 mod commands;
 mod types;
 mod config;
@@ -84,6 +85,7 @@ async fn main() {
             commands::settings::settings(),
             commands::announcement::announcement(),
             commands::wcl::wcl(),
+            commands::ask::ask(),
         ],
         // Call to the event handler
         event_handler: |ctx, event, framework, data| {
@@ -171,6 +173,7 @@ async fn event_handler(
         serenity::FullEvent::Message { new_message } => {
             clips::enforce_clips_channel(ctx, data, new_message).await;
             message_replay::remember_message(data, new_message).await;
+            ai::answer_trigger(ctx, data, new_message).await;
         }
         serenity::FullEvent::MessageDelete { deleted_message_id, guild_id, .. } => {
             message_replay::handle_message_delete(ctx, data, *deleted_message_id, *guild_id).await;

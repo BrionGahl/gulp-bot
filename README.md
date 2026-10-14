@@ -13,6 +13,7 @@ The bot is written with the `poise` crate and uses a few others for requests / l
 - **WoW Guild** — Bart Timeline Reminders addon info, class Discord links, and droptimizer report submission via WowUtils
 - **Clips channels** — deletes any message posted in a configured channel that doesn't contain a video (uploaded video file or an unfurled video link embed)
 - **Warcraft Logs** — officers get an overview of a raid night's report (Mythic pulls, who died the most, who died first, damage taken from tracked abilities, healthstones and health potions used) with `/wcl report`, `/wcl damage_taken` and `/wcl consumables`, posted in that week's raid notes thread; the overview is also posted there by itself after each raid
+- **AI assistant** — raiders ask Claude with `/ask` or by saying "Bot please" in a message; the guild's context and personality are in `src/ai/system_prompt.md`. Off until `ANTHROPIC_API_KEY` is set
 - **Personal officer channels** — when a member is given the trial or raider role, creates a private text channel for them under a configured category, visible only to them and the officer (moderator) role
 
 ## Deployment
@@ -96,6 +97,12 @@ BOT_NAME=<display name used in embeds; defaults to gulp-bot>
 # Database
 DATABASE_URL=<Postgres connection URL, e.g. postgres://gulp:<password>@db:5432/gulp>
 
+# AI assistant (optional; without a key `/ask` and "Bot please" are off)
+ANTHROPIC_API_KEY=<API key from console.anthropic.com>
+ANTHROPIC_MODEL=<Claude model; defaults to claude-sonnet-5-5>
+ANTHROPIC_EFFORT=<low, medium, high...; defaults to low; off doesn't send the setting>
+ANTHROPIC_DAILY_LIMIT=<most questions answered in 24 hours, all members together; defaults to 100>
+
 # Other (optional)
 LOG_LEVEL=<TRACE, DEBUG, INFO, WARN or ERROR; defaults to INFO>
 ```
@@ -106,6 +113,21 @@ for the variables the stack expects.
 Role, channel and user IDs, the Bart, WowUtils and Warcraft Logs credentials, and the raid notes schedule are not
 environment variables.
 They are registered per server with the `/settings` commands below.
+
+### AI assistant
+
+Only members with the Raider role (the one registered with `/settings`) or are Officers (they hold the registered moderator role, or are server administrators, who are treated like moderators everywhere in the bot) get answers; trials, and everyone else, don't. `/ask` tells them so privately, and "Bot please" is simply ignored. Raiders can ask in two ways:
+
+- `/ask <question>`
+- any message that has the words "Bot please" in it (any case; "Bot, please ..." works too). The bot answers as a reply to that message.
+
+It answers with Claude through the Anthropic API, which is billed per use and separately from a Claude subscription. Set a monthly spending limit in the Anthropic Console. It remembers the last 8 turns of each channel (in memory only, forgotten after an hour without questions or when the bot restarts), each member may ask up to 10 times in 10 minutes, and the assistant answers at most `ANTHROPIC_DAILY_LIMIT` questions (100 by default) in any 24 hours, from everybody together; a question that gets no answer because of an error doesn't count. What it was told in a channel is remembered with the access level of whoever asked and is shown only to members of that level or higher, so what an Officer was told isn't repeated to a raider. It never pings anyone.
+
+Its rules (in `RULES` in `src/ai/mod.rs`, after the guild text so editing that can't remove them): it only speaks English, stays away from politics, doesn't violate human rights or demean people, only an Officer may ask it to do anything involving Warcraft Logs, and only an Officer may ask it to change any file, setting or data. It can't change anything today, so that last rule is only the model's own behaviour; any tool added later that changes something must check `Access::Officer` in code, not trust the prompt.
+
+Privacy: what a member writes to the assistant, and the assistant's recent answers in that channel, are sent to Anthropic's API to get an answer. Tell the guild before turning it on.
+
+Who the guild is, and how the assistant treats its members, is written in `src/ai/system_prompt.md`; change it there and rebuild the image. The answers are only as good as that text and the model: the assistant has no access to Warcraft Logs or the guild's settings yet.
 
 ### Server settings
 

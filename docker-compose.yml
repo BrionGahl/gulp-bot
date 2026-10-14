@@ -13,6 +13,11 @@ services:
       # as unset for these two.
       BOT_NAME: ${BOT_NAME:-gulp-bot}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # AI assistant (`/ask` and "Bot please"); without a key it stays off. Empty means "use the default".
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
+      ANTHROPIC_EFFORT: ${ANTHROPIC_EFFORT:-}
+      ANTHROPIC_DAILY_LIMIT: ${ANTHROPIC_DAILY_LIMIT:-}
       # database; `db` is the service name below, reachable on the stack's private network
       DATABASE_URL: postgres://gulp:${POSTGRES_PASSWORD}@db:5432/gulp
     depends_on:
