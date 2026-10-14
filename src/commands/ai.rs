@@ -58,16 +58,21 @@ async fn ai_status(ctx: Context<'_>) -> Result<(), Error> {
         Some(_) => format!("set with `/ai model`; the bot was configured with `{}`", ai.configured_model()),
         None => "as configured".to_string(),
     };
-    let effort_note = match settings.effort {
-        Some(_) => format!("set with `/ai effort`; the bot was configured with {}", describe_effort(ai.configured_effort())),
-        None => "as configured".to_string(),
+    let effort_line = if ai.is_local() {
+        "not used by a local model".to_string()
+    } else {
+        let note = match settings.effort {
+            Some(_) => format!("set with `/ai effort`; the bot was configured with {}", describe_effort(ai.configured_effort())),
+            None => "as configured".to_string(),
+        };
+        format!("{} ({note})", describe_effort(effort))
     };
+    let served = if ai.is_local() { "runs locally, through Ollama" } else { "through the Anthropic API" };
     let (answered, limit) = ai.daily_usage();
     let (failure_total, failures) = ai.failures();
 
     let mut text = format!(
-        "**AI assistant**\nState: {state}\nModel: `{model}` ({model_note})\nEffort: {} ({effort_note})\nQuestions answered in the last 24 hours: {answered} of {limit}\n",
-        describe_effort(effort),
+        "**AI assistant**\nState: {state}\nModel: `{model}`, {served} ({model_note})\nEffort: {effort_line}\nQuestions answered in the last 24 hours: {answered} of {limit}\n",
     );
     if failures.is_empty() {
         text.push_str("No API failures since the bot started.");
@@ -141,40 +146,67 @@ async fn ai_model(
         return reply(ctx, format!("The model is back to the configured `{}`.", ai.configured_model())).await;
     };
 
-    // The API has to know the model, or every answer would fail until somebody noticed.
+    // The API (or the local server) has to know the model, or every answer would fail until
+    // somebody noticed.
     ctx.defer_ephemeral().await?;
+    let server = if ai.is_local() { "The local model server" } else { "The API" };
     match ai.check_api(&model).await {
         ApiCheck::Ok { model_listed: true } => {}
+        ApiCheck::Ok { model_listed: false } if ai.is_local() => {
+            let installed = list_names(ai.installed_models().await);
+            return reply(
+                ctx,
+                format!("The local model server doesn't have `{model}`, so nothing was changed. Install it there with `ollama pull {model}`. Installed: {installed}."),
+            )
+            .await;
+        }
         ApiCheck::Ok { model_listed: false } => {
-            let known = KNOWN_MODELS.iter().map(|known| format!("`{known}`")).collect::<Vec<_>>().join(", ");
+            let known = list_names(KNOWN_MODELS.iter().map(|known| known.to_string()).collect());
             return reply(ctx, format!("The API doesn't list a model called `{model}`, so nothing was changed. Models with a known price: {known}.")).await;
         }
         ApiCheck::KeyRejected(reason) => {
             return reply(ctx, format!("The API refused the key ({reason}), so the model couldn't be checked and nothing was changed.")).await;
         }
         ApiCheck::Unreachable(problem) => {
-            return reply(ctx, format!("The API couldn't be reached to check the model ({problem}), so nothing was changed. Try again in a moment.")).await;
+            return reply(ctx, format!("{server} couldn't be reached to check the model ({problem}), so nothing was changed. Try again in a moment.")).await;
         }
     }
 
     change(ctx, guild_id, &format!("model set to `{model}`"), |ai| ai.model = Some(model.clone())).await?;
     let price = match price_per_million(&model) {
+        _ if ai.is_local() => "It runs locally, so it costs nothing per token.".to_string(),
         Some((input, output)) => format!("Its list price is ${input} per million tokens in and ${output} out."),
         None => "The bot doesn't know its price, so `/ai usage` can't estimate what it costs.".to_string(),
     };
     reply(ctx, format!("The model is now `{model}`, from the next question on. {price}")).await
 }
 
-/// The models offered while a developer types one. Poise doesn't run a command's checks for
-/// autocomplete, so developers are checked here.
+/// The models offered while a developer types one: those with a known price, or for a local model
+/// the ones installed on its server. Poise doesn't run a command's checks for autocomplete, so
+/// developers are checked here.
 pub async fn autocomplete_model(ctx: Context<'_>, partial: &str) -> impl Iterator<Item = String> {
-    let models: Vec<&'static str> = match ctx.guild_id() {
-        Some(guild_id) if is_developer(ctx, guild_id) => KNOWN_MODELS.to_vec(),
+    let models: Vec<String> = match (ctx.guild_id(), ctx.data().ai.as_ref()) {
+        (Some(guild_id), Some(ai)) if is_developer(ctx, guild_id) => {
+            if ai.is_local() {
+                ai.installed_models().await
+            } else {
+                KNOWN_MODELS.iter().map(|model| model.to_string()).collect()
+            }
+        }
         _ => Vec::new(),
     };
 
     let partial = partial.to_lowercase();
-    models.into_iter().filter(move |model| model.contains(&partial)).map(str::to_string).take(25)
+    models.into_iter().filter(move |model| model.to_lowercase().contains(&partial)).take(25)
+}
+
+/// Model names for a message: `a`, `b`, or "none".
+fn list_names(names: Vec<String>) -> String {
+    if names.is_empty() {
+        "none".to_string()
+    } else {
+        names.iter().map(|name| format!("`{name}`")).collect::<Vec<_>>().join(", ")
+    }
 }
 
 /// How much effort the model puts into an answer.
@@ -209,6 +241,9 @@ impl Effort {
 #[poise::command(slash_command, ephemeral, rename = "effort")]
 async fn ai_effort(ctx: Context<'_>, #[description = "The effort, or as configured"] level: Effort) -> Result<(), Error> {
     let Some((guild_id, ai)) = begin(ctx, "effort").await? else { return Ok(()) };
+    if ai.is_local() {
+        return reply(ctx, "A local model has no effort setting, so nothing was changed.").await;
+    }
 
     let stored = level.stored();
     change(ctx, guild_id, &format!("effort set to {stored:?}"), |ai| ai.effort = stored.map(str::to_string)).await?;
@@ -296,12 +331,23 @@ async fn ai_check(ctx: Context<'_>) -> Result<(), Error> {
         }
     }
 
+    let local = ai.is_local();
     match ai.check_api(model).await {
+        ApiCheck::Ok { model_listed: true } if local => {
+            findings.push((Finding::Good, format!("The local model server answers and has `{model}` installed; nothing leaves it")))
+        }
         ApiCheck::Ok { model_listed: true } => findings.push((Finding::Good, format!("The API key works and the API lists `{model}`"))),
+        ApiCheck::Ok { model_listed: false } if local => findings.push((
+            Finding::Bad,
+            format!("The local model server answers, but doesn't have `{model}`: answers will fail. Install it there with `ollama pull {model}`, or change it with `/ai model`"),
+        )),
         ApiCheck::Ok { model_listed: false } => {
             findings.push((Finding::Bad, format!("The API key works, but the API doesn't list `{model}`: answers will fail. Change it with `/ai model`")))
         }
         ApiCheck::KeyRejected(reason) => findings.push((Finding::Bad, format!("The API refused the key: {reason}"))),
+        ApiCheck::Unreachable(problem) if local => {
+            findings.push((Finding::Bad, format!("The local model server couldn't be reached: {problem}. Is the Ollama container up, and on the bot's network?")))
+        }
         ApiCheck::Unreachable(problem) => findings.push((Finding::Warning, format!("The key couldn't be checked: {problem}"))),
     }
 
@@ -364,7 +410,7 @@ async fn begin<'a>(ctx: Context<'a>, action: &str) -> Result<Option<(GuildId, &'
 
     info!("audit: {} ({}) used /ai {action} in guild {guild_id}", ctx.author().id, ctx.author().name);
     let Some(ai) = ctx.data().ai.as_ref() else {
-        reply(ctx, "The AI assistant isn't set up for this bot: there is no `ANTHROPIC_API_KEY`.").await?;
+        reply(ctx, "The AI assistant isn't set up for this bot: there is no `ANTHROPIC_API_KEY`, and `AI_BACKEND` isn't `local`.").await?;
         return Ok(None);
     };
     Ok(Some((guild_id, ai)))

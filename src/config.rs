@@ -20,8 +20,30 @@ pub struct Config {
     /// Default `low`, which is quick and cheap for chat; `off` doesn't send the setting at all.
     pub anthropic_effort: Option<String>,
     /// The most questions the assistant answers in 24 hours, from everybody together: what keeps the
-    /// bill from running away. Default 100.
+    /// bill from running away (or, with a local model, the GPU from being kept busy). Default 100.
     pub anthropic_daily_limit: usize,
+    /// Which model answers: Claude through the Anthropic API, or a model on the guild's own
+    /// hardware through Ollama (`AI_BACKEND=local`). Default: Anthropic.
+    pub ai_backend: AiBackend,
+    /// Where the Ollama server listens, for `AI_BACKEND=local`. Default: `http://ollama:11434`, the
+    /// `ollama` service on the stack's private network.
+    pub local_model_url: String,
+    /// The model Ollama runs, for `AI_BACKEND=local`. Default: `qwen3.5:9b`.
+    pub local_model: String,
+    /// Whether the local model "thinks" before it answers (`think` in Ollama's API). Default
+    /// `Some(false)`: thinking makes chat answers slower without making them better. `None` sends
+    /// nothing and leaves it to the model (`LOCAL_MODEL_THINK=default`), for a model that rejects
+    /// the setting.
+    pub local_model_think: Option<bool>,
+}
+
+/// Which model answers the AI assistant's questions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AiBackend {
+    /// Claude, through the Anthropic API. Needs `ANTHROPIC_API_KEY`.
+    Anthropic,
+    /// A model on the guild's own hardware, served by Ollama. Nothing leaves the machine.
+    Local,
 }
 
 // By hand, so that the tokens and the database password in the URL can't end up in a log.
@@ -33,6 +55,10 @@ impl fmt::Debug for Config {
             .field("anthropic_model", &self.anthropic_model)
             .field("anthropic_effort", &self.anthropic_effort)
             .field("anthropic_daily_limit", &self.anthropic_daily_limit)
+            .field("ai_backend", &self.ai_backend)
+            .field("local_model_url", &self.local_model_url)
+            .field("local_model", &self.local_model)
+            .field("local_model_think", &self.local_model_think)
             .finish_non_exhaustive()
     }
 }
@@ -60,7 +86,30 @@ impl Config {
             anthropic_daily_limit: optional_env("ANTHROPIC_DAILY_LIMIT")
                 .map(|value| value.parse().expect("Failed to parse `ANTHROPIC_DAILY_LIMIT` env variable. It must be a whole number."))
                 .unwrap_or(100),
+            ai_backend: parse_backend(optional_env("AI_BACKEND").as_deref()).unwrap_or_else(|problem| panic!("{problem}")),
+            local_model_url: optional_env("LOCAL_MODEL_URL").unwrap_or_else(|| "http://ollama:11434".to_string()),
+            local_model: optional_env("LOCAL_MODEL").unwrap_or_else(|| "qwen3.5:9b".to_string()),
+            local_model_think: parse_think(optional_env("LOCAL_MODEL_THINK").as_deref()).unwrap_or_else(|problem| panic!("{problem}")),
         }
+    }
+}
+
+/// `AI_BACKEND`: `anthropic` (or unset) or `local` (`ollama` works too), in any case.
+fn parse_backend(value: Option<&str>) -> Result<AiBackend, String> {
+    match value.map(str::to_lowercase).as_deref() {
+        None | Some("anthropic") => Ok(AiBackend::Anthropic),
+        Some("local") | Some("ollama") => Ok(AiBackend::Local),
+        Some(other) => Err(format!("Failed to parse `AI_BACKEND` env variable `{other}`. Valid values: anthropic, local")),
+    }
+}
+
+/// `LOCAL_MODEL_THINK`: `false` (or unset), `true`, or `default` to send nothing.
+fn parse_think(value: Option<&str>) -> Result<Option<bool>, String> {
+    match value.map(str::to_lowercase).as_deref() {
+        None | Some("false") | Some("off") => Ok(Some(false)),
+        Some("true") | Some("on") => Ok(Some(true)),
+        Some("default") => Ok(None),
+        Some(other) => Err(format!("Failed to parse `LOCAL_MODEL_THINK` env variable `{other}`. Valid values: false, true, default")),
     }
 }
 
@@ -85,13 +134,36 @@ mod tests {
             anthropic_model: "claude-sonnet-5-5".to_string(),
             anthropic_effort: Some("low".to_string()),
             anthropic_daily_limit: 100,
+            ai_backend: AiBackend::Local,
+            local_model_url: "http://ollama:11434".to_string(),
+            local_model: "qwen3.5:9b".to_string(),
+            local_model_think: Some(false),
         };
 
         let shown = format!("{config:?}");
         assert!(shown.contains("gulp-bot"));
         assert!(shown.contains("claude-sonnet-5-5"));
+        assert!(shown.contains("qwen3.5:9b"));
         for secret in ["discord-secret-token", "db-secret-password", "anthropic-secret-key"] {
             assert!(!shown.contains(secret), "{secret} leaked into {shown}");
         }
+    }
+
+    #[test]
+    fn the_backend_is_anthropic_unless_set_to_local() {
+        assert_eq!(parse_backend(None), Ok(AiBackend::Anthropic));
+        assert_eq!(parse_backend(Some("anthropic")), Ok(AiBackend::Anthropic));
+        assert_eq!(parse_backend(Some("Local")), Ok(AiBackend::Local));
+        assert_eq!(parse_backend(Some("ollama")), Ok(AiBackend::Local));
+        assert!(parse_backend(Some("openai")).is_err());
+    }
+
+    #[test]
+    fn the_local_model_does_not_think_unless_asked_to() {
+        assert_eq!(parse_think(None), Ok(Some(false)));
+        assert_eq!(parse_think(Some("off")), Ok(Some(false)));
+        assert_eq!(parse_think(Some("TRUE")), Ok(Some(true)));
+        assert_eq!(parse_think(Some("default")), Ok(None));
+        assert!(parse_think(Some("maybe")).is_err());
     }
 }

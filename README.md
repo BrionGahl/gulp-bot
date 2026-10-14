@@ -102,6 +102,10 @@ ANTHROPIC_API_KEY=<API key from console.anthropic.com>
 ANTHROPIC_MODEL=<Claude model; defaults to claude-sonnet-5-5>
 ANTHROPIC_EFFORT=<low, medium, high...; defaults to low; off doesn't send the setting>
 ANTHROPIC_DAILY_LIMIT=<most questions answered in 24 hours, all members together; defaults to 100>
+AI_BACKEND=<anthropic or local; defaults to anthropic. local runs the model with Ollama and needs no key>
+LOCAL_MODEL_URL=<Ollama server for AI_BACKEND=local; defaults to http://ollama:11434>
+LOCAL_MODEL=<model Ollama runs; defaults to qwen3.5:9b>
+LOCAL_MODEL_THINK=<false, true or default; defaults to false (no "thinking", quicker answers)>
 
 # Other (optional)
 LOG_LEVEL=<TRACE, DEBUG, INFO, WARN or ERROR; defaults to INFO>
@@ -146,7 +150,49 @@ The members with the developer role (registered by an administrator with `/setti
 
 The token counts and the failures are kept in memory and start again when the bot restarts; the cost is estimated from Anthropic's list prices, and the Anthropic Console has the real bill.
 
-Privacy: what a member writes to the assistant, and the assistant's recent answers in that channel, are sent to Anthropic's API to get an answer. Tell the guild before turning it on.
+#### Running the model locally
+
+With `AI_BACKEND=local` the assistant asks a model on your own GPU instead of Claude, through [Ollama](https://ollama.com), and nothing it is told leaves the machine. No Anthropic key is needed. Everything else works the same (access, limits, memory, replies, `/ai`), except that `/ai effort` does nothing and `/ai usage` shows the tokens as free. A local model answers one question at a time; the others wait their turn.
+
+The default model, `qwen3.5:9b`, fits a 12 GB GPU such as an RTX 3060. To run it next to the bot, add an `ollama` service to the stack on a network with no internet access, and put the bot on that network too:
+
+```yaml
+services:
+  ollama:
+    image: ollama/ollama:<pin a version>
+    restart: unless-stopped
+    volumes:
+      - ollama:/root/.ollama
+    environment:
+      OLLAMA_KEEP_ALIVE: 24h   # keep the model loaded on the GPU
+    networks: [ai]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  gulp-bot:
+    # ...as above, plus:
+    environment:
+      AI_BACKEND: local
+    networks: [default, ai]   # the internet for Discord, and the model
+
+networks:
+  ai:
+    internal: true            # no route out of it
+
+volumes:
+  ollama:
+```
+
+The GPU needs the NVIDIA driver and, on Linux, the NVIDIA Container Toolkit (Docker Desktop on Windows passes the GPU through WSL2). The `ai` network can't reach the internet, so download the model once before moving Ollama onto it: start the service on the default network, run `docker exec -it <ollama container> ollama pull qwen3.5:9b`, then switch it back. The model stays in the `ollama` volume. Then run `/ai check`: it says whether the bot reaches Ollama and whether the model is installed.
+
+If Ollama runs on another computer, set `LOCAL_MODEL_URL` to it (e.g. `http://192.168.1.20:11434`) and only let the bot's host reach that port: Ollama has no password. Qwen thinks before it answers unless told not to; the bot tells it not to (`LOCAL_MODEL_THINK=false`), which makes answers quicker. If a model rejects that, set `LOCAL_MODEL_THINK=default`.
+
+Privacy: what a member writes to the assistant, and the assistant's recent answers in that channel, are sent to Anthropic's API to get an answer (or to your own Ollama server, with `AI_BACKEND=local`). Tell the guild before turning it on.
 
 Who the guild is, and how the assistant treats its members, is written in `src/ai/system_prompt.md`; change it there and rebuild the image. The answers are only as good as that text and the model: the assistant has no access to Warcraft Logs or the guild's settings yet.
 

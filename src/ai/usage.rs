@@ -20,9 +20,26 @@ const PRICES: [(&str, f64, f64); 5] = [
     ("claude-mythos-5-1", 10.0, 50.0),
 ];
 
+/// Put after the name of a model that runs on the guild's own hardware, in the usage counts.
+const LOCAL_SUFFIX: &str = " (local)";
+
+/// How a local model's usage is counted: under its name with ` (local)`, which costs nothing.
+pub fn local_label(model: &str) -> String {
+    format!("{model}{LOCAL_SUFFIX}")
+}
+
+/// Whether `label` is a local model's, as `local_label` makes them.
+pub fn is_local_label(label: &str) -> bool {
+    label.ends_with(LOCAL_SUFFIX)
+}
+
 /// The `(input, output)` price per million tokens of `model`, or `None` if it isn't known. A dated
-/// version of a model (`claude-sonnet-5-5-20261001`) costs what the model does.
+/// version of a model (`claude-sonnet-5-5-20261001`) costs what the model does, and a local one
+/// (`local_label`) costs nothing.
 pub fn price_per_million(model: &str) -> Option<(f64, f64)> {
+    if is_local_label(model) {
+        return Some((0.0, 0.0));
+    }
     PRICES
         .iter()
         .find(|(name, _, _)| model == *name || model.strip_prefix(*name).is_some_and(|rest| rest.starts_with('-')))
@@ -121,6 +138,7 @@ pub fn describe(rows: &[(String, Tokens)]) -> String {
         total.output = total.output.saturating_add(tokens.output);
 
         let price = match tokens.cost(model) {
+            Some(_) if is_local_label(model) => "free, it runs locally".to_string(),
             Some(model_cost) => {
                 cost += model_cost;
                 format!("about {}", format_cost(model_cost))
@@ -188,8 +206,9 @@ pub fn normalize_model(input: &str) -> Result<Option<String>, &'static str> {
     if input.is_empty() || input.chars().count() > 64 {
         return Err("A model name is 1 to 64 characters long.");
     }
-    if !input.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_')) {
-        return Err("A model name has only letters, digits, `-`, `.` and `_`.");
+    // `:` for a local model's tag (`qwen3.5:9b`), `/` for one pulled from a registry (`hf.co/...`).
+    if !input.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | ':' | '/')) {
+        return Err("A model name has only letters, digits, `-`, `.`, `_`, `:` and `/`.");
     }
     Ok(Some(input.to_string()))
 }
@@ -260,6 +279,27 @@ mod tests {
         assert_eq!(price_per_million("gpt"), None);
         assert_eq!(price_per_million(""), None);
         assert!(KNOWN_MODELS.iter().all(|model| price_per_million(model).is_some()));
+    }
+
+    #[test]
+    fn a_local_model_is_free() {
+        let label = local_label("qwen3.5:9b");
+        assert_eq!(label, "qwen3.5:9b (local)");
+        assert!(is_local_label(&label));
+        assert!(!is_local_label("claude-haiku-5-5"));
+        assert_eq!(price_per_million(&label), Some((0.0, 0.0)));
+
+        let rows = [(label, Tokens { requests: 3, input: 3_000, output: 600 })];
+        assert_eq!(describe(&rows), "`qwen3.5:9b (local)`: 3 requests, 3,000 in / 600 out tokens, free, it runs locally");
+
+        // Next to a paid model, it adds nothing to the total and doesn't count as unpriced.
+        let both = [
+            ("claude-haiku-5-5".to_string(), Tokens { requests: 1, input: 1_000_000, output: 0 }),
+            (local_label("qwen3.5:9b"), Tokens { requests: 1, input: 10, output: 10 }),
+        ];
+        let text = describe(&both);
+        assert!(text.contains("about $0.1000"));
+        assert!(!text.contains("unknown"));
     }
 
     #[test]
@@ -334,6 +374,8 @@ mod tests {
     #[test]
     fn a_model_name_is_checked_for_its_shape() {
         assert_eq!(normalize_model(" claude-haiku-5-5 "), Ok(Some("claude-haiku-5-5".to_string())));
+        assert_eq!(normalize_model("qwen3.5:9b"), Ok(Some("qwen3.5:9b".to_string())));
+        assert_eq!(normalize_model("hf.co/org/model:Q4_K_M"), Ok(Some("hf.co/org/model:Q4_K_M".to_string())));
         assert_eq!(normalize_model("Default"), Ok(None));
         assert!(normalize_model("").is_err());
         assert!(normalize_model("   ").is_err());

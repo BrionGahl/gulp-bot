@@ -20,7 +20,8 @@ pub struct Data {
     /// Warcraft Logs API clients, one per guild that has registered its client credentials.
     /// Shared with the raid attendance scheduler, which posts an overview after each raid.
     pub warcraft_logs: Arc<WarcraftLogsClients>,
-    /// The AI assistant behind `/ask` and "Bot please"; `None` without `ANTHROPIC_API_KEY`.
+    /// The AI assistant behind `/ask` and "Bot please"; `None` without `ANTHROPIC_API_KEY`, unless
+    /// it runs on a local model (`AI_BACKEND=local`), which needs no key.
     pub ai: Option<Ai>,
 }
 

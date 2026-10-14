@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tokio = { version = "1.21.2", features = ["macros", "rt-multi-thread", "net", "io-util", "signal"] }
+tokio = { version = "1.21.2", features = ["macros", "rt-multi-thread", "net", "io-util", "signal", "sync"] }
 log = "0.4.29"
 tracing-subscriber = "0.3.22"
 tracing-stackdriver = "0.10"

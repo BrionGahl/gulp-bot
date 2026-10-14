@@ -65,6 +65,29 @@ pub fn render_question(speaker: &str, text: &str, replying_to: Option<(&str, &st
     line
 }
 
+/// `text` without the thinking a model wrote into it (`<think>...</think>`), trimmed. A model
+/// served locally may think aloud in its answer; that isn't meant for the channel. Thinking that
+/// never ends (the model ran out of tokens while thinking) takes the rest of the text with it.
+pub fn strip_thinking(text: &str) -> String {
+    const OPEN: &str = "<think>";
+    const CLOSE: &str = "</think>";
+
+    let mut kept = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find(OPEN) {
+        kept.push_str(&rest[..start]);
+        match rest[start..].find(CLOSE) {
+            Some(end) => rest = &rest[start + end + CLOSE.len()..],
+            None => {
+                rest = "";
+                break;
+            }
+        }
+    }
+    kept.push_str(rest);
+    kept.trim().to_string()
+}
+
 /// Splits `text` into messages of at most `max_chars` characters, cutting at a line break if it
 /// can, else at a space, else in the middle of a word. Nothing is lost except the whitespace at
 /// the cuts. Returns nothing for a blank text.
@@ -200,6 +223,17 @@ mod tests {
     #[test]
     fn an_empty_quote_is_left_out() {
         assert_eq!(render_question("Kail", "look at this", Some(("gulp-bot", "  "))), "Kail: look at this");
+    }
+
+    #[test]
+    fn thinking_is_taken_out_of_an_answer() {
+        assert_eq!(strip_thinking("  Hello there! "), "Hello there!");
+        assert_eq!(strip_thinking("<think>Kail asked...\nhmm</think>\n\nHello Kail."), "Hello Kail.");
+        assert_eq!(strip_thinking("A <think>x</think>B <think>y</think>C"), "A B C");
+        // Ran out of tokens while thinking: nothing left to show.
+        assert_eq!(strip_thinking("<think>still thinking"), "");
+        assert_eq!(strip_thinking("Answer. <think>never closed"), "Answer.");
+        assert_eq!(strip_thinking(""), "");
     }
 
     #[test]

@@ -1,10 +1,12 @@
-//! The guild's AI assistant: Claude answers `/ask` and any message that says "Bot please".
+//! The guild's AI assistant: a model answers `/ask` and any message that says "Bot please". The
+//! model is Claude, through the Anthropic API, or one on the guild's own hardware, served by Ollama
+//! (`AI_BACKEND=local`); everything but the request itself is the same for both.
 //!
 //! This module is the whole of it: the request to the API, what is remembered per channel, who may
 //! ask, and what the developers may do with it (`commands/ai.rs`: switch it off, change its model,
 //! see what it has cost). Discord is only touched in `discord.rs` (messages), `commands/ask.rs`
-//! (`/ask`) and `commands/ai.rs` (`/ai`). Without `ANTHROPIC_API_KEY` there is no `Ai` at all, and
-//! both triggers stay quiet.
+//! (`/ask`) and `commands/ai.rs` (`/ai`). Without `ANTHROPIC_API_KEY` (and without a local model)
+//! there is no `Ai` at all, and both triggers stay quiet.
 
 mod access;
 mod discord;
@@ -27,11 +29,11 @@ use log::{error, info};
 use poise::serenity_prelude::RoleId;
 use serde::{Deserialize, Serialize};
 
-use crate::config::Config;
+use crate::config::{AiBackend, Config};
 use crate::guild_settings::{AiSettings, GuildSettings};
 use history::{Answers, History, RateLimiter, Turn};
-use text::{render_question, truncate_chars};
-use usage::{FailureLog, Tokens, UsageLog};
+use text::{render_question, strip_thinking, truncate_chars};
+use usage::{local_label, FailureLog, Tokens, UsageLog};
 
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 /// Lists the models the key may use, without costing a token: how a key is checked.
@@ -47,6 +49,17 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Gives up on checking the key after this long. Short: a developer is waiting for the result.
 const KEY_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Gives up on a local model after this long. Longer than for the API: the first question after a
+/// while loads the model into the GPU, and a questions waits for the one before it to finish.
+const LOCAL_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// How long listing the local models may take while a developer types a model name.
+const LOCAL_LIST_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// The context window asked of a local model, in tokens. The prompt, 8 turns of memory and a
+/// question fit in it comfortably; a bigger one takes more GPU memory and makes answers slower.
+const LOCAL_CONTEXT_TOKENS: u32 = 8192;
 
 /// How many failed requests are kept for `/ai status`.
 const MAX_FAILURES_KEPT: usize = 5;
@@ -192,10 +205,12 @@ pub struct UsageReport {
     pub since_start: Vec<(String, Tokens)>,
 }
 
-/// What asking the API whether the key and a model are good found.
+/// What asking the API whether the key and a model are good found. For a local model: whether the
+/// Ollama server answers, and whether it has the model installed.
 #[derive(Debug)]
 pub enum ApiCheck {
-    /// The key works. `model_listed` says whether the API lists the model that was asked about.
+    /// The key works (or the local server answers). `model_listed` says whether the model that was
+    /// asked about is among the ones it can use.
     Ok { model_listed: bool },
     /// The API refused the key; carries the reason it gave.
     KeyRejected(String),
@@ -203,46 +218,92 @@ pub enum ApiCheck {
     Unreachable(String),
 }
 
+/// Where the questions go.
+enum Backend {
+    /// Claude, through the Anthropic API.
+    Anthropic { api_key: String },
+    /// A model served by Ollama at `url` (no trailing slash). `think` is sent as is: `None` leaves
+    /// thinking to the model.
+    Local { url: String, think: Option<bool> },
+}
+
 /// The assistant. Built once, in `Data`.
 pub struct Ai {
     http: reqwest::Client,
-    api_key: String,
+    backend: Backend,
     model: String,
-    /// The `output_config.effort` sent with each request; none if not set.
+    /// The `output_config.effort` sent with each request; none if not set (and always none for a
+    /// local model, which has no such setting).
     effort: Option<String>,
     /// The system prompt without the date, which changes.
     system: String,
     state: Mutex<State>,
+    /// A local model answers one question at a time on its GPU; the others wait here for their
+    /// turn rather than all loading the GPU at once.
+    local_queue: tokio::sync::Semaphore,
 }
 
 // By hand, so that the API key can't end up in a log.
 impl fmt::Debug for Ai {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Ai").field("model", &self.model).field("effort", &self.effort).finish_non_exhaustive()
+        f.debug_struct("Ai")
+            .field("local", &self.is_local())
+            .field("model", &self.model)
+            .field("effort", &self.effort)
+            .finish_non_exhaustive()
     }
 }
 
 impl Ai {
-    /// The assistant, or `None` if no API key is configured.
+    /// The assistant, or `None` if it can't run: on the Anthropic API without a key. A local model
+    /// needs no key; whether its server is up is found out when it is asked (and with `/ai check`).
     pub fn from_config(http: reqwest::Client, config: &Config) -> Option<Self> {
-        let api_key = config.anthropic_api_key.clone()?;
-        info!("AI assistant enabled, using model {}", config.anthropic_model);
+        let (backend, model, effort) = match config.ai_backend {
+            AiBackend::Anthropic => {
+                let api_key = config.anthropic_api_key.clone()?;
+                info!("AI assistant enabled, using model {} through the Anthropic API", config.anthropic_model);
+                (Backend::Anthropic { api_key }, config.anthropic_model.clone(), config.anthropic_effort.clone())
+            }
+            AiBackend::Local => {
+                let url = config.local_model_url.trim_end_matches('/').to_string();
+                info!("AI assistant enabled, using local model {} at {url}", config.local_model);
+                (Backend::Local { url, think: config.local_model_think }, config.local_model.clone(), None)
+            }
+        };
 
         Some(Self {
             http,
-            api_key,
-            model: config.anthropic_model.clone(),
-            effort: config.anthropic_effort.clone(),
+            backend,
+            model,
+            effort,
             system: system_prompt(&config.bot_name),
             state: Mutex::new(State::new(config.anthropic_daily_limit)),
+            local_queue: tokio::sync::Semaphore::new(1),
         })
+    }
+
+    /// Whether the model runs on the guild's own hardware (Ollama) rather than the Anthropic API.
+    pub fn is_local(&self) -> bool {
+        matches!(self.backend, Backend::Local { .. })
+    }
+
+    /// The models installed on the local server, for a developer picking one; nothing if the
+    /// assistant isn't local or the server doesn't answer in time.
+    pub async fn installed_models(&self) -> Vec<String> {
+        match &self.backend {
+            Backend::Local { url, .. } => self.local_models(url, LOCAL_LIST_TIMEOUT).await.unwrap_or_default(),
+            Backend::Anthropic { .. } => Vec::new(),
+        }
     }
 
     /// The model and the effort to use in a guild whose developers have set `settings`: what they
     /// chose with `/ai model` and `/ai effort`, else what the bot was configured with. The effort is
-    /// `None` when none is to be sent.
+    /// `None` when none is to be sent, which is always for a local model.
     pub fn resolve<'a>(&'a self, settings: &'a AiSettings) -> (&'a str, Option<&'a str>) {
         let model = settings.model.as_deref().unwrap_or(self.model.as_str());
+        if self.is_local() {
+            return (model, None);
+        }
         let effort = match settings.effort.as_deref() {
             Some(effort) if effort.eq_ignore_ascii_case("off") => None,
             Some(effort) => Some(effort),
@@ -303,12 +364,42 @@ impl Ai {
     }
 
     /// Asks the API for the models the key may use, which tells whether the key works and whether
-    /// `model` is one of them. It costs no tokens and isn't counted in the limits.
+    /// `model` is one of them; or, for a local model, asks the Ollama server which models it has.
+    /// It costs no tokens and isn't counted in the limits.
     pub async fn check_api(&self, model: &str) -> ApiCheck {
+        match &self.backend {
+            Backend::Anthropic { api_key } => self.check_anthropic(api_key, model).await,
+            Backend::Local { url, .. } => match self.local_models(url, KEY_CHECK_TIMEOUT).await {
+                Ok(installed) => ApiCheck::Ok { model_listed: is_installed(&installed, model) },
+                Err(problem) => ApiCheck::Unreachable(problem),
+            },
+        }
+    }
+
+    /// The names of the models the Ollama server at `url` has installed.
+    async fn local_models(&self, url: &str, timeout: Duration) -> Result<Vec<String>, String> {
+        let response = self
+            .http
+            .get(format!("{url}/api/tags"))
+            .timeout(timeout)
+            .send()
+            .await
+            .map_err(|e| format!("the request failed: {e}"))?;
+
+        let status = response.status();
+        let body = response.text().await.map_err(|e| format!("the response couldn't be read: {e}"))?;
+        if !status.is_success() {
+            return Err(format!("the server returned {status}: {}", api_error_message(&body)));
+        }
+        let list: LocalModelList = serde_json::from_str(&body).map_err(|e| format!("the list of models couldn't be parsed: {e}"))?;
+        Ok(list.models.into_iter().map(|model| model.name).collect())
+    }
+
+    async fn check_anthropic(&self, api_key: &str, model: &str) -> ApiCheck {
         let response = self
             .http
             .get(format!("{MODELS_URL}?limit=1000"))
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", api_key)
             .header("anthropic-version", API_VERSION)
             .timeout(KEY_CHECK_TIMEOUT)
             .send()
@@ -407,18 +498,42 @@ impl Ai {
             if access.is_officer() { "is" } else { "is not" },
         );
 
+        let reply = match &self.backend {
+            Backend::Anthropic { api_key } => self.ask_anthropic(api_key, &system, turns, model, effort).await?,
+            Backend::Local { url, think } => self.ask_local(url, *think, &system, turns, model).await?,
+        };
+
+        if let Some((input, output)) = reply.tokens {
+            info!("{model} answered with {input} input and {output} output tokens");
+            // Counted whether or not the answer turns out usable: the tokens were used either way.
+            // A local model is counted under its own label, so that it shows as free.
+            let label = if self.is_local() { local_label(model) } else { model.to_string() };
+            self.state().usage.record(&label, input, output, Instant::now());
+        }
+
+        if reply.text.is_empty() {
+            return Err(AskError::unavailable(format!("the answer had no text (stop reason: {:?})", reply.stop_reason)));
+        }
+        if reply.cut_short {
+            info!("{model} ran out of tokens before the answer was finished");
+        }
+        Ok((reply.text, reply.cut_short))
+    }
+
+    /// One request to Claude through the Anthropic API.
+    async fn ask_anthropic(&self, api_key: &str, system: &str, turns: &[Turn], model: &str, effort: Option<&str>) -> Result<Reply, AskError> {
         let request = Request {
             model,
             max_tokens: MAX_TOKENS,
-            system: &system,
-            messages: turns.iter().map(|turn| WireMessage { role: turn.role.as_str(), content: &turn.content }).collect(),
+            system,
+            messages: wire_messages(turns),
             output_config: effort.map(|effort| OutputConfig { effort }),
         };
 
         let response = self
             .http
             .post(API_URL)
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", api_key)
             .header("anthropic-version", API_VERSION)
             .timeout(REQUEST_TIMEOUT)
             .json(&request)
@@ -433,22 +548,90 @@ impl Ai {
         }
 
         let response: Response = serde_json::from_str(&body).map_err(|e| AskError::unavailable(format!("the response couldn't be parsed: {e}")))?;
-        if let Some(usage) = &response.usage {
-            info!("Claude ({model}) answered with {} input and {} output tokens", usage.input_tokens, usage.output_tokens);
-            // Counted whether or not the answer turns out usable: the tokens were billed either way.
-            self.state().usage.record(model, usage.input_tokens, usage.output_tokens, Instant::now());
+        Ok(Reply {
+            text: reply_text(&response),
+            cut_short: response.stop_reason.as_deref() == Some("max_tokens"),
+            tokens: response.usage.as_ref().map(|usage| (usage.input_tokens, usage.output_tokens)),
+            stop_reason: response.stop_reason,
+        })
+    }
+
+    /// One request to the model on the Ollama server at `url`. The system prompt goes first, as a
+    /// message of its own, which is how Ollama takes it.
+    async fn ask_local(&self, url: &str, think: Option<bool>, system: &str, turns: &[Turn], model: &str) -> Result<Reply, AskError> {
+        let mut messages = vec![WireMessage { role: "system", content: system }];
+        messages.extend(wire_messages(turns));
+        let request = LocalRequest {
+            model,
+            messages,
+            stream: false,
+            think,
+            options: LocalOptions { num_ctx: LOCAL_CONTEXT_TOKENS, num_predict: MAX_TOKENS },
+        };
+
+        // Held until the answer is in, so the GPU works on one question at a time.
+        let _turn = self
+            .local_queue
+            .acquire()
+            .await
+            .map_err(|e| AskError::unavailable(format!("the local model's queue is closed: {e}")))?;
+
+        let response = self
+            .http
+            .post(format!("{url}/api/chat"))
+            .timeout(LOCAL_REQUEST_TIMEOUT)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| AskError::unavailable(format!("the request to the local model failed: {e}")))?;
+
+        let status = response.status();
+        let body = response.text().await.map_err(|e| AskError::unavailable(format!("the response couldn't be read: {e}")))?;
+        if !status.is_success() {
+            return Err(AskError::unavailable(format!("the local model returned {status}: {}", api_error_message(&body))));
         }
 
-        let answer = reply_text(&response);
-        if answer.is_empty() {
-            return Err(AskError::unavailable(format!("the answer had no text (stop reason: {:?})", response.stop_reason)));
-        }
-        let cut_short = response.stop_reason.as_deref() == Some("max_tokens");
-        if cut_short {
-            info!("Claude ({model}) ran out of tokens before the answer was finished");
-        }
-        Ok((answer, cut_short))
+        let response: LocalResponse = serde_json::from_str(&body).map_err(|e| AskError::unavailable(format!("the response couldn't be parsed: {e}")))?;
+        Ok(local_reply(response))
     }
+}
+
+/// What a model answered, whichever served it.
+#[derive(Debug, PartialEq)]
+struct Reply {
+    text: String,
+    /// It ran out of tokens before the answer was finished.
+    cut_short: bool,
+    /// Why it stopped, as the server put it; for the log when something is wrong.
+    stop_reason: Option<String>,
+    /// `(input, output)` tokens, if the server said.
+    tokens: Option<(u64, u64)>,
+}
+
+/// An Ollama answer as a `Reply`. Thinking that a model wrote into its answer (`<think>...</think>`)
+/// is taken out: it is not meant for the channel. Ollama says `length` when it ran out of tokens.
+fn local_reply(response: LocalResponse) -> Reply {
+    let tokens = match (response.prompt_eval_count, response.eval_count) {
+        (None, None) => None,
+        (input, output) => Some((input.unwrap_or(0), output.unwrap_or(0))),
+    };
+    Reply {
+        text: strip_thinking(&response.message.map(|message| message.content).unwrap_or_default()),
+        cut_short: response.done_reason.as_deref() == Some("length"),
+        stop_reason: response.done_reason,
+        tokens,
+    }
+}
+
+/// Whether `model` is among the `installed` ones. Ollama names a model given without a tag
+/// `name:latest`, so `qwen3.5` is installed if `qwen3.5:latest` is.
+fn is_installed(installed: &[String], model: &str) -> bool {
+    installed.iter().any(|name| name == model || (!model.contains(':') && *name == format!("{model}:latest")))
+}
+
+/// The conversation as both APIs take it.
+fn wire_messages(turns: &[Turn]) -> Vec<WireMessage<'_>> {
+    turns.iter().map(|turn| WireMessage { role: turn.role.as_str(), content: &turn.content }).collect()
 }
 
 /// What the member holding `roles` may do with the assistant, by the roles this server registered
@@ -519,11 +702,15 @@ fn reply_text(response: &Response) -> String {
         .to_string()
 }
 
-/// The message the API gave for an error, or the start of the body if it isn't the usual JSON.
+/// The message an API gave for an error, or the start of the body if it isn't the usual JSON. The
+/// Anthropic API says `{"error": {"message": "..."}}`; Ollama says `{"error": "..."}`.
 fn api_error_message(body: &str) -> String {
-    serde_json::from_str::<ErrorBody>(body)
-        .map(|body| body.error.message)
-        .unwrap_or_else(|_| truncate_chars(body, 300))
+    let parsed: Option<serde_json::Value> = serde_json::from_str(body).ok();
+    parsed
+        .as_ref()
+        .and_then(|body| body["error"]["message"].as_str().or_else(|| body["error"].as_str()))
+        .map(str::to_string)
+        .unwrap_or_else(|| truncate_chars(body, 300))
 }
 
 #[derive(Serialize)]
@@ -581,14 +768,50 @@ struct ListedModel {
     id: String,
 }
 
-#[derive(Deserialize)]
-struct ErrorBody {
-    error: ErrorDetail,
+/// A request to Ollama's `/api/chat`.
+#[derive(Serialize)]
+struct LocalRequest<'a> {
+    model: &'a str,
+    messages: Vec<WireMessage<'a>>,
+    /// The whole answer in one response.
+    stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    think: Option<bool>,
+    options: LocalOptions,
+}
+
+#[derive(Serialize)]
+struct LocalOptions {
+    /// The context window, in tokens.
+    num_ctx: u32,
+    /// The most tokens to answer with.
+    num_predict: u32,
 }
 
 #[derive(Deserialize)]
-struct ErrorDetail {
-    message: String,
+struct LocalResponse {
+    message: Option<LocalMessage>,
+    done_reason: Option<String>,
+    prompt_eval_count: Option<u64>,
+    eval_count: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct LocalMessage {
+    #[serde(default)]
+    content: String,
+}
+
+/// Ollama's `/api/tags`: the models it has installed.
+#[derive(Deserialize)]
+struct LocalModelList {
+    #[serde(default)]
+    models: Vec<LocalModel>,
+}
+
+#[derive(Deserialize)]
+struct LocalModel {
+    name: String,
 }
 
 #[cfg(test)]
@@ -647,12 +870,99 @@ mod tests {
     fn test_ai(model: &str, effort: Option<&str>) -> Ai {
         Ai {
             http: reqwest::Client::new(),
-            api_key: "test".to_string(),
+            backend: Backend::Anthropic { api_key: "test".to_string() },
             model: model.to_string(),
             effort: effort.map(str::to_string),
             system: String::new(),
             state: Mutex::new(State::new(100)),
+            local_queue: tokio::sync::Semaphore::new(1),
         }
+    }
+
+    fn local_ai(model: &str) -> Ai {
+        Ai { backend: Backend::Local { url: "http://ollama:11434".to_string(), think: Some(false) }, effort: None, ..test_ai(model, None) }
+    }
+
+    #[test]
+    fn a_local_model_has_no_effort_whatever_was_chosen() {
+        let ai = local_ai("qwen3.5:9b");
+        assert!(ai.is_local());
+        assert!(!test_ai("m", None).is_local());
+
+        let chosen = AiSettings { effort: Some("high".to_string()), ..Default::default() };
+        assert_eq!(ai.resolve(&chosen), ("qwen3.5:9b", None));
+        let other = AiSettings { model: Some("gemma4:12b".to_string()), ..Default::default() };
+        assert_eq!(ai.resolve(&other), ("gemma4:12b", None));
+    }
+
+    #[test]
+    fn a_local_request_is_serialised_as_ollama_expects() {
+        let turns = [Turn::user("Kail: hi")];
+        let mut messages = vec![WireMessage { role: "system", content: "be brief" }];
+        messages.extend(wire_messages(&turns));
+        let request = LocalRequest {
+            model: "qwen3.5:9b",
+            messages,
+            stream: false,
+            think: Some(false),
+            options: LocalOptions { num_ctx: LOCAL_CONTEXT_TOKENS, num_predict: MAX_TOKENS },
+        };
+
+        let json: serde_json::Value = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["model"], "qwen3.5:9b");
+        assert_eq!(json["stream"], false);
+        assert_eq!(json["think"], false);
+        assert_eq!(json["messages"][0]["role"], "system");
+        assert_eq!(json["messages"][0]["content"], "be brief");
+        assert_eq!(json["messages"][1]["content"], "Kail: hi");
+        assert_eq!(json["options"]["num_ctx"], 8192);
+        assert_eq!(json["options"]["num_predict"], MAX_TOKENS);
+
+        // `default` leaves thinking to the model: the field isn't sent.
+        let request = LocalRequest { think: None, ..request };
+        let json: serde_json::Value = serde_json::to_value(&request).unwrap();
+        assert!(json.get("think").is_none());
+    }
+
+    #[test]
+    fn an_ollama_answer_is_read() {
+        let body = r#"{"model":"qwen3.5:9b","created_at":"2026-10-14T16:00:00Z",
+            "message":{"role":"assistant","content":"  Hello there!  "},
+            "done":true,"done_reason":"stop","prompt_eval_count":120,"eval_count":15}"#;
+        let reply = local_reply(serde_json::from_str(body).unwrap());
+        assert_eq!(
+            reply,
+            Reply { text: "Hello there!".to_string(), cut_short: false, stop_reason: Some("stop".to_string()), tokens: Some((120, 15)) }
+        );
+    }
+
+    #[test]
+    fn an_ollama_answer_that_ran_out_of_tokens_or_thought_aloud_is_handled() {
+        let body = r#"{"message":{"role":"assistant","content":"<think>hmm</think>First, the"},"done_reason":"length","eval_count":1024}"#;
+        let reply = local_reply(serde_json::from_str(body).unwrap());
+        assert_eq!(reply.text, "First, the");
+        assert!(reply.cut_short);
+        assert_eq!(reply.tokens, Some((0, 1024)));
+
+        // No message and no counts: an empty answer, which `complete` turns into a failure.
+        let reply = local_reply(serde_json::from_str("{}").unwrap());
+        assert_eq!(reply.text, "");
+        assert_eq!(reply.tokens, None);
+    }
+
+    #[test]
+    fn a_model_is_installed_with_or_without_its_tag() {
+        let installed = vec!["qwen3.5:9b".to_string(), "gemma4:latest".to_string()];
+        assert!(is_installed(&installed, "qwen3.5:9b"));
+        assert!(is_installed(&installed, "gemma4"));
+        assert!(is_installed(&installed, "gemma4:latest"));
+        assert!(!is_installed(&installed, "qwen3.5"));
+        assert!(!is_installed(&installed, "qwen3.5:27b"));
+        assert!(!is_installed(&[], "qwen3.5:9b"));
+
+        let list: LocalModelList = serde_json::from_str(r#"{"models":[{"name":"qwen3.5:9b","model":"qwen3.5:9b","size":6600000000}]}"#).unwrap();
+        assert_eq!(list.models.len(), 1);
+        assert_eq!(list.models[0].name, "qwen3.5:9b");
     }
 
     #[tokio::test]
@@ -860,6 +1170,8 @@ mod tests {
         let body = r#"{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: too large"}}"#;
         assert_eq!(api_error_message(body), "max_tokens: too large");
         assert_eq!(api_error_message("<html>Bad gateway</html>"), "<html>Bad gateway</html>");
+        // Ollama's shape.
+        assert_eq!(api_error_message(r#"{"error":"model 'qwen3.5:9b' not found"}"#), "model 'qwen3.5:9b' not found");
     }
 
     #[test]
