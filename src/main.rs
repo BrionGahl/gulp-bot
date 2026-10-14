@@ -152,12 +152,20 @@ async fn main() {
 }
 
 /// Resolves when the process is asked to stop: SIGTERM (`docker stop`) or SIGINT (Ctrl-C).
+#[cfg(unix)]
 async fn shutdown_signal() {
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("Failed to listen for SIGTERM.");
     tokio::select! {
         _ = terminate.recv() => {}
         _ = tokio::signal::ctrl_c() => {}
     }
+}
+
+/// Resolves when the process is asked to stop. There is no SIGTERM outside Unix (the bot runs on
+/// Linux in Docker), so Ctrl-C is the only signal here; this lets it compile and run on Windows.
+#[cfg(not(unix))]
+async fn shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 async fn event_handler(
