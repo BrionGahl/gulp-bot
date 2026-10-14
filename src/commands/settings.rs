@@ -33,6 +33,7 @@ const MAX_LIST_CHARS: usize = 4000;
     subcommands(
         "show",
         "mod_role",
+        "dev_role",
         "raider_role",
         "trial_role",
         "officer_category",
@@ -133,6 +134,7 @@ async fn show(ctx: Context<'_>) -> Result<(), Error> {
     let embed = crate::helper::create_base_embed(&ctx)
         .title("Server Settings")
         .field(Setting::ModRole.name(), role(settings.mod_role_id), true)
+        .field(Setting::DevRole.name(), role(settings.dev_role_id), true)
         .field(Setting::RaiderRole.name(), role(settings.raider_role_id), true)
         .field(Setting::TrialRole.name(), role(settings.trial_role_id), true)
         .field(Setting::PersonalOfficerCategory.name(), channel(settings.personal_officer_category_id), true)
@@ -158,6 +160,23 @@ async fn show(ctx: Context<'_>) -> Result<(), Error> {
 #[poise::command(prefix_command, slash_command, ephemeral, check = "crate::checks::check_is_administrator")]
 async fn mod_role(ctx: Context<'_>, #[description = "Role that grants moderator commands"] role: RoleId) -> Result<(), Error> {
     register_role(ctx, Setting::ModRole, role).await
+}
+
+/// Register the developer role for this server. Administrators only.
+///
+/// Developers run the `/ai` commands and rank above moderators for the AI assistant. Pick a role
+/// that only developers hold: it can't be the moderator, raider or trial role.
+#[poise::command(prefix_command, slash_command, ephemeral, check = "crate::checks::check_is_administrator")]
+async fn dev_role(ctx: Context<'_>, #[description = "Role held by the bot's developers"] role: RoleId) -> Result<(), Error> {
+    let guild_id = require_guild(ctx)?;
+
+    // The role would otherwise hand developer powers to every moderator, raider or trial.
+    let settings = ctx.data().guild_settings.get(guild_id);
+    if [settings.mod_role_id, settings.raider_role_id, settings.trial_role_id].contains(&Some(role)) {
+        return reply(ctx, "That role is registered as the moderator, raider or trial role. Pick a role that only developers hold.".to_string()).await;
+    }
+
+    register_role(ctx, Setting::DevRole, role).await
 }
 
 /// Register the raider role for this server
@@ -690,6 +709,8 @@ async fn wcl_consumable_list(ctx: Context<'_>) -> Result<(), Error> {
 enum ClearTarget {
     #[name = "Moderator role"]
     ModRole,
+    #[name = "Developer role"]
+    DevRole,
     #[name = "Raider role"]
     RaiderRole,
     #[name = "Trial role"]
@@ -718,13 +739,14 @@ async fn clear(ctx: Context<'_>, #[description = "Setting to clear"] setting: Cl
     let guild_id = require_guild(ctx)?;
     let store = &ctx.data().guild_settings;
 
-    // Same restriction as `mod_role`: clearing the moderator role is changing it.
-    if matches!(setting, ClearTarget::ModRole) && !crate::checks::check_is_administrator(ctx).await? {
+    // Same restriction as `mod_role` and `dev_role`: clearing one of these roles is changing it.
+    if matches!(setting, ClearTarget::ModRole | ClearTarget::DevRole) && !crate::checks::check_is_administrator(ctx).await? {
         return Ok(());
     }
 
     match setting {
         ClearTarget::ModRole => store.set(guild_id, Setting::ModRole, None).await?,
+        ClearTarget::DevRole => store.set(guild_id, Setting::DevRole, None).await?,
         ClearTarget::RaiderRole => store.set(guild_id, Setting::RaiderRole, None).await?,
         ClearTarget::TrialRole => store.set(guild_id, Setting::TrialRole, None).await?,
         ClearTarget::PersonalOfficerCategory => store.set(guild_id, Setting::PersonalOfficerCategory, None).await?,

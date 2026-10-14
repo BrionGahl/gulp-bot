@@ -149,6 +149,26 @@ impl RateLimiter {
         Ok(())
     }
 
+    /// How many requests of `user` are within the window now.
+    pub fn count(&self, user: u64, now: Instant) -> usize {
+        self.requests
+            .get(&user)
+            .map_or(0, |times| times.iter().filter(|time| now.saturating_duration_since(**time) < self.window).count())
+    }
+
+    /// How many requests a user may make in the window.
+    pub fn max(&self) -> usize {
+        self.max
+    }
+
+    /// Forgets every request counted for `user`, so they may ask a full allowance again. Returns
+    /// how many were within the window.
+    pub fn clear(&mut self, user: u64, now: Instant) -> usize {
+        let counted = self.count(user, now);
+        self.requests.remove(&user);
+        counted
+    }
+
     /// Takes back the request `check` last counted for `user`: for one that got no answer through no
     /// fault of theirs, or that another limit refused after this one had counted it.
     pub fn undo(&mut self, user: u64) {
@@ -308,5 +328,56 @@ mod tests {
         }
         assert_eq!(limiter.check(1000, start + Duration::from_secs(120)), Ok(()));
         assert_eq!(limiter.requests.len(), 1);
+    }
+
+    #[test]
+    fn what_a_developer_was_told_is_shown_to_nobody_below() {
+        let mut history = history(10);
+        let now = Instant::now();
+        const DEVELOPER: u8 = 3;
+
+        history.record_exchange(1, "dev q".into(), "dev secret".into(), DEVELOPER, now);
+        history.record_exchange(1, "officer q".into(), "officer a".into(), OFFICER, now);
+
+        assert!(history.snapshot(1, RAIDER, now).is_empty());
+        assert_eq!(history.snapshot(1, OFFICER, now), vec![Turn::user("officer q"), Turn::assistant("officer a")]);
+        assert_eq!(history.snapshot(1, DEVELOPER, now).len(), 4);
+    }
+
+    #[test]
+    fn a_users_requests_can_be_counted_and_cleared() {
+        let mut limiter = RateLimiter::new(5, Duration::from_secs(60));
+        let start = Instant::now();
+
+        assert_eq!(limiter.max(), 5);
+        assert_eq!(limiter.count(1, start), 0);
+
+        limiter.check(1, start).unwrap();
+        limiter.check(1, start + Duration::from_secs(30)).unwrap();
+        limiter.check(2, start).unwrap();
+
+        assert_eq!(limiter.count(1, start + Duration::from_secs(30)), 2);
+        // The first has left the window by now, though nobody has asked since.
+        assert_eq!(limiter.count(1, start + Duration::from_secs(70)), 1);
+        assert_eq!(limiter.count(2, start), 1);
+        assert_eq!(limiter.count(3, start), 0);
+
+        // Clearing gives a full allowance back, to that user only.
+        assert_eq!(limiter.clear(1, start + Duration::from_secs(30)), 2);
+        assert_eq!(limiter.count(1, start + Duration::from_secs(30)), 0);
+        assert_eq!(limiter.count(2, start), 1);
+        assert_eq!(limiter.clear(1, start + Duration::from_secs(30)), 0);
+    }
+
+    #[test]
+    fn a_user_who_was_cleared_may_ask_again_at_once() {
+        let mut limiter = RateLimiter::new(1, Duration::from_secs(60));
+        let now = Instant::now();
+
+        assert_eq!(limiter.check(1, now), Ok(()));
+        assert!(limiter.check(1, now).is_err());
+
+        limiter.clear(1, now);
+        assert_eq!(limiter.check(1, now), Ok(()));
     }
 }

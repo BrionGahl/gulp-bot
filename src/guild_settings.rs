@@ -12,6 +12,9 @@ use sqlx::{PgPool, Row};
 #[derive(Debug, Clone, Default)]
 pub struct GuildSettings {
     pub mod_role_id: Option<RoleId>,
+    /// The role that makes a member a Developer: above Officer for the AI assistant, and the only
+    /// one who may run the `/ai` commands. Only administrators can register it.
+    pub dev_role_id: Option<RoleId>,
     pub raider_role_id: Option<RoleId>,
     pub trial_role_id: Option<RoleId>,
     pub personal_officer_category_id: Option<ChannelId>,
@@ -33,6 +36,23 @@ pub struct GuildSettings {
     pub wcl_source: Option<WclSource>,
     /// This guild's Warcraft Logs API client; `None` means `/wcl` is off for it.
     pub wcl_credentials: Option<WclCredentials>,
+    /// What the guild's developers have changed about the AI assistant at run time (`/ai`).
+    pub ai: AiSettings,
+}
+
+/// How the AI assistant has been switched, in a guild, by its developers with the `/ai` commands.
+/// The default is the assistant on, in no special mode, with the model and effort the bot was
+/// configured with.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AiSettings {
+    /// Off: the assistant answers nobody, whatever their role.
+    pub disabled: bool,
+    /// Maintenance mode: the assistant answers only Officers and Developers.
+    pub maintenance: bool,
+    /// The model to use instead of the configured one.
+    pub model: Option<String>,
+    /// The effort to use instead of the configured one; `off` means none is sent.
+    pub effort: Option<String>,
 }
 
 /// A Warcraft Logs API client's ID and secret, as issued at warcraftlogs.com (Manage Your Clients).
@@ -73,6 +93,8 @@ pub struct RaidVoice {
 pub enum Setting {
     #[name = "Moderator role"]
     ModRole,
+    #[name = "Developer role"]
+    DevRole,
     #[name = "Raider role"]
     RaiderRole,
     #[name = "Trial role"]
@@ -87,6 +109,7 @@ impl Setting {
     fn column(self) -> &'static str {
         match self {
             Setting::ModRole => "mod_role_id",
+            Setting::DevRole => "dev_role_id",
             Setting::RaiderRole => "raider_role_id",
             Setting::TrialRole => "trial_role_id",
             Setting::PersonalOfficerCategory => "personal_officer_category_id",
@@ -111,8 +134,8 @@ impl GuildSettingsStore {
         let mut cache: HashMap<GuildId, GuildSettings> = HashMap::new();
 
         let rows = sqlx::query(
-            "SELECT guild_id, mod_role_id, raider_role_id, trial_role_id, personal_officer_category_id, \
-             raid_notes_channel_id, \
+            "SELECT guild_id, mod_role_id, dev_role_id, raider_role_id, trial_role_id, personal_officer_category_id, \
+             raid_notes_channel_id, ai_disabled, ai_maintenance, ai_model, ai_effort, \
              bart_token, wowutils_token, wowutils_group_id, raid_notes_cron, \
              raid_voice_channel_id, raid_voice_start_cron, raid_voice_end_cron, \
              wcl_guild_id, wcl_uploader_id, wcl_client_id, wcl_client_secret FROM guild_settings",
@@ -166,6 +189,7 @@ impl GuildSettingsStore {
 
             cache.insert(guild_id, GuildSettings {
                 mod_role_id: id("mod_role_id")?.map(RoleId::new),
+                dev_role_id: id("dev_role_id")?.map(RoleId::new),
                 raider_role_id: id("raider_role_id")?.map(RoleId::new),
                 trial_role_id: id("trial_role_id")?.map(RoleId::new),
                 personal_officer_category_id: id("personal_officer_category_id")?.map(ChannelId::new),
@@ -179,6 +203,12 @@ impl GuildSettingsStore {
                 raid_voice,
                 wcl_source,
                 wcl_credentials,
+                ai: AiSettings {
+                    disabled: row.try_get("ai_disabled")?,
+                    maintenance: row.try_get("ai_maintenance")?,
+                    model: row.try_get("ai_model")?,
+                    effort: row.try_get("ai_effort")?,
+                },
             });
         }
 
@@ -233,11 +263,34 @@ impl GuildSettingsStore {
         let settings = cache.entry(guild_id).or_default();
         match setting {
             Setting::ModRole => settings.mod_role_id = value.map(RoleId::new),
+            Setting::DevRole => settings.dev_role_id = value.map(RoleId::new),
             Setting::RaiderRole => settings.raider_role_id = value.map(RoleId::new),
             Setting::TrialRole => settings.trial_role_id = value.map(RoleId::new),
             Setting::PersonalOfficerCategory => settings.personal_officer_category_id = value.map(ChannelId::new),
             Setting::RaidNotesChannel => settings.raid_notes_channel_id = value.map(ChannelId::new),
         }
+        Ok(())
+    }
+
+    /// Saves how the AI assistant has been switched in this guild (`/ai`). Takes the whole of it,
+    /// so a caller reads the current value, changes what it means to and writes it back.
+    pub async fn set_ai(&self, guild_id: GuildId, ai: AiSettings) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO guild_settings (guild_id, ai_disabled, ai_maintenance, ai_model, ai_effort) \
+             VALUES ($1, $2, $3, $4, $5) \
+             ON CONFLICT (guild_id) DO UPDATE SET ai_disabled = EXCLUDED.ai_disabled, \
+             ai_maintenance = EXCLUDED.ai_maintenance, ai_model = EXCLUDED.ai_model, \
+             ai_effort = EXCLUDED.ai_effort, updated_at = now()",
+        )
+        .bind(guild_id.get() as i64)
+        .bind(ai.disabled)
+        .bind(ai.maintenance)
+        .bind(ai.model.as_deref())
+        .bind(ai.effort.as_deref())
+        .execute(&self.pool)
+        .await?;
+
+        self.cache.write().unwrap().entry(guild_id).or_default().ai = ai;
         Ok(())
     }
 

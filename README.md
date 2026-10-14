@@ -125,6 +125,24 @@ It answers with Claude through the Anthropic API, which is billed per use and se
 
 Its rules (in `RULES` in `src/ai/mod.rs`, after the guild text so editing that can't remove them): it only speaks English, stays away from politics, doesn't violate human rights or demean people, only an Officer may ask it to do anything involving Warcraft Logs, and only an Officer may ask it to change any file, setting or data. It can't change anything today, so that last rule is only the model's own behaviour; any tool added later that changes something must check `Access::Officer` in code, not trust the prompt.
 
+#### Developers: `/ai`
+
+The members with the developer role (registered by an administrator with `/settings dev_role`) rank above Officers for the assistant, and are the only ones who can use `/ai`. Not even administrators can until they are given the role. The replies are private to whoever ran the command, every use is written to the bot's log (`audit: ...`) with who ran it, and what is switched applies only to the server it was used in, kept in the database across restarts.
+
+| Command | What it does |
+| --- | --- |
+| `/ai status` | Whether the assistant is on, off or in maintenance, the model and effort in use, the questions answered in the last 24 hours, and the latest API failures |
+| `/ai on`, `/ai off` | Switch the assistant on or off for everybody (nobody is answered while it is off) |
+| `/ai maintenance <true/false>` | Maintenance mode: only Officers and Developers get answers |
+| `/ai usage` | Tokens used and an estimate of the cost, by model, for the last 24 hours and since the bot started |
+| `/ai model <name>` | Use another model, for example a cheaper one if the spending rises, or `default` for the configured one. The API is asked first whether it knows the model |
+| `/ai effort <level>` | Use another effort (as configured, off, low, medium, high) |
+| `/ai limits <member>` | How many questions a member has asked in the last 10 minutes |
+| `/ai reset <member>` | Give a member their whole allowance of questions back |
+| `/ai check` | Check that the registered roles exist, that the API key works and lists the model, and the state of the assistant. It costs no tokens |
+
+The token counts and the failures are kept in memory and start again when the bot restarts; the cost is estimated from Anthropic's list prices, and the Anthropic Console has the real bill.
+
 Privacy: what a member writes to the assistant, and the assistant's recent answers in that channel, are sent to Anthropic's API to get an answer. Tell the guild before turning it on.
 
 Who the guild is, and how the assistant treats its members, is written in `src/ai/system_prompt.md`; change it there and rebuild the image. The answers are only as good as that text and the model: the assistant has no access to Warcraft Logs or the guild's settings yet.
@@ -141,6 +159,7 @@ always restricted to administrators:
 | --- | --- |
 | `/settings show` | Lists everything registered for this server |
 | `/settings mod_role <role>` | Moderator role, also the "officer" role for personal officer channels |
+| `/settings dev_role <role>` | Developer role: above moderators for the AI assistant, and the only one that can use `/ai`. Administrators only |
 | `/settings raider_role <role>` | Raider role |
 | `/settings trial_role <role>` | Trial role |
 | `/settings officer_category <category>` | Category that personal officer channels are created under |

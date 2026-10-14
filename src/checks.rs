@@ -1,3 +1,4 @@
+use log::warn;
 use poise::serenity_prelude::{GuildId, RoleId};
 use crate::types::bot::{Context, Error};
 
@@ -63,15 +64,46 @@ pub fn is_admin_or_moderator(ctx: Context<'_>, guild_id: GuildId) -> bool {
     is_administrator(ctx) || mod_role_id.is_some_and(|role_id| is_some_role(ctx, &role_id))
 }
 
-/// Gate for changing which role is the moderator role. Moderators can use the rest of
-/// `/settings`, but if they could also reassign the moderator role they could hand `/settings`
-/// access to anyone, or lock the other moderators out.
+/// Gate for changing which role is the moderator role or the developer role. Moderators can use the
+/// rest of `/settings`, but if they could also reassign these roles they could hand `/settings`
+/// (or the developer commands) access to anyone, or lock the other moderators out.
 pub async fn check_is_administrator(ctx: Context<'_>) -> Result<bool, Error> {
     let allowed = is_administrator(ctx);
     if !allowed {
-        reply_denied(ctx, "Only administrators can change the moderator role.").await?;
+        reply_denied(ctx, "Only administrators can change the moderator and developer roles.").await?;
     }
     Ok(allowed)
+}
+
+/// Gate for the `/ai` commands: holders of the registered developer role, and nobody else. Not even
+/// administrators, who are Officers everywhere but have to be given the developer role like anyone
+/// else; an administrator registers the role with `/settings dev_role`.
+pub async fn check_is_developer(ctx: Context<'_>) -> Result<bool, Error> {
+    let Some(guild_id) = ctx.guild_id() else {
+        reply_denied(ctx, "This command is only available in a server.").await?;
+        return Ok(false);
+    };
+    // Looked up by the guild the command was used in, so a role registered for another server
+    // never grants access here.
+    if ctx.data().guild_settings.get(guild_id).dev_role_id.is_none() {
+        reply_denied(ctx, "No developer role is registered for this server. An administrator can set one with `/settings dev_role`.").await?;
+        return Ok(false);
+    }
+
+    let allowed = is_developer(ctx, guild_id);
+    if !allowed {
+        warn!("Refused {} ({}) a developer command in guild {guild_id}", ctx.author().id, ctx.author().name);
+        reply_denied(ctx, "This command is only available to developers.").await?;
+    }
+    Ok(allowed)
+}
+
+/// Whether the invoking member holds `guild_id`'s registered developer role. Never replies, so a
+/// command can check it again for itself, and so it can gate things a check can't, such as a
+/// command's autocomplete.
+pub fn is_developer(ctx: Context<'_>, guild_id: GuildId) -> bool {
+    let dev_role_id = ctx.data().guild_settings.get(guild_id).dev_role_id;
+    dev_role_id.is_some_and(|role_id| is_some_role(ctx, &role_id))
 }
 
 /// Whether the invoking member has the Administrator permission in the guild the command was

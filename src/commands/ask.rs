@@ -1,7 +1,7 @@
 use poise::serenity_prelude::{CreateAllowedMentions, RoleId};
 use poise::CreateReply;
 
-use crate::ai::{access_for, speaker_label, split_message, DISCORD_MAX_CHARS};
+use crate::ai::{access_for, gate, speaker_label, split_message, DISCORD_MAX_CHARS};
 use crate::checks::is_administrator;
 use crate::types::bot::{Context, Error};
 
@@ -34,6 +34,10 @@ pub async fn ask(
         };
         return refuse(ctx, reason).await;
     }
+    // Off, or in maintenance: told privately, before the public "thinking..." of the defer.
+    if let Err(e) = gate(&settings.ai, access) {
+        return refuse(ctx, &e.to_string()).await;
+    }
 
     // The model takes a few seconds, longer than Discord waits for a first response.
     ctx.defer().await?;
@@ -44,7 +48,7 @@ pub async fn ask(
     };
     let speaker = speaker_label(&display_name, &ctx.author().name);
 
-    let reply = match ai.ask(ctx.channel_id().get(), ctx.author().id.get(), &speaker, access, &question).await {
+    let reply = match ai.ask(ctx.channel_id().get(), ctx.author().id.get(), &speaker, access, &settings.ai, &question).await {
         Ok(answer) => answer,
         Err(e) => e.to_string(),
     };

@@ -10,7 +10,8 @@ use crate::types::bot::Data;
 /// Answers `msg` in its channel if it says "Bot please". Does nothing if the assistant isn't set
 /// up, for a bot's message (this also keeps the bot from answering itself), outside a server, or
 /// for a member who isn't a raider: they get no answer at all, not even a refusal, so that the
-/// channel isn't filled with replies to people the assistant doesn't talk to.
+/// channel isn't filled with replies to people the assistant doesn't talk to. A raider who calls it
+/// while the developers have it off, or in maintenance, is told so.
 pub async fn answer_trigger(ctx: &serenity::Context, data: &Data, msg: &Message) {
     let Some(ai) = data.ai.as_ref() else { return };
     let Some(guild_id) = msg.guild_id else { return };
@@ -19,7 +20,8 @@ pub async fn answer_trigger(ctx: &serenity::Context, data: &Data, msg: &Message)
     }
 
     let roles = msg.member.as_ref().map(|member| member.roles.as_slice()).unwrap_or(&[]);
-    let access = access_for(&data.guild_settings.get(guild_id), roles, is_administrator(ctx, msg));
+    let settings = data.guild_settings.get(guild_id);
+    let access = access_for(&settings, roles, is_administrator(ctx, msg));
     if !access.is_allowed() {
         return;
     }
@@ -36,7 +38,7 @@ pub async fn answer_trigger(ctx: &serenity::Context, data: &Data, msg: &Message)
     // Shown until it is dropped, after the answer has been sent.
     let _typing = msg.channel_id.start_typing(&ctx.http);
 
-    let reply = match ai.ask(msg.channel_id.get(), msg.author.id.get(), &speaker, access, &question).await {
+    let reply = match ai.ask(msg.channel_id.get(), msg.author.id.get(), &speaker, access, &settings.ai, &question).await {
         Ok(answer) => answer,
         Err(e) => e.to_string(),
     };

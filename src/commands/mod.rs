@@ -6,3 +6,4 @@ pub mod settings;
 pub mod announcement;
 pub mod wcl;
 pub mod ask;
+pub mod ai;

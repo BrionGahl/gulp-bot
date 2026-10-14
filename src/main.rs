@@ -86,6 +86,7 @@ async fn main() {
             commands::announcement::announcement(),
             commands::wcl::wcl(),
             commands::ask::ask(),
+            commands::ai::ai(),
         ],
         // Call to the event handler
         event_handler: |ctx, event, framework, data| {
