@@ -1,21 +1,31 @@
-//! Answers messages that say "Bot please".
+//! Answers messages that say "Bot please", and replies to the assistant's answers.
 
 use log::error;
 use poise::serenity_prelude::{self as serenity, CreateAllowedMentions, CreateMessage, Message};
 
 use super::access_for;
 use super::text::{has_trigger, speaker_label, split_message, DISCORD_MAX_CHARS};
+use super::Question;
 use crate::types::bot::Data;
 
-/// Answers `msg` in its channel if it says "Bot please". Does nothing if the assistant isn't set
-/// up, for a bot's message (this also keeps the bot from answering itself), outside a server, or
-/// for a member who isn't a raider: they get no answer at all, not even a refusal, so that the
-/// channel isn't filled with replies to people the assistant doesn't talk to. A raider who calls it
-/// while the developers have it off, or in maintenance, is told so.
+/// Answers `msg` in its channel if it says "Bot please", or if it is a reply to one of the
+/// assistant's answers (which carries the conversation on). If `msg` replies to a message, that
+/// message goes along with the question, so "Bot please, what does he mean?" has something to go on.
+///
+/// Does nothing if the assistant isn't set up, for a bot's message (this also keeps the bot from
+/// answering itself), outside a server, or for a member who isn't a raider: they get no answer at
+/// all, not even a refusal, so that the channel isn't filled with replies to people the assistant
+/// doesn't talk to. A raider who calls it while the developers have it off, or in maintenance, is
+/// told so.
 pub async fn answer_trigger(ctx: &serenity::Context, data: &Data, msg: &Message) {
     let Some(ai) = data.ai.as_ref() else { return };
     let Some(guild_id) = msg.guild_id else { return };
-    if msg.author.bot || !has_trigger(&msg.content) {
+    if msg.author.bot {
+        return;
+    }
+    let replied = msg.referenced_message.as_deref();
+    let replies_to_answer = replied.is_some_and(|replied| ai.is_answer(replied.id.get()));
+    if !replies_to_answer && !has_trigger(&msg.content) {
         return;
     }
 
@@ -35,12 +45,28 @@ pub async fn answer_trigger(ctx: &serenity::Context, data: &Data, msg: &Message)
         .unwrap_or_else(|| msg.author.display_name());
     let speaker = speaker_label(display_name, &msg.author.name);
 
+    // The message replied to, named as the model should know its author. The member can see it in
+    // the channel already, so it tells the model nothing they couldn't read themselves.
+    let quote = replied.map(|replied| {
+        let author = if replies_to_answer {
+            "you".to_string()
+        } else {
+            speaker_label(replied.author.display_name(), &replied.author.name)
+        };
+        (author, replied.content_safe(&ctx.cache))
+    });
+    let question = Question {
+        speaker: &speaker,
+        text: &question,
+        replying_to: quote.as_ref().map(|(author, text)| (author.as_str(), text.as_str())),
+    };
+
     // Shown until it is dropped, after the answer has been sent.
     let _typing = msg.channel_id.start_typing(&ctx.http);
 
-    let reply = match ai.ask(msg.channel_id.get(), msg.author.id.get(), &speaker, access, &settings.ai, &question).await {
-        Ok(answer) => answer,
-        Err(e) => e.to_string(),
+    let (reply, answered) = match ai.ask(msg.channel_id.get(), msg.author.id.get(), access, &settings.ai, &question).await {
+        Ok(answer) => (answer, true),
+        Err(e) => (e.to_string(), false),
     };
 
     for (index, chunk) in split_message(&reply, DISCORD_MAX_CHARS).into_iter().enumerate() {
@@ -49,9 +75,14 @@ pub async fn answer_trigger(ctx: &serenity::Context, data: &Data, msg: &Message)
         if index == 0 {
             message = message.reference_message(msg);
         }
-        if let Err(e) = msg.channel_id.send_message(&ctx.http, message).await {
-            error!("Failed to send the AI answer in channel {}: {}", msg.channel_id, e);
-            return;
+        match msg.channel_id.send_message(&ctx.http, message).await {
+            // A reply to any part of an answer carries the conversation on; a refusal doesn't.
+            Ok(sent) if answered => ai.remember_answer(sent.id.get()),
+            Ok(_) => {}
+            Err(e) => {
+                error!("Failed to send the AI answer in channel {}: {}", msg.channel_id, e);
+                return;
+            }
         }
     }
 }

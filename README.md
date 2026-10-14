@@ -120,6 +120,9 @@ Only members with the Raider role (the one registered with `/settings`) or are O
 
 - `/ask <question>`
 - any message that has the words "Bot please" in it (any case; "Bot, please ..." works too). The bot answers as a reply to that message.
+- a reply to one of its answers (from `/ask` or "Bot please"), which carries the conversation on without saying "Bot please" again. A reply to anything else the bot posted doesn't count.
+
+When the message calling it replies to another message ("Bot please, what does he mean?"), the assistant also gets that message's author and text (up to 500 characters), as context. If an answer runs out of room, it ends with a note saying it was cut short; replying "continue" to it gets the rest.
 
 It answers with Claude through the Anthropic API, which is billed per use and separately from a Claude subscription. Set a monthly spending limit in the Anthropic Console. It remembers the last 8 turns of each channel (in memory only, forgotten after an hour without questions or when the bot restarts), each member may ask up to 10 times in 10 minutes, and the assistant answers at most `ANTHROPIC_DAILY_LIMIT` questions (100 by default) in any 24 hours, from everybody together; a question that gets no answer because of an error doesn't count. What it was told in a channel is remembered with the access level of whoever asked and is shown only to members of that level or higher, so what an Officer was told isn't repeated to a raider. It never pings anyone.
 

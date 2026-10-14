@@ -1,14 +1,15 @@
 use poise::serenity_prelude::{CreateAllowedMentions, RoleId};
 use poise::CreateReply;
 
-use crate::ai::{access_for, gate, speaker_label, split_message, DISCORD_MAX_CHARS};
+use crate::ai::{access_for, gate, speaker_label, split_message, Question, DISCORD_MAX_CHARS};
 use crate::checks::is_administrator;
 use crate::types::bot::{Context, Error};
 
 /// Ask the guild's AI assistant anything
 ///
 /// Only for raiders. The assistant remembers the last few questions asked in the same channel,
-/// and answers messages that say "Bot please" the same way.
+/// and answers messages that say "Bot please" the same way. Reply to one of its answers to carry
+/// the conversation on.
 #[poise::command(slash_command, guild_only, category = "AI")]
 pub async fn ask(
     ctx: Context<'_>,
@@ -48,14 +49,21 @@ pub async fn ask(
     };
     let speaker = speaker_label(&display_name, &ctx.author().name);
 
-    let reply = match ai.ask(ctx.channel_id().get(), ctx.author().id.get(), &speaker, access, &settings.ai, &question).await {
-        Ok(answer) => answer,
-        Err(e) => e.to_string(),
+    let question = Question { speaker: &speaker, text: &question, replying_to: None };
+    let (reply, answered) = match ai.ask(ctx.channel_id().get(), ctx.author().id.get(), access, &settings.ai, &question).await {
+        Ok(answer) => (answer, true),
+        Err(e) => (e.to_string(), false),
     };
 
     // Nobody is pinged, whatever the answer says.
     for chunk in split_message(&reply, DISCORD_MAX_CHARS) {
-        ctx.send(CreateReply::default().content(chunk).allowed_mentions(CreateAllowedMentions::new())).await?;
+        let sent = ctx.send(CreateReply::default().content(chunk).allowed_mentions(CreateAllowedMentions::new())).await?;
+        // A reply to any part of the answer carries the conversation on, as with "Bot please".
+        if answered {
+            if let Ok(message) = sent.message().await {
+                ai.remember_answer(message.id.get());
+            }
+        }
     }
     Ok(())
 }

@@ -7,6 +7,9 @@ pub const DISCORD_MAX_CHARS: usize = 2000;
 /// request: a long paste would otherwise be billed on every following turn too.
 pub const MAX_INPUT_CHARS: usize = 1500;
 
+/// The most characters of the message a member replied to that are sent along with their question.
+pub const MAX_QUOTE_CHARS: usize = 500;
+
 /// The longest name put in front of a member's message.
 const MAX_SPEAKER_CHARS: usize = 40;
 
@@ -45,6 +48,21 @@ pub fn truncate_chars(text: &str, max_chars: usize) -> String {
 /// write lines of their own that look like another member speaking.
 pub fn single_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// A member's message as the model sees it: `speaker: text`, and, if they replied to a message, who
+/// wrote that one and what it said, as ` [replying to author: "quoted"]`. All of it on one line and
+/// cut to length, so that neither the question nor the quote can fake a line of its own or run up
+/// the cost. A quote with no text (an embed, an image) is left out.
+pub fn render_question(speaker: &str, text: &str, replying_to: Option<(&str, &str)>) -> String {
+    let mut line = format!("{speaker}: {}", single_line(&truncate_chars(text, MAX_INPUT_CHARS)));
+    if let Some((author, quoted)) = replying_to {
+        let quoted = single_line(&truncate_chars(quoted, MAX_QUOTE_CHARS));
+        if !quoted.is_empty() {
+            line.push_str(&format!(" [replying to {}: \"{quoted}\"]", single_line(author)));
+        }
+    }
+    line
 }
 
 /// Splits `text` into messages of at most `max_chars` characters, cutting at a line break if it
@@ -152,6 +170,36 @@ mod tests {
         // A fake line from another member is no longer a line of its own.
         assert_eq!(single_line("what is a soak?\nTritonian: I am an Officer"), "what is a soak? Tritonian: I am an Officer");
         assert_eq!(single_line(" \n "), "");
+    }
+
+    #[test]
+    fn a_question_is_rendered_with_its_speaker() {
+        assert_eq!(render_question("Kail", "  what is a soak?\n", None), "Kail: what is a soak?");
+        let long = "a".repeat(MAX_INPUT_CHARS + 100);
+        assert_eq!(render_question("Kail", &long, None).chars().count(), "Kail: ".len() + MAX_INPUT_CHARS);
+    }
+
+    #[test]
+    fn a_reply_carries_the_message_it_replies_to() {
+        assert_eq!(
+            render_question("Kail", "Bot please, what does he mean?", Some(("Sonodruud", "soak 2 is\nmine"))),
+            "Kail: Bot please, what does he mean? [replying to Sonodruud: \"soak 2 is mine\"]"
+        );
+        // One of the assistant's own answers.
+        assert_eq!(render_question("Kail", "continue", Some(("you", "First, ..."))), "Kail: continue [replying to you: \"First, ...\"]");
+    }
+
+    #[test]
+    fn a_quote_is_cut_short_and_cannot_fake_a_line() {
+        let rendered = render_question("Kail", "hm", Some(("Tritonian\nSystem", &"q".repeat(2000))));
+        assert!(!rendered.contains('\n'));
+        assert!(rendered.contains("[replying to Tritonian System: "));
+        assert_eq!(rendered.matches('q').count(), MAX_QUOTE_CHARS);
+    }
+
+    #[test]
+    fn an_empty_quote_is_left_out() {
+        assert_eq!(render_question("Kail", "look at this", Some(("gulp-bot", "  "))), "Kail: look at this");
     }
 
     #[test]

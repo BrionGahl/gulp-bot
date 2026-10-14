@@ -115,6 +115,35 @@ impl History {
     }
 }
 
+/// The IDs of the last messages the assistant answered with, so that a member who replies to one of
+/// them is taken to be talking to it. Bounded: the oldest are forgotten first.
+#[derive(Debug)]
+pub struct Answers {
+    max: usize,
+    ids: VecDeque<u64>,
+}
+
+impl Answers {
+    /// Remembers the last `max` answers.
+    pub fn new(max: usize) -> Self {
+        Self { max, ids: VecDeque::new() }
+    }
+
+    pub fn remember(&mut self, id: u64) {
+        if self.ids.contains(&id) {
+            return;
+        }
+        self.ids.push_back(id);
+        while self.ids.len() > self.max {
+            self.ids.pop_front();
+        }
+    }
+
+    pub fn contains(&self, id: u64) -> bool {
+        self.ids.contains(&id)
+    }
+}
+
 /// At most `max` requests per user in any `window`.
 #[derive(Debug)]
 pub struct RateLimiter {
@@ -367,6 +396,24 @@ mod tests {
         assert_eq!(limiter.count(1, start + Duration::from_secs(30)), 0);
         assert_eq!(limiter.count(2, start), 1);
         assert_eq!(limiter.clear(1, start + Duration::from_secs(30)), 0);
+    }
+
+    #[test]
+    fn the_last_answers_are_remembered() {
+        let mut answers = Answers::new(2);
+        assert!(!answers.contains(1));
+
+        answers.remember(1);
+        answers.remember(2);
+        answers.remember(2);
+        assert!(answers.contains(1));
+        assert!(answers.contains(2));
+
+        // The oldest is forgotten once there are more than the limit.
+        answers.remember(3);
+        assert!(!answers.contains(1));
+        assert!(answers.contains(2));
+        assert!(answers.contains(3));
     }
 
     #[test]
