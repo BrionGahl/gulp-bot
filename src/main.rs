@@ -181,6 +181,9 @@ async fn event_handler(
         serenity::FullEvent::GuildMemberUpdate { new, .. } => {
             personal_officer_channels::handle_role_update(ctx, data, new).await;
         }
+        serenity::FullEvent::ChannelDelete { channel, .. } => {
+            personal_officer_channels::handle_channel_delete(data, channel).await;
+        }
         _ => {}
     }
     Ok(())

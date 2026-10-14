@@ -1,6 +1,6 @@
 use log::{error, info};
 use poise::serenity_prelude::{
-    ChannelId, ChannelType, Context, CreateChannel, GuildId, Member, Permissions,
+    ChannelId, ChannelType, Context, CreateChannel, GuildChannel, GuildId, Member, Permissions,
     PermissionOverwrite, PermissionOverwriteType, UserId,
 };
 use sqlx::{PgPool, Row};
@@ -97,6 +97,17 @@ pub async fn handle_role_update(ctx: &Context, data: &Data, new: &Option<Member>
     }
 }
 
+/// When a recorded personal officer channel is deleted (e.g. by an officer cleaning up after a
+/// member leaves the raid team), drops its row so the bot will create a fresh channel if the
+/// member is given the trial or raider role again.
+pub async fn handle_channel_delete(data: &Data, channel: &GuildChannel) {
+    match unregister_channel(&data.db, channel.guild_id, channel.id).await {
+        Ok(true) => info!("Personal officer channel #{} was deleted; forgot its registration", channel.name),
+        Ok(false) => {}
+        Err(e) => error!("Failed to forget deleted personal officer channel #{}: {}", channel.name, e),
+    }
+}
+
 /// Inserts the row for this member if they don't have one. Returns whether it was inserted, i.e.
 /// whether the caller now owns creating their channel.
 async fn claim(db: &PgPool, guild_id: GuildId, user_id: UserId) -> Result<bool, sqlx::Error> {
@@ -136,6 +147,17 @@ pub async fn unregister(db: &PgPool, guild_id: GuildId, user_id: UserId) -> Resu
         .await?;
 
     Ok(result.rows_affected() == 1)
+}
+
+/// Forgets whichever member's row records `channel_id` as their channel. Returns whether there was one.
+async fn unregister_channel(db: &PgPool, guild_id: GuildId, channel_id: ChannelId) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM personal_officer_channels WHERE guild_id = $1 AND channel_id = $2")
+        .bind(guild_id.get() as i64)
+        .bind(channel_id.get() as i64)
+        .execute(db)
+        .await?;
+
+    Ok(result.rows_affected() > 0)
 }
 
 /// Every member of `guild_id` with a row, oldest first. The channel is `None` for a row whose
@@ -216,5 +238,10 @@ mod tests {
         assert!(unregister(&db, guild_a, bob).await.unwrap());
         assert!(!unregister(&db, guild_a, bob).await.unwrap());
         assert!(claim(&db, guild_a, bob).await.unwrap());
+
+        // Deleting a member's channel forgets their row, but only in that channel's guild.
+        assert!(!unregister_channel(&db, guild_b, ChannelId::new(40)).await.unwrap());
+        assert!(unregister_channel(&db, guild_a, ChannelId::new(40)).await.unwrap());
+        assert!(claim(&db, guild_a, alice).await.unwrap());
     }
 }
