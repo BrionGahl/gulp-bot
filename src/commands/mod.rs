@@ -7,3 +7,4 @@ pub mod announcement;
 pub mod wcl;
 pub mod ask;
 pub mod ai;
+pub mod tldr;

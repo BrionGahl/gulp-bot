@@ -132,6 +132,10 @@ It answers with Claude through the Anthropic API, which is billed per use and se
 
 Its rules (in `RULES` in `src/ai/mod.rs`, after the guild text so editing that can't remove them): it only speaks English, stays away from politics, doesn't violate human rights or demean people, only an Officer may ask it to do anything involving Warcraft Logs, and only an Officer may ask it to change any file, setting or data. It can't change anything today, so that last rule is only the model's own behaviour; any tool added later that changes something must check `Access::Officer` in code, not trust the prompt.
 
+#### `/tldr`
+
+`/tldr` sums up the channel it is used in, with jokes: the last 4 hours of chat, stopping at the first pause of an hour or more between two messages, read back from Discord when it is asked (up to 500 messages; the oldest are left out if the chat is too long). Bots' messages are left out. It is for the same members as `/ask` and follows `/ai off` and maintenance mode. Each channel can have one every hour; until then, `/tldr` privately points to the last one. A summary counts towards `ANTHROPIC_DAILY_LIMIT`, not towards a member's own limit, and a reply to it carries on with the assistant. The bot needs the Read Message History permission in the channel. The cooldown is kept in memory, so a restart lets every channel be summed up again.
+
 #### "bot get them"
 
 An Officer (moderator role, administrator or Developer) who replies to a message with the words "bot get them" has the bot delete that message and answer "arf! arf!". From anybody else it does nothing. It works whether or not the AI assistant is set up or switched on, and a deleted message is never reposted by the delete-and-replay feature. The bot needs the Manage Messages permission in the channel; without it, it says so instead. Every use is written to the log (`audit: ...`) with who ran it and whose message was deleted.
