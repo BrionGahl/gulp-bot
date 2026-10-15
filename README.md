@@ -132,6 +132,10 @@ It answers with Claude through the Anthropic API, which is billed per use and se
 
 Its rules (in `RULES` in `src/ai/mod.rs`, after the guild text so editing that can't remove them): it only speaks English, stays away from politics, doesn't violate human rights or demean people, only an Officer may ask it to do anything involving Warcraft Logs, and only an Officer may ask it to change any file, setting or data. It can't change anything today, so that last rule is only the model's own behaviour; any tool added later that changes something must check `Access::Officer` in code, not trust the prompt.
 
+#### "bot get them"
+
+An Officer (moderator role, administrator or Developer) who replies to a message with the words "bot get them" has the bot delete that message and answer "arf! arf!". From anybody else it does nothing. It works whether or not the AI assistant is set up or switched on, and a deleted message is never reposted by the delete-and-replay feature. The bot needs the Manage Messages permission in the channel; without it, it says so instead. Every use is written to the log (`audit: ...`) with who ran it and whose message was deleted.
+
 #### Developers: `/ai`
 
 The members with the developer role (registered by an administrator with `/settings dev_role`) rank above Officers for the assistant, and are the only ones who can use `/ai`. Not even administrators can until they are given the role. The replies are private to whoever ran the command, every use is written to the bot's log (`audit: ...`) with who ran it, and what is switched applies only to the server it was used in, kept in the database across restarts.

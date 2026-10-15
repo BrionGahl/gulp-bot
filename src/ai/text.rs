@@ -16,22 +16,24 @@ const MAX_SPEAKER_CHARS: usize = 40;
 /// Whether the message calls the assistant: the words "bot please" in a row, in any case and with
 /// any punctuation between them ("Bot, please ...", "BOT PLEASE!"). "robot please" doesn't count.
 pub fn has_trigger(content: &str) -> bool {
-    let mut words = content
+    has_phrase(content, &["bot", "please"])
+}
+
+/// Whether the message is the "bot get them" command: those words in a row, like `has_trigger`.
+pub fn has_get_them(content: &str) -> bool {
+    has_phrase(content, &["bot", "get", "them"])
+}
+
+/// Whether `content` has the lowercase words of `phrase` in a row, whole words only, in any case
+/// and with any punctuation or spacing between them.
+fn has_phrase(content: &str, phrase: &[&str]) -> bool {
+    let words: Vec<String> = content
         .split(|c: char| !c.is_alphanumeric())
         .filter(|word| !word.is_empty())
-        .map(str::to_lowercase);
+        .map(str::to_lowercase)
+        .collect();
 
-    let mut previous = match words.next() {
-        Some(word) => word,
-        None => return false,
-    };
-    for word in words {
-        if previous == "bot" && word == "please" {
-            return true;
-        }
-        previous = word;
-    }
-    false
+    !phrase.is_empty() && words.windows(phrase.len()).any(|window| window.iter().zip(phrase).all(|(word, wanted)| word == wanted))
 }
 
 /// At most `max_chars` characters of `text`, cut on a character boundary and trimmed.
@@ -175,6 +177,22 @@ mod tests {
         assert!(!has_trigger("bot pleased"));
         assert!(!has_trigger("bots please"));
         assert!(!has_trigger("bot is here, someone please help"));
+    }
+
+    #[test]
+    fn the_get_them_command_is_its_three_words_in_a_row() {
+        assert!(has_get_them("bot get them"));
+        assert!(has_get_them("BOT, GET THEM!"));
+        assert!(has_get_them("go on bot... get them"));
+        assert!(!has_get_them("bot get"));
+        assert!(!has_get_them("bot, get him"));
+        assert!(!has_get_them("robot get them"));
+        assert!(!has_get_them("bot gets them"));
+        assert!(!has_get_them("get them bot"));
+        assert!(!has_get_them(""));
+        // And it isn't "bot please".
+        assert!(!has_trigger("bot get them"));
+        assert!(!has_phrase("anything", &[]));
     }
 
     #[test]

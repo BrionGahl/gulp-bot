@@ -1,5 +1,6 @@
 mod ai;
 mod commands;
+mod get_them;
 mod types;
 mod config;
 mod checks;
@@ -182,7 +183,10 @@ async fn event_handler(
         serenity::FullEvent::Message { new_message } => {
             clips::enforce_clips_channel(ctx, data, new_message).await;
             message_replay::remember_message(data, new_message).await;
-            ai::answer_trigger(ctx, data, new_message).await;
+            // "bot get them" is a command, not a question for the assistant.
+            if !get_them::handle(ctx, data, new_message).await {
+                ai::answer_trigger(ctx, data, new_message).await;
+            }
         }
         serenity::FullEvent::MessageDelete { deleted_message_id, guild_id, .. } => {
             message_replay::handle_message_delete(ctx, data, *deleted_message_id, *guild_id).await;

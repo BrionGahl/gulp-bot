@@ -91,7 +91,7 @@ pub async fn answer_trigger(ctx: &serenity::Context, data: &Data, msg: &Message)
 /// the Administrator permission. A message carries only the member's role IDs, so they are resolved
 /// against the cached server, as `checks::is_administrator` does for prefix commands; if the server
 /// isn't cached this is `false`, which errs on the side of denying.
-fn is_administrator(ctx: &serenity::Context, msg: &Message) -> bool {
+pub fn is_administrator(ctx: &serenity::Context, msg: &Message) -> bool {
     let Some(guild) = msg.guild(&ctx.cache) else {
         return false;
     };
