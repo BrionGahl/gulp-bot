@@ -1,0 +1,4 @@
+# For the tests and the linter: pip install -r requirements-dev.txt
+-r requirements.txt
+pytest>=8
+ruff

@@ -1,21 +1,23 @@
-FROM rust:slim AS chef
-RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
-RUN cargo install cargo-chef --locked
+FROM python:3.13-slim
+
+# No .pyc files written into the image at run time, and log lines straight to `docker logs`.
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
 WORKDIR /app
 
-FROM chef AS planner
-COPY . .
-RUN cargo chef prepare --recipe-path recipe.json
+# Dependencies first, so that a change to the code alone doesn't reinstall them.
+COPY requirements.txt .
+RUN pip install -r requirements.txt
 
-FROM chef AS builder
-COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
-COPY . .
-RUN cargo build --release
+COPY migrations ./migrations
+COPY gulp_bot ./gulp_bot
 
-FROM debian:bookworm-slim AS runtime
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-WORKDIR /app
-COPY --from=builder /app/target/release/gulp-bot .
+# The bot needs no privileges of its own.
+RUN useradd --system --no-create-home gulp
+USER gulp
+
 EXPOSE 8080
-CMD ["./gulp-bot"]
+CMD ["python", "-m", "gulp_bot"]
