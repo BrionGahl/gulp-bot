@@ -1,53 +1,43 @@
-from gulp_bot.ai.text import (
-    DISCORD_MAX_CHARS,
-    MAX_INPUT_CHARS,
-    MAX_QUOTE_CHARS,
-    has_get_them,
-    has_phrase,
-    has_trigger,
-    render_question,
-    single_line,
-    speaker_label,
-    split_message,
-    strip_thinking,
-    truncate_chars,
-)
+from gulp_bot.core.text import DISCORD_MAX_CHARS, single_line, split_message, truncate_chars
+from gulp_bot.mapper.ai_model_mapper import strip_thinking
+from gulp_bot.service.ai_prompt_service import MAX_INPUT_CHARS, MAX_QUOTE_CHARS, render_question, speaker_label
+from gulp_bot.service.chat_trigger_service import has_phrase, mentions_bot_get_them, mentions_bot_please
 
 
 def test_the_trigger_is_the_words_bot_please_in_a_row():
-    assert has_trigger("Bot please tell me a joke")
-    assert has_trigger("bot please")
-    assert has_trigger("hey BOT PLEASE what is a soak?")
-    assert has_trigger("Bot, please summarize this")
-    assert has_trigger("ok bot...   please help")
-    assert has_trigger("so. Bot please!")
-    assert has_trigger("Bot\nplease")
+    assert mentions_bot_please("Bot please tell me a joke")
+    assert mentions_bot_please("bot please")
+    assert mentions_bot_please("hey BOT PLEASE what is a soak?")
+    assert mentions_bot_please("Bot, please summarize this")
+    assert mentions_bot_please("ok bot...   please help")
+    assert mentions_bot_please("so. Bot please!")
+    assert mentions_bot_please("Bot\nplease")
 
 
 def test_other_text_does_not_trigger():
-    assert not has_trigger("")
-    assert not has_trigger("   ")
-    assert not has_trigger("bot")
-    assert not has_trigger("please")
-    assert not has_trigger("please bot")
-    assert not has_trigger("robot please")
-    assert not has_trigger("bot pleased")
-    assert not has_trigger("bots please")
-    assert not has_trigger("bot is here, someone please help")
+    assert not mentions_bot_please("")
+    assert not mentions_bot_please("   ")
+    assert not mentions_bot_please("bot")
+    assert not mentions_bot_please("please")
+    assert not mentions_bot_please("please bot")
+    assert not mentions_bot_please("robot please")
+    assert not mentions_bot_please("bot pleased")
+    assert not mentions_bot_please("bots please")
+    assert not mentions_bot_please("bot is here, someone please help")
 
 
 def test_the_get_them_command_is_its_three_words_in_a_row():
-    assert has_get_them("bot get them")
-    assert has_get_them("BOT, GET THEM!")
-    assert has_get_them("go on bot... get them")
-    assert not has_get_them("bot get")
-    assert not has_get_them("bot, get him")
-    assert not has_get_them("robot get them")
-    assert not has_get_them("bot gets them")
-    assert not has_get_them("get them bot")
-    assert not has_get_them("")
+    assert mentions_bot_get_them("bot get them")
+    assert mentions_bot_get_them("BOT, GET THEM!")
+    assert mentions_bot_get_them("go on bot... get them")
+    assert not mentions_bot_get_them("bot get")
+    assert not mentions_bot_get_them("bot, get him")
+    assert not mentions_bot_get_them("robot get them")
+    assert not mentions_bot_get_them("bot gets them")
+    assert not mentions_bot_get_them("get them bot")
+    assert not mentions_bot_get_them("")
     # And it isn't "bot please".
-    assert not has_trigger("bot get them")
+    assert not mentions_bot_please("bot get them")
     assert not has_phrase("anything", [])
 
 

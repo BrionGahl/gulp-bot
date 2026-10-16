@@ -14,7 +14,7 @@ the git history, up to commit `351747e`. Both use the same database, so one can 
 - **WoW Guild** — Bart Timeline Reminders addon info, class Discord links, and droptimizer report submission via WowUtils
 - **Clips channels** — deletes any message posted in a configured channel that doesn't contain a video (uploaded video file or an unfurled video link embed)
 - **Warcraft Logs** — officers get an overview of a raid night's report (Mythic pulls, who died the most, who died first, damage taken from tracked abilities, healthstones and health potions used) with `/wcl report`, `/wcl damage_taken` and `/wcl consumables`, posted in that week's raid notes thread; the overview is also posted there by itself after each raid
-- **AI assistant** — raiders ask Claude with `/ask` or by saying "Bot please" in a message; the guild's context and personality are in `gulp_bot/ai/system_prompt.md`. Off until `ANTHROPIC_API_KEY` is set
+- **AI assistant** — raiders ask Claude with `/ask` or by saying "Bot please" in a message; the guild's context and personality are in `gulp_bot/prompt/system_prompt.md`. Off until `ANTHROPIC_API_KEY` is set
 - **Personal officer channels** — when a member is given the trial or raider role, creates a private text channel for them under a configured category, visible only to them and the officer (moderator) role
 
 ## Deployment
@@ -104,6 +104,34 @@ database they may empty, e.g. `TEST_DATABASE_URL=postgres://gulp:<password>@loca
 To run the bot outside Docker, set the environment variables below (with a `DATABASE_URL` your machine
 can reach) and run `python -m gulp_bot`. Its log is one JSON object per line on standard output.
 
+### Code layout
+
+The code is split by responsibility, and a request goes through it in one direction: a **resource** (a
+Discord command or event) calls a **service**, which reads and writes through **repositories** and
+**clients**, and the resource answers with what a **mapper** makes of the result.
+
+```
+gulp_bot/
+├── app.py          starts everything: configuration, database, Discord connection
+├── bot.py          the Discord client: which event goes to which resource, command errors
+├── container.py    builds every service once, with what it depends on
+├── resource/       the controllers: one module per command group (*_resource.py) and per kind of event
+├── service/        the guild's rules (*_service.py), independent of how they were asked for
+├── repository/     the SQL of each table (*_repository.py), and the state kept only in memory
+├── client/         the outside APIs: Warcraft Logs, Anthropic, Ollama, WowUtils
+├── mapper/         rows and JSON into schemas, schemas into embeds and text
+├── schema/         the data passed between the layers (DTOs): dataclasses and enums
+├── exception/      the errors a service raises for a resource to show the member
+├── job/            the scheduled work: announcements, raid notes, raid attendance
+├── core/           shared plumbing: config, database, migrations, HTTP, cron, checks, text
+└── prompt/         system_prompt.md, what the AI assistant knows about the guild
+```
+
+For example, `/announcement add` is `resource/announcement_resource.py`, which checks the schedule with
+`core/schedule_parsing.py`, stores a `schema/announcement_schema.py` `NewAnnouncement` through
+`service/announcement_service.py` and `repository/announcement_repository.py`, and
+`job/announcement_job.py` posts it whenever it is due.
+
 ## Using the bot
 
 ### Environment Variables
@@ -149,7 +177,7 @@ When the message calling it replies to another message ("Bot please, what does h
 
 It answers with Claude through the Anthropic API, which is billed per use and separately from a Claude subscription. Set a monthly spending limit in the Anthropic Console. It remembers the last 8 turns of each channel (in memory only, forgotten after an hour without questions or when the bot restarts), each member may ask up to 10 times in 10 minutes, and the assistant answers at most `ANTHROPIC_DAILY_LIMIT` questions (100 by default) in any 24 hours, from everybody together; a question that gets no answer because of an error doesn't count. What it was told in a channel is remembered with the access level of whoever asked and is shown only to members of that level or higher, so what an Officer was told isn't repeated to a raider. It never pings anyone.
 
-Its rules (in `RULES` in `gulp_bot/ai/__init__.py`, after the guild text so editing that can't remove them): it only speaks English, stays away from politics, doesn't violate human rights or demean people, only an Officer may ask it to do anything involving Warcraft Logs, and only an Officer may ask it to change any file, setting or data. It can't change anything today, so that last rule is only the model's own behaviour; any tool added later that changes something must check `Access.OFFICER` in code, not trust the prompt.
+Its rules (in `RULES` in `gulp_bot/service/ai_prompt_service.py`, after the guild text so editing that can't remove them): it only speaks English, stays away from politics, doesn't violate human rights or demean people, only an Officer may ask it to do anything involving Warcraft Logs, and only an Officer may ask it to change any file, setting or data. It can't change anything today, so that last rule is only the model's own behaviour; any tool added later that changes something must check `Access.OFFICER` in code, not trust the prompt.
 
 #### `/tldr`
 
@@ -221,7 +249,7 @@ If Ollama runs on another computer, set `LOCAL_MODEL_URL` to it (e.g. `http://19
 
 Privacy: what a member writes to the assistant, and the assistant's recent answers in that channel, are sent to Anthropic's API to get an answer (or to your own Ollama server, with `AI_BACKEND=local`). Tell the guild before turning it on.
 
-Who the guild is, and how the assistant treats its members, is written in `gulp_bot/ai/system_prompt.md`; change it there and rebuild the image. The answers are only as good as that text and the model: the assistant has no access to Warcraft Logs or the guild's settings yet.
+Who the guild is, and how the assistant treats its members, is written in `gulp_bot/prompt/system_prompt.md`; change it there and rebuild the image. The answers are only as good as that text and the model: the assistant has no access to Warcraft Logs or the guild's settings yet.
 
 ### Server settings
 
@@ -265,7 +293,7 @@ registered.
 
 Every setting is optional. A feature whose IDs aren't registered is off for that server, and commands
 gated on a role reply that the role hasn't been registered yet. Changes take effect immediately,
-without a restart. See `gulp_bot/guild_settings.py` and `gulp_bot/commands/settings.py`.
+without a restart. See `gulp_bot/service/guild_settings_service.py` and `gulp_bot/resource/settings_resource.py`.
 
 Note: the bot needs the **Manage Messages** permission in any clips channel to delete non-video messages.
 
@@ -282,7 +310,7 @@ moderator) removed it. Bulk deletes (channel purges) are always treated as moder
 never replayed. Reposts suppress all mentions, so a deleted `@everyone` won't re-ping on replay.
 The bot needs the **View Audit Log** permission for the moderator check; without it, every
 deletion is replayed. Only messages seen since the bot last started are recoverable, and
-attachment links may 404 shortly after deletion. See `gulp_bot/message_replay.py`.
+attachment links may 404 shortly after deletion. See `gulp_bot/service/message_replay_service.py`.
 
 ### Personal officer channels
 
@@ -313,7 +341,7 @@ table would get a second one.
 Losing the role, or the channel being deleted, does **not** remove the member from the table — that's
 left to an administrator or moderator with `officer_channel_remove`, and deleting a channel is left to officers.
 The bot needs the **Manage Channels** permission and must be able to see the officer category. See
-`gulp_bot/personal_officer_channels.py`.
+`gulp_bot/service/officer_channel_service.py`.
 
 ### Weekly raid notes
 
@@ -328,7 +356,7 @@ expression (`sec min hour day-of-month month day-of-week [year]`); a server that
 `America/New_York`, so a given local time keeps holding across the EST/EDT switch. Examples:
 `0 0 9 * * Tue *` (Tuesdays 9:00 AM), `0 30 17 * * Fri *` (Fridays 5:30 PM). Expressions that never
 fire, or fire more than once an hour, are rejected. A changed schedule is picked up within a minute,
-without a restart. See `gulp_bot/raid_notes.py`.
+without a restart. See `gulp_bot/service/raid_notes_service.py`.
 
 A week runs Tuesday (the weekly reset) to Monday: a post or snapshot on a Tuesday belongs
 to the week starting that day, and one on a Monday belongs to the week that started six days earlier.
@@ -360,7 +388,7 @@ doesn't lose it. A start is only compared with an end in the same voice channel 
 otherwise the summary says there was no start to compare against.
 
 Only the two moments are recorded: someone who joins and leaves in between appears in neither list.
-See `gulp_bot/raid_attendance.py`.
+See `gulp_bot/service/raid_attendance_service.py`.
 
 ### Announcements
 
@@ -384,8 +412,8 @@ it in that channel.
 
 An announcement can only be listed, posted or deleted from the server it was created in, and a server
 can have at most 25. Additions and deletions take effect within a minute, without a restart. The bot
-needs permission to send messages in the chosen channel. See `gulp_bot/announcements.py` and
-`gulp_bot/commands/announcement.py`.
+needs permission to send messages in the chosen channel. See `gulp_bot/service/announcement_service.py` and
+`gulp_bot/resource/announcement_resource.py`.
 
 ### Warcraft Logs
 
@@ -468,6 +496,6 @@ Setting it up:
    the guild's 25 newest.
 4. For the overview after each raid, set up raid attendance with `/settings raid_voice`.
 
-A report that is still being uploaded is shown without its unfinished pulls. See `gulp_bot/warcraftlogs.py`,
-`gulp_bot/wcl_mechanics.py`, `gulp_bot/wcl_ignored_players.py`, `gulp_bot/wcl_consumables.py`, `gulp_bot/wcl_raid_report.py`
-and `gulp_bot/commands/wcl.py`.
+A report that is still being uploaded is shown without its unfinished pulls. See `gulp_bot/service/warcraft_logs_service.py`,
+`gulp_bot/client/warcraft_logs_client.py`, `gulp_bot/mapper/warcraft_logs_embed_mapper.py`, `gulp_bot/service/raid_report_service.py`
+and `gulp_bot/resource/warcraft_logs_resource.py`.

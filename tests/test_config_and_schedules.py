@@ -3,9 +3,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from gulp_bot.config import AiBackend, Config, ConfigError, parse_backend, parse_think
-from gulp_bot.cron import CronError, Schedule
-from gulp_bot.schedules import EXAMPLE_CRON, ScheduleProblem, parse_schedule
+from gulp_bot.core.config import AiBackend, Config, ConfigError, parse_backend, parse_think
+from gulp_bot.core.cron import CronError, Schedule
+from gulp_bot.core.schedule_parsing import EXAMPLE_CRON, parse_user_schedule
+from gulp_bot.exception.schedule_exception import ScheduleProblem
 
 NEW_YORK = ZoneInfo("America/New_York")
 
@@ -72,10 +73,10 @@ def test_the_local_model_does_not_think_unless_asked_to():
 
 
 def test_parse_schedule_accepts_weekly_and_rejects_unusable_expressions():
-    parse_schedule(EXAMPLE_CRON)
-    parse_schedule("0 30 17 * * Tue,Fri *")
+    parse_user_schedule(EXAMPLE_CRON)
+    parse_user_schedule("0 30 17 * * Tue,Fri *")
     # Hourly is exactly at the floor, so allowed.
-    parse_schedule("0 0 * * * * *")
+    parse_user_schedule("0 0 * * * * *")
 
     for expression, problem in [
         ("every friday", "cron expression"),
@@ -84,7 +85,7 @@ def test_parse_schedule_accepts_weekly_and_rejects_unusable_expressions():
         ("0 0 9 * * Fri 2020", "never fires"),
     ]:
         with pytest.raises(ScheduleProblem, match=problem):
-            parse_schedule(expression)
+            parse_user_schedule(expression)
 
 
 def at(*parts):

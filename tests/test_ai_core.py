@@ -8,44 +8,16 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from gulp_bot.ai import (
-    CUT_SHORT_NOTE,
-    EVERYBODY,
-    MAX_REQUESTS_PER_USER,
-    RATE_LIMIT_WINDOW,
-    RULES,
-    TLDR_INSTRUCTIONS,
-    TONE,
-    Ai,
-    AnthropicBackend,
-    CheckOk,
-    DailyLimit,
-    Disabled,
-    KeyRejected,
-    LocalBackend,
-    Maintenance,
-    NotAllowed,
-    Question,
-    RateLimited,
-    Unavailable,
-    access_for,
-    anthropic_reply,
-    anthropic_request,
-    api_error_message,
-    central_time_text,
-    gate,
-    is_installed,
-    local_reply,
-    local_request,
-    system_prompt,
-    with_cut_short_note,
-)
-from gulp_bot.ai.access import Access
-from gulp_bot.ai.history import Turn
-from gulp_bot.ai.tldr import Busy, Ready, Wait
-from gulp_bot.ai.usage import Failure, Tokens
-from gulp_bot.guild_settings import AiSettings, GuildSettings
-from gulp_bot.web import RequestTimeout, Response
+from gulp_bot.client.anthropic_client import AnthropicClient
+from gulp_bot.client.ollama_client import OllamaClient, is_installed
+from gulp_bot.core.http_client import RequestTimeout, Response
+from gulp_bot.exception.ai_exception import DailyLimit, Disabled, Maintenance, NotAllowed, RateLimited, Unavailable
+from gulp_bot.mapper.ai_model_mapper import anthropic_reply, anthropic_request, api_error_message, ollama_reply, ollama_request
+from gulp_bot.schema.ai_schema import Access, ApiFailure, CheckOk, KeyRejected, MemberUsage, Question, TldrBusy, TldrReady, TldrWait, Tokens, Turn
+from gulp_bot.schema.guild_settings_schema import AiSettings, GuildSettings
+from gulp_bot.service.ai_access_service import access_for_member, ensure_switches_allow
+from gulp_bot.service.ai_assistant_service import EVERYBODY, MAX_REQUESTS_PER_USER, RATE_LIMIT_WINDOW, AiAssistantService
+from gulp_bot.service.ai_prompt_service import CUT_SHORT_NOTE, RULES, TLDR_INSTRUCTIONS, TONE, central_time_text, system_prompt, with_cut_short_note
 
 HELLO = Question("Kail", "hello")
 
@@ -66,11 +38,11 @@ class FakeHttp:
 
 
 def anthropic_ai(http=None, model="model", effort=None, daily_limit=100):
-    return Ai(http or FakeHttp(), AnthropicBackend("test-key"), model, effort, "system", daily_limit)
+    return AiAssistantService(AnthropicClient(http or FakeHttp(), "test-key"), model, effort, "system", daily_limit)
 
 
 def local_ai(http=None, model="qwen3.5:9b"):
-    return Ai(http or FakeHttp(), LocalBackend("http://ollama:11434", False), model, None, "system", 100)
+    return AiAssistantService(OllamaClient(http or FakeHttp(), "http://ollama:11434", False), model, None, "system", 100)
 
 
 def run(coroutine):
@@ -102,16 +74,16 @@ def test_the_rules_come_last_so_the_guild_prompt_cannot_override_them():
 
 def test_access_comes_from_the_roles_the_server_registered():
     settings = GuildSettings(raider_role_id=10, mod_role_id=20, trial_role_id=30, dev_role_id=40)
-    assert access_for(settings, [10], False) is Access.RAIDER
-    assert access_for(settings, [20], False) is Access.OFFICER
-    assert access_for(settings, [30], False) is Access.DENIED
-    assert access_for(settings, [40], False) is Access.DEVELOPER
-    assert access_for(settings, [10, 20, 40], False) is Access.DEVELOPER
-    assert access_for(settings, [], False) is Access.DENIED
-    assert access_for(GuildSettings(), [10], False) is Access.DENIED
-    assert access_for(settings, [], True) is Access.OFFICER
-    assert access_for(GuildSettings(), [], True) is Access.OFFICER
-    assert access_for(GuildSettings(), [40], False) is Access.DENIED
+    assert access_for_member(settings, [10], False) is Access.RAIDER
+    assert access_for_member(settings, [20], False) is Access.OFFICER
+    assert access_for_member(settings, [30], False) is Access.DENIED
+    assert access_for_member(settings, [40], False) is Access.DEVELOPER
+    assert access_for_member(settings, [10, 20, 40], False) is Access.DEVELOPER
+    assert access_for_member(settings, [], False) is Access.DENIED
+    assert access_for_member(GuildSettings(), [10], False) is Access.DENIED
+    assert access_for_member(settings, [], True) is Access.OFFICER
+    assert access_for_member(GuildSettings(), [], True) is Access.OFFICER
+    assert access_for_member(GuildSettings(), [40], False) is Access.DENIED
 
 
 def test_a_local_model_has_no_effort_whatever_was_chosen():
@@ -145,13 +117,13 @@ def test_requests_are_serialised_as_the_apis_expect():
     }
     assert "output_config" not in anthropic_request("m", "s", turns, None)
 
-    local = local_request("qwen3.5:9b", "be brief", [Turn.user("Kail: hi")], False)
+    local = ollama_request("qwen3.5:9b", "be brief", [Turn.user("Kail: hi")], False)
     assert local["messages"][0] == {"role": "system", "content": "be brief"}
     assert local["messages"][1]["content"] == "Kail: hi"
     assert local["stream"] is False and local["think"] is False
     assert local["options"] == {"num_ctx": 8192, "num_predict": 1024}
     # `default` leaves thinking to the model: the field isn't sent.
-    assert "think" not in local_request("m", "s", [], None)
+    assert "think" not in ollama_request("m", "s", [], None)
 
 
 def test_answers_are_read():
@@ -164,11 +136,11 @@ def test_answers_are_read():
     assert reply.text == "Hello there!" and reply.tokens == (12, 5) and not reply.cut_short
     assert anthropic_reply({"content": [], "stop_reason": "max_tokens"}).text == ""
 
-    reply = local_reply({"message": {"role": "assistant", "content": "  Hello there!  "}, "done_reason": "stop", "prompt_eval_count": 120, "eval_count": 15})
+    reply = ollama_reply({"message": {"role": "assistant", "content": "  Hello there!  "}, "done_reason": "stop", "prompt_eval_count": 120, "eval_count": 15})
     assert (reply.text, reply.cut_short, reply.stop_reason, reply.tokens) == ("Hello there!", False, "stop", (120, 15))
-    reply = local_reply({"message": {"content": "<think>hmm</think>First, the"}, "done_reason": "length", "eval_count": 1024})
+    reply = ollama_reply({"message": {"content": "<think>hmm</think>First, the"}, "done_reason": "length", "eval_count": 1024})
     assert (reply.text, reply.cut_short, reply.tokens) == ("First, the", True, (0, 1024))
-    reply = local_reply({})
+    reply = ollama_reply({})
     assert reply.text == "" and reply.tokens is None
 
 
@@ -200,21 +172,21 @@ def test_members_are_told_what_went_wrong_without_details():
 
 def test_the_switches_decide_who_gets_through():
     for access in (Access.RAIDER, Access.OFFICER, Access.DEVELOPER):
-        gate(AiSettings(), access)
+        ensure_switches_allow(AiSettings(), access)
         for off in (AiSettings(disabled=True), AiSettings(disabled=True, maintenance=True)):
             with pytest.raises(Disabled):
-                gate(off, access)
+                ensure_switches_allow(off, access)
     with pytest.raises(Maintenance):
-        gate(AiSettings(maintenance=True), Access.RAIDER)
-    gate(AiSettings(maintenance=True), Access.OFFICER)
-    gate(AiSettings(maintenance=True), Access.DEVELOPER)
+        ensure_switches_allow(AiSettings(maintenance=True), Access.RAIDER)
+    ensure_switches_allow(AiSettings(maintenance=True), Access.OFFICER)
+    ensure_switches_allow(AiSettings(maintenance=True), Access.DEVELOPER)
 
 
 def test_a_member_who_is_not_a_raider_is_refused_before_anything_else():
     ai = anthropic_ai()
     with pytest.raises(NotAllowed):
         run(ai.ask(1, 2, Access.DENIED, AiSettings(), HELLO))
-    assert ai.user_usage(2)[0] == 0
+    assert ai.member_usage(2).asked == 0
 
 
 def test_nobody_is_answered_while_the_assistant_is_off():
@@ -222,14 +194,14 @@ def test_nobody_is_answered_while_the_assistant_is_off():
     for access in (Access.RAIDER, Access.OFFICER, Access.DEVELOPER):
         with pytest.raises(Disabled):
             run(ai.ask(1, 2, access, AiSettings(disabled=True), HELLO))
-    assert ai.user_usage(2)[0] == 0 and ai.daily_usage()[0] == 0 and ai.failures()[0] == 0
+    assert ai.member_usage(2).asked == 0 and ai.daily_usage()[0] == 0 and ai.failure_report()[0] == 0
 
 
 def test_in_maintenance_a_raider_is_refused_before_anything_else():
     ai = anthropic_ai()
     with pytest.raises(Maintenance):
         run(ai.ask(1, 2, Access.RAIDER, AiSettings(maintenance=True), HELLO))
-    assert ai.user_usage(2)[0] == 0 and ai.daily_usage()[0] == 0
+    assert ai.member_usage(2).asked == 0 and ai.daily_usage()[0] == 0
 
 
 def answer(text, stop_reason="end_turn"):
@@ -260,7 +232,7 @@ def test_a_question_is_answered_remembered_and_counted():
         "Kail: me?",
     ]
 
-    assert ai.user_usage(2)[0] == 2 and ai.daily_usage() == (2, 100)
+    assert ai.member_usage(2).asked == 2 and ai.daily_usage() == (2, 100)
     assert ai.usage_report().since_start == [("claude-sonnet-5-5", Tokens(2, 200, 40))]
 
 
@@ -278,8 +250,8 @@ def test_a_failure_costs_nobody_anything_and_is_kept_for_the_developers():
     for _ in range(2):
         with pytest.raises(Unavailable):
             run(ai.ask(7, 2, Access.RAIDER, AiSettings(), HELLO))
-    assert ai.user_usage(2)[0] == 0 and ai.daily_usage()[0] == 0
-    total, latest = ai.failures()
+    assert ai.member_usage(2).asked == 0 and ai.daily_usage()[0] == 0
+    total, latest = ai.failure_report()
     assert total == 2
     assert latest[0].detail == "the request failed: no answer within 60 seconds"
     assert latest[1].detail == "the API returned 500 Internal Server Error: overloaded"
@@ -289,7 +261,7 @@ def test_an_answer_without_text_is_a_failure():
     ai = anthropic_ai(FakeHttp(Response(200, '{"content": [], "stop_reason": "max_tokens"}')))
     with pytest.raises(Unavailable):
         run(ai.ask(7, 2, Access.RAIDER, AiSettings(), HELLO))
-    assert 'Some("max_tokens")' in ai.failures()[1][0].detail
+    assert 'Some("max_tokens")' in ai.failure_report()[1][0].detail
 
 
 def test_a_member_is_limited_and_the_day_for_everybody():
@@ -303,7 +275,7 @@ def test_a_member_is_limited_and_the_day_for_everybody():
     with pytest.raises(DailyLimit):
         run(ai.ask(7, 2, Access.RAIDER, AiSettings(), HELLO))
     # Not the member's doing: it isn't held against them.
-    assert ai.user_usage(2)[0] == 0
+    assert ai.member_usage(2).asked == 0
 
 
 def test_a_local_model_is_asked_through_ollama_and_is_free():
@@ -321,13 +293,13 @@ def test_a_local_model_is_asked_through_ollama_and_is_free():
 def test_the_api_and_the_local_server_are_checked():
     ok = Response(200, json.dumps({"data": [{"type": "model", "id": "claude-opus-5-5"}, {"type": "model", "id": "claude-haiku-5-5"}]}))
     ai = anthropic_ai(FakeHttp(ok, ok, Response(401, '{"error":{"message":"invalid x-api-key"}}')))
-    assert run(ai.check_api("claude-haiku-5-5")) == CheckOk(True)
-    assert run(ai.check_api("claude-sonnet-5-5")) == CheckOk(False)
-    assert run(ai.check_api("claude-haiku-5-5")) == KeyRejected("invalid x-api-key")
+    assert run(ai.check_model("claude-haiku-5-5")) == CheckOk(True)
+    assert run(ai.check_model("claude-sonnet-5-5")) == CheckOk(False)
+    assert run(ai.check_model("claude-haiku-5-5")) == KeyRejected("invalid x-api-key")
 
     tags = Response(200, '{"models":[{"name":"qwen3.5:9b","model":"qwen3.5:9b","size":6600000000}]}')
     ai = local_ai(FakeHttp(tags, tags, RequestTimeout("x")))
-    assert run(ai.check_api("qwen3.5:9b")) == CheckOk(True)
+    assert run(ai.check_model("qwen3.5:9b")) == CheckOk(True)
     assert run(ai.installed_models()) == ["qwen3.5:9b"]
     # A server that doesn't answer in time lists nothing.
     assert run(ai.installed_models()) == []
@@ -355,18 +327,18 @@ def test_a_summary_is_asked_for_with_the_instructions_and_the_transcript():
     assert content.startswith(TLDR_INSTRUCTIONS)
     assert content.endswith("The conversation, oldest first, times in Central Time, 3 older messages left out:\n[20:00] Kail: oops")
     # Not kept in the channel's memory, and not counted against the member.
-    assert ai.daily_usage()[0] == 1 and ai.user_usage(0)[0] == 0
+    assert ai.daily_usage()[0] == 1 and ai.member_usage(0).asked == 0
 
 
 def test_a_channel_summarized_is_held_for_an_hour():
     ai = anthropic_ai()
-    assert ai.tldr_start(1) == Ready()
-    assert ai.tldr_start(1) == Busy()
-    ai.tldr_cancel(1)
-    assert ai.tldr_start(1) == Ready()
-    ai.tldr_finish(1, "link", 5)
-    waiting = ai.tldr_start(1)
-    assert isinstance(waiting, Wait) and waiting.posted_unix == 5
+    assert ai.start_tldr(1) == TldrReady()
+    assert ai.start_tldr(1) == TldrBusy()
+    ai.cancel_tldr(1)
+    assert ai.start_tldr(1) == TldrReady()
+    ai.finish_tldr(1, "link", 5)
+    waiting = ai.start_tldr(1)
+    assert isinstance(waiting, TldrWait) and waiting.posted_unix == 5
 
 
 def test_the_tldr_instructions_ask_for_humor_without_making_things_up():
@@ -391,32 +363,32 @@ def test_the_answers_are_remembered_for_replies():
 def test_a_user_can_be_looked_up_and_reset():
     ai = anthropic_ai()
     now = time.monotonic()
-    ai._state.limiter.check(7, now)
-    ai._state.limiter.check(7, now)
-    ai._state.limiter.check(8, now)
-    assert ai.user_usage(7) == (2, MAX_REQUESTS_PER_USER, RATE_LIMIT_WINDOW)
-    assert ai.user_usage(9)[0] == 0
-    assert ai.reset_user(7) == 2
-    assert ai.user_usage(7)[0] == 0 and ai.user_usage(8)[0] == 1
-    assert ai.reset_user(7) == 0
+    ai.member_limiter.check(7, now)
+    ai.member_limiter.check(7, now)
+    ai.member_limiter.check(8, now)
+    assert ai.member_usage(7) == MemberUsage(2, MAX_REQUESTS_PER_USER, RATE_LIMIT_WINDOW)
+    assert ai.member_usage(9).asked == 0
+    assert ai.reset_member(7) == 2
+    assert ai.member_usage(7).asked == 0 and ai.member_usage(8).asked == 1
+    assert ai.reset_member(7) == 0
 
 
 def test_the_day_is_counted_for_everybody_together():
     ai = anthropic_ai()
     assert ai.daily_usage() == (0, 100)
-    ai._state.daily.check(EVERYBODY, time.monotonic())
-    ai._state.daily.check(EVERYBODY, time.monotonic())
+    ai.daily_limiter.check(EVERYBODY, time.monotonic())
+    ai.daily_limiter.check(EVERYBODY, time.monotonic())
     assert ai.daily_usage() == (2, 100)
 
 
 def test_usage_and_failures_are_reported():
     ai = anthropic_ai()
-    assert ai.usage_report().since_start == [] and ai.failures() == (0, [])
-    ai._state.usage.record("model", 100, 20, time.monotonic())
-    ai._state.failures.record(5, "boom")
+    assert ai.usage_report().since_start == [] and ai.failure_report() == (0, [])
+    ai.token_usage.record("model", 100, 20, time.monotonic())
+    ai.failures.record(5, "boom")
     report = ai.usage_report()
     assert report.since_start == [("model", Tokens(1, 100, 20))] and report.last_24h == report.since_start
-    assert ai.failures() == (1, [Failure(5, "boom")])
+    assert ai.failure_report() == (1, [ApiFailure(5, "boom")])
 
 
 def test_the_time_is_given_as_the_rust_bot_gave_it():

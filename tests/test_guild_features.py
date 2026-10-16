@@ -6,25 +6,24 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from gulp_bot.announcements import render
-from gulp_bot.commands.help_text import HELP_FOOTER, HelpEntry, Parameter, find_command, overview, render_command_help, with_paths
-from gulp_bot.db import from_db, load_migrations, lock_id, rows_affected, same_checksum, to_db
-from gulp_bot.guild_settings import GuildSettings, WclCredentials, WclSource
-from gulp_bot.message_replay import MAX_DESCRIPTION_CHARS as REPLAY_MAX
-from gulp_bot.message_replay import MessageReplay, StoredAttachment, StoredMessage, replay_embed
-from gulp_bot.personal_officer_channels import channel_name, has_trial_or_raider_role
-from gulp_bot.raid_attendance import (
-    MAX_DESCRIPTION_CHARS,
-    MAX_FIELD_CHARS,
-    MAX_RAID_HOURS,
-    Comparison,
-    StartSnapshot,
-    mention_list,
-    snapshot_description,
-    summary_embed,
-)
-from gulp_bot.raid_notes import week_start, week_title
-from gulp_bot.wcl_raid_report import is_set_up
+from gulp_bot.core.database import from_bigint, rows_affected, to_bigint
+from gulp_bot.core.embed import MAX_DESCRIPTION_CHARS, MAX_FIELD_CHARS
+from gulp_bot.core.migrations import load_migrations, lock_id, same_checksum
+from gulp_bot.mapper.announcement_mapper import render_announcement
+from gulp_bot.mapper.help_text_mapper import HELP_FOOTER, command_help_page, help_overview
+from gulp_bot.mapper.message_replay_mapper import replay_embed
+from gulp_bot.mapper.raid_attendance_embed_mapper import mention_list, snapshot_description, summary_embed
+from gulp_bot.repository.replay_message_memory_repository import ReplayMessageMemoryRepository
+from gulp_bot.schema.guild_settings_schema import GuildSettings, WclCredentials, WclSource
+from gulp_bot.schema.help_schema import HelpEntry, HelpParameter
+from gulp_bot.schema.message_replay_schema import DeletionKey, StoredAttachment, StoredMessage
+from gulp_bot.schema.raid_attendance_schema import MAX_RAID_HOURS, AttendanceComparison, StartSnapshot
+from gulp_bot.service.help_service import find_command, with_paths
+from gulp_bot.service.message_replay_service import ModeratorDeletionTracker
+from gulp_bot.service.officer_channel_service import channel_name, has_trial_or_raider_role
+from gulp_bot.service.raid_attendance_service import compare_attendance
+from gulp_bot.service.raid_notes_service import week_start, week_title
+from gulp_bot.service.raid_report_service import is_set_up
 
 NEW_YORK = ZoneInfo("America/New_York")
 
@@ -68,9 +67,9 @@ def test_snapshot_cuts_a_long_list_to_fit_one_embed():
 
 
 def test_comparison_reports_who_left_early_and_who_joined_late():
-    assert Comparison.between([1, 2, 3], [2, 3, 4, 5]) == Comparison(2, [1], [4, 5])
-    assert Comparison.between([1, 2], [1, 2]) == Comparison(2, [], [])
-    assert Comparison.between([], [1]) == Comparison(0, [], [1])
+    assert compare_attendance([1, 2, 3], [2, 3, 4, 5]) == AttendanceComparison(2, [1], [4, 5])
+    assert compare_attendance([1, 2], [1, 2]) == AttendanceComparison(2, [], [])
+    assert compare_attendance([], [1]) == AttendanceComparison(0, [], [1])
 
 
 def test_a_long_list_is_cut_to_fit_an_embed_field():
@@ -94,17 +93,18 @@ def test_a_start_only_pairs_with_an_end_of_the_same_raid():
 
 
 def test_the_summary_compares_the_end_with_the_start():
-    embed = summary_embed(start_snapshot([1, 2, 3], 3), at(), [2, 3, 4])
+    start = start_snapshot([1, 2, 3], 3)
+    embed = summary_embed(start, at(), compare_attendance(start.present, [2, 3, 4]))
     assert [field["name"] for field in embed["fields"]] == ["There at both the start and the end", "Left before the end (1)", "Joined after the start (1)"]
     assert [field["value"] for field in embed["fields"]] == ["2", "<@1>", "<@4>"]
-    assert "nothing to compare" in summary_embed(None, at(), [1])["description"]
+    assert "nothing to compare" in summary_embed(None, at(), None)["description"]
 
 
 # --- announcements ---
 
 
 def test_render_only_mentions_registered_roles():
-    assert render("@Raider, @Trial hello", GuildSettings(raider_role_id=5)) == "<@&5>, @Trial hello"
+    assert render_announcement("@Raider, @Trial hello", GuildSettings(raider_role_id=5)) == "<@&5>, @Trial hello"
 
 
 # --- Warcraft Logs after the raid ---
@@ -135,26 +135,29 @@ def test_a_replay_shows_the_text_one_image_and_links_to_the_rest():
     assert embed["description"] == "look\n\nhttps://cdn/a.txt\nhttps://cdn/c.png"
     assert embed["image"] == {"url": "https://cdn/b.png"}
     long = replay_embed(stored("x" * 5000))
-    assert len(long["description"]) == REPLAY_MAX and long["description"].endswith("…")
+    assert len(long["description"]) == MAX_DESCRIPTION_CHARS and long["description"].endswith("…")
     assert "description" not in replay_embed(stored("", [StoredAttachment("https://cdn/b.png", True)]))
 
 
-def test_the_buffer_keeps_the_latest_messages_and_spots_new_deletions():
-    replay = MessageReplay()
+def test_the_buffer_keeps_the_latest_messages():
+    kept = ReplayMessageMemoryRepository()
     for n in range(250):
-        replay.remember(n, stored(str(n)))
-    assert replay.take(10) is None
-    taken = replay.take(249)
+        kept.remember(n, stored(str(n)))
+    assert kept.take(10) is None
+    taken = kept.take(249)
     assert taken is not None and taken.content == "249"
-    assert replay.take(249) is None
+    assert kept.take(249) is None
 
-    key = (1, 7, 1)
+
+def test_a_new_moderator_deletion_is_spotted_once():
+    deletions = ModeratorDeletionTracker()
+    key = DeletionKey(guild_id=1, author_id=7, channel_id=1)
     # Nothing to compare with yet: only a recent entry counts.
-    assert not replay.attributable(key, entry_id=5, count=1, age_secs=60)
-    assert replay.attributable(key, entry_id=5, count=2, age_secs=600)
-    assert not replay.attributable(key, entry_id=5, count=2, age_secs=1)
-    assert replay.attributable(key, entry_id=6, count=1, age_secs=1000)
-    assert replay.attributable((1, 8, 1), entry_id=9, count=1, age_secs=3)
+    assert not deletions.is_new_deletion(key, entry_id=5, count=1, age_secs=60)
+    assert deletions.is_new_deletion(key, entry_id=5, count=2, age_secs=600)
+    assert not deletions.is_new_deletion(key, entry_id=5, count=2, age_secs=1)
+    assert deletions.is_new_deletion(key, entry_id=6, count=1, age_secs=1000)
+    assert deletions.is_new_deletion(DeletionKey(1, 8, 1), entry_id=9, count=1, age_secs=3)
 
 
 # --- personal officer channels ---
@@ -174,8 +177,8 @@ def test_a_channel_is_named_after_the_member():
 
 def test_ids_above_the_signed_maximum_round_trip_as_the_rust_bot_stored_them():
     big = 2**64 - 6
-    assert to_db(big) == -6 and from_db(-6) == big
-    assert to_db(42) == 42 and from_db(42) == 42
+    assert to_bigint(big) == -6 and from_bigint(-6) == big
+    assert to_bigint(42) == 42 and from_bigint(42) == 42
     assert rows_affected("DELETE 1") == 1 and rows_affected("INSERT 0 1") == 1 and rows_affected("UPDATE 0") == 0
 
 
@@ -206,7 +209,7 @@ COMMANDS = [
         category="Settings",
         subcommands=[
             HelpEntry("show", "Show everything registered for this server"),
-            HelpEntry("raid_voice", "Record attendance", parameters=[Parameter("channel", True, "Voice channel the raid happens in")]),
+            HelpEntry("raid_voice", "Record attendance", parameters=[HelpParameter("channel", True, "Voice channel the raid happens in")]),
             HelpEntry("wcl", "Warcraft Logs settings", subcommands=[HelpEntry("client", "API client"), HelpEntry("source", "Report source")]),
         ],
     ),
@@ -215,7 +218,7 @@ COMMANDS = [
 
 
 def test_the_overview_lists_commands_by_category_without_the_hidden_ones():
-    text = overview(COMMANDS)
+    text = help_overview(COMMANDS)
     assert text.startswith("```\nWoW Guild:\n  /get_timeline_reminders Fetches")
     assert "  /source      Links to the bot GitHub repo\n" in text
     assert "/register" not in text
@@ -230,8 +233,8 @@ def test_find_command_resolves_nested_names_and_ignores_prefixes():
     for missing in ["settings nope", "settings wcl_source", "nope", "register", ""]:
         assert find_command(COMMANDS, missing) is None
 
-    page = render_command_help("settings", COMMANDS[3])
+    page = command_help_page("settings", COMMANDS[3])
     assert "**Subcommands**\n`/settings show` — " in page and "`/settings wcl` — " in page
-    page = render_command_help("settings raid_voice", COMMANDS[3].subcommands[1])
+    page = command_help_page("settings raid_voice", COMMANDS[3].subcommands[1])
     assert "**Parameters**\n`channel` (required) — " in page
     assert [path for path, _ in with_paths(COMMANDS)][:4] == ["get_timeline_reminders", "source", "register", "settings show"]
