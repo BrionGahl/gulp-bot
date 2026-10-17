@@ -17,11 +17,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff"]
 
-[tool.setuptools.packages.find]
-# Only the bot's package: src/prompts/ holds data the bot reads, not code.
-where = ["src"]
-include = ["gulp_bot*"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

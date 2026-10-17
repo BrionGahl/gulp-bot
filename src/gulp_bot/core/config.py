@@ -69,8 +69,8 @@ class Config:
     # thinking makes chat answers slower without making them better. `None` sends nothing and leaves
     # it to the model (`LOCAL_MODEL_THINK=default`), for a model that rejects the setting.
     local_model_think: bool | None
-    # The file with what the AI assistant knows about the guild. Default: `src/prompts/system_prompt.md`
-    # (`/app/src/prompts/system_prompt.md` in the image).
+    # The file with what the AI assistant knows about the guild. Default: `prompts/system_prompt.md` at
+    # the root of the repository (`/app/prompts/system_prompt.md` in the image).
     system_prompt_path: Path = DEFAULT_SYSTEM_PROMPT_PATH
 
     @classmethod
