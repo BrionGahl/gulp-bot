@@ -11,4 +11,4 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 MIGRATIONS_DIR = PROJECT_ROOT / "migrations"
 
 # What the AI assistant knows about the guild, unless `SYSTEM_PROMPT_PATH` points somewhere else.
-DEFAULT_SYSTEM_PROMPT_PATH = PROJECT_ROOT / "prompts" / "system_prompt.md"
+DEFAULT_SYSTEM_PROMPT_PATH = PROJECT_ROOT / "ext_resources" / "system_prompt.md"

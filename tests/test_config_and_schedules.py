@@ -41,7 +41,7 @@ def test_the_defaults_are_the_rust_bots():
 
 def test_the_prompt_and_the_migrations_are_at_the_root_of_the_repository():
     root = Path(__file__).resolve().parent.parent
-    assert DEFAULT_SYSTEM_PROMPT_PATH == root / "prompts" / "system_prompt.md" and DEFAULT_SYSTEM_PROMPT_PATH.is_file()
+    assert DEFAULT_SYSTEM_PROMPT_PATH == root / "ext_resources" / "system_prompt.md" and DEFAULT_SYSTEM_PROMPT_PATH.is_file()
     assert MIGRATIONS_DIR == root / "migrations" and MIGRATIONS_DIR.is_dir()
     assert Config.from_env(env(SYSTEM_PROMPT_PATH="/etc/gulp/prompt.md")).system_prompt_path == Path("/etc/gulp/prompt.md")
     assert Config.from_env(env(SYSTEM_PROMPT_PATH="")).system_prompt_path == DEFAULT_SYSTEM_PROMPT_PATH
