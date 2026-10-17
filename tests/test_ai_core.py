@@ -67,7 +67,7 @@ def test_the_system_prompt_is_the_guilds_followed_by_the_chat_rules():
     assert "The hairless one" in prompt
     assert "You are gulp-bot, the guild's Discord bot" in prompt
     assert "[replying to Name:" in prompt
-    assert TONE in prompt and "no pet names" in TONE
+    assert TONE in prompt and "no pet names" in TONE and "start every sentence with a capital letter" in TONE
     assert FOCUS in prompt and "Answer just what you were asked" in FOCUS
     assert "\r" not in prompt
 
