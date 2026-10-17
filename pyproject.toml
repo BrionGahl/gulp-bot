@@ -17,10 +17,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff"]
 
-[tool.setuptools.package-data]
-# The guild's prompt for the AI assistant is read from the package at run time.
-gulp_bot = ["prompt/*.md"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

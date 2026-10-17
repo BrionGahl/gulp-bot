@@ -14,7 +14,7 @@ the git history, up to commit `351747e`. Both use the same database, so one can 
 - **WoW Guild** — Bart Timeline Reminders addon info, class Discord links, and droptimizer report submission via WowUtils
 - **Clips channels** — deletes any message posted in a configured channel that doesn't contain a video (uploaded video file or an unfurled video link embed)
 - **Warcraft Logs** — officers get an overview of a raid night's report (Mythic pulls, who died the most, who died first, damage taken from tracked abilities, healthstones and health potions used) with `/wcl report`, `/wcl damage_taken` and `/wcl consumables`, posted in that week's raid notes thread; the overview is also posted there by itself after each raid
-- **AI assistant** — raiders ask Claude with `/ask` or by saying "Bot please" in a message; the guild's context and personality are in `src/gulp_bot/prompt/system_prompt.md`. Off until `ANTHROPIC_API_KEY` is set
+- **AI assistant** — raiders ask Claude with `/ask` or by saying "Bot please" in a message; the guild's context and personality are in `prompts/system_prompt.md`. Off until `ANTHROPIC_API_KEY` is set
 - **Personal officer channels** — when a member is given the trial or raider role, creates a private text channel for them under a configured category, visible only to them and the officer (moderator) role
 
 ## Deployment
@@ -125,8 +125,10 @@ src/gulp_bot/
 ├── exception/      the errors a service raises for a resource to show the member
 ├── job/            the scheduled work: announcements, raid notes, raid attendance
 ├── core/           shared plumbing: config, database, migrations, HTTP, cron, checks, text
-└── prompt/         system_prompt.md, what the AI assistant knows about the guild
 ```
+
+Next to `src/`, `migrations/` holds the database migrations and `prompts/system_prompt.md` what the AI
+assistant knows about the guild: files the bot reads, but that aren't code.
 
 For example, `/announcement add` is `resource/announcement_resource.py`, which checks the schedule with
 `core/schedule_parsing.py`, stores a `schema/announcement_schema.py` `NewAnnouncement` through
@@ -154,6 +156,7 @@ AI_BACKEND=<anthropic or local; defaults to anthropic. local runs the model with
 LOCAL_MODEL_URL=<Ollama server for AI_BACKEND=local; defaults to http://ollama:11434>
 LOCAL_MODEL=<model Ollama runs; defaults to qwen3.5:9b>
 LOCAL_MODEL_THINK=<false, true or default; defaults to false (no "thinking", quicker answers)>
+SYSTEM_PROMPT_PATH=<file with the AI assistant's guild prompt; defaults to prompts/system_prompt.md>
 
 # Other (optional)
 LOG_LEVEL=<TRACE, DEBUG, INFO, WARN or ERROR; defaults to INFO>
@@ -250,7 +253,7 @@ If Ollama runs on another computer, set `LOCAL_MODEL_URL` to it (e.g. `http://19
 
 Privacy: what a member writes to the assistant, and the assistant's recent answers in that channel, are sent to Anthropic's API to get an answer (or to your own Ollama server, with `AI_BACKEND=local`). Tell the guild before turning it on.
 
-Who the guild is, and how the assistant treats its members, is written in `src/gulp_bot/prompt/system_prompt.md`; change it there and rebuild the image. The answers are only as good as that text and the model: the assistant has no access to Warcraft Logs or the guild's settings yet.
+Who the guild is, and how the assistant treats its members, is written in `prompts/system_prompt.md`; change it there and rebuild the image. To change it without rebuilding, mount a file of your own into the container (e.g. `./my-prompt.md:/app/my-prompt.md:ro` under the bot's `volumes:`), set `SYSTEM_PROMPT_PATH=/app/my-prompt.md`, and restart the bot after each edit: the file is read when the bot starts. The answers are only as good as that text and the model: the assistant has no access to Warcraft Logs or the guild's settings yet.
 
 ### Server settings
 

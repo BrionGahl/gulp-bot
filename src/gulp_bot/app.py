@@ -38,7 +38,11 @@ async def run(config: Config) -> None:
         raise SystemExit(f"Failed to run database migrations: {e}") from None
 
     guild_settings = await GuildSettingsService.load(GuildSettingsRepository(pool))
-    bot = GulpBot(config, pool, guild_settings)
+    try:
+        bot = GulpBot(config, pool, guild_settings)
+    except ConfigError as e:
+        await pool.close()
+        raise SystemExit(str(e)) from None
     try:
         await _run_until_stopped(bot, config.discord_token)
     finally:

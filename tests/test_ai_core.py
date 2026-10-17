@@ -10,14 +10,25 @@ import pytest
 
 from gulp_bot.client.anthropic_client import AnthropicClient
 from gulp_bot.client.ollama_client import OllamaClient, is_installed
+from gulp_bot.core.config import ConfigError
 from gulp_bot.core.http_client import RequestTimeout, Response
+from gulp_bot.core.paths import DEFAULT_SYSTEM_PROMPT_PATH
 from gulp_bot.exception.ai_exception import DailyLimit, Disabled, Maintenance, NotAllowed, RateLimited, Unavailable
 from gulp_bot.mapper.ai_model_mapper import anthropic_reply, anthropic_request, api_error_message, ollama_reply, ollama_request
 from gulp_bot.schema.ai_schema import Access, ApiFailure, CheckOk, KeyRejected, MemberUsage, Question, TldrBusy, TldrReady, TldrWait, Tokens, Turn
 from gulp_bot.schema.guild_settings_schema import AiSettings, GuildSettings
 from gulp_bot.service.ai_access_service import access_for_member, ensure_switches_allow
 from gulp_bot.service.ai_assistant_service import EVERYBODY, MAX_REQUESTS_PER_USER, RATE_LIMIT_WINDOW, AiAssistantService
-from gulp_bot.service.ai_prompt_service import CUT_SHORT_NOTE, RULES, TLDR_INSTRUCTIONS, TONE, central_time_text, system_prompt, with_cut_short_note
+from gulp_bot.service.ai_prompt_service import (
+    CUT_SHORT_NOTE,
+    RULES,
+    TLDR_INSTRUCTIONS,
+    TONE,
+    central_time_text,
+    load_guild_prompt,
+    system_prompt,
+    with_cut_short_note,
+)
 
 HELLO = Question("Kail", "hello")
 
@@ -50,7 +61,7 @@ def run(coroutine):
 
 
 def test_the_system_prompt_is_the_guilds_followed_by_the_chat_rules():
-    prompt = system_prompt("gulp-bot")
+    prompt = system_prompt("gulp-bot", load_guild_prompt(DEFAULT_SYSTEM_PROMPT_PATH))
     assert prompt.startswith("We are a North American World of Warcraft Retail Guild")
     assert "The hairless one" in prompt
     assert "You are gulp-bot, the guild's Discord bot" in prompt
@@ -59,8 +70,17 @@ def test_the_system_prompt_is_the_guilds_followed_by_the_chat_rules():
     assert "\r" not in prompt
 
 
+def test_the_guild_prompt_is_read_whatever_its_line_endings(tmp_path):
+    windows = tmp_path / "windows.md"
+    windows.write_bytes(b"Line one.\r\nLine two.\r\n\r\n")
+    prompt = system_prompt("gulp-bot", load_guild_prompt(windows))
+    assert prompt.startswith("Line one.\nLine two.\n\nYou are gulp-bot")
+    with pytest.raises(ConfigError, match="SYSTEM_PROMPT_PATH"):
+        load_guild_prompt(tmp_path / "missing.md")
+
+
 def test_the_rules_come_last_so_the_guild_prompt_cannot_override_them():
-    prompt = system_prompt("gulp-bot")
+    prompt = system_prompt("gulp-bot", load_guild_prompt(DEFAULT_SYSTEM_PROMPT_PATH))
     assert prompt.endswith(RULES)
     for rule in [
         "Speak only English",

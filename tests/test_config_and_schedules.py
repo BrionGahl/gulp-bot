@@ -1,10 +1,12 @@
 from datetime import date, datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from gulp_bot.core.config import AiBackend, Config, ConfigError, parse_backend, parse_think
 from gulp_bot.core.cron import CronError, Schedule
+from gulp_bot.core.paths import DEFAULT_SYSTEM_PROMPT_PATH, MIGRATIONS_DIR
 from gulp_bot.core.schedule_parsing import EXAMPLE_CRON, parse_user_schedule
 from gulp_bot.exception.schedule_exception import ScheduleProblem
 
@@ -34,6 +36,15 @@ def test_the_defaults_are_the_rust_bots():
     assert config.local_model == "qwen3.5:9b"
     assert config.local_model_think is False
     assert config.anthropic_api_key is None
+    assert config.system_prompt_path == DEFAULT_SYSTEM_PROMPT_PATH
+
+
+def test_the_prompt_and_the_migrations_are_at_the_root_of_the_repository():
+    root = Path(__file__).resolve().parent.parent
+    assert DEFAULT_SYSTEM_PROMPT_PATH == root / "prompts" / "system_prompt.md" and DEFAULT_SYSTEM_PROMPT_PATH.is_file()
+    assert MIGRATIONS_DIR == root / "migrations" and MIGRATIONS_DIR.is_dir()
+    assert Config.from_env(env(SYSTEM_PROMPT_PATH="/etc/gulp/prompt.md")).system_prompt_path == Path("/etc/gulp/prompt.md")
+    assert Config.from_env(env(SYSTEM_PROMPT_PATH="")).system_prompt_path == DEFAULT_SYSTEM_PROMPT_PATH
 
 
 def test_empty_variables_mean_unset_and_off_sends_no_effort():

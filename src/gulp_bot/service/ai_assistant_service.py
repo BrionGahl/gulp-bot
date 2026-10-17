@@ -24,7 +24,7 @@ from ..schema.ai_schema import Access, ApiFailure, MemberUsage, ModelCheck, Ques
 from ..schema.guild_settings_schema import AiSettings
 from .ai_access_service import ensure_switches_allow
 from .ai_model_catalog_service import local_label
-from .ai_prompt_service import CHICAGO, render_question, system_prompt, system_prompt_for_request, tldr_request, with_cut_short_note
+from .ai_prompt_service import CHICAGO, load_guild_prompt, render_question, system_prompt, system_prompt_for_request, tldr_request, with_cut_short_note
 from .tldr_service import TLDR_COOLDOWN, TldrCooldowns
 
 log = logging.getLogger(__name__)
@@ -98,7 +98,8 @@ class AiAssistantService:
             url = config.local_model_url.rstrip("/")
             log.info("AI assistant enabled, using local model %s at %s", config.local_model, url)
             model_client, model, effort = OllamaClient(http, url, config.local_model_think), config.local_model, None
-        return cls(model_client, model, effort, system_prompt(config.bot_name), config.anthropic_daily_limit)
+        guild_prompt = load_guild_prompt(config.system_prompt_path)
+        return cls(model_client, model, effort, system_prompt(config.bot_name, guild_prompt), config.anthropic_daily_limit)
 
     # --- What it runs on ---
 

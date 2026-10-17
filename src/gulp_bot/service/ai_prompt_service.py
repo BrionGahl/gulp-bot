@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from ..core.config import ConfigError
 from ..core.text import ascii_lower, single_line, truncate_chars
 from ..schema.ai_schema import Access
 
@@ -23,10 +24,6 @@ MAX_QUOTE_CHARS = 500
 
 # The longest name put in front of a member's message.
 MAX_SPEAKER_CHARS = 40
-
-# What the guild is, who is in it and how the assistant treats them. Edit `prompt/system_prompt.md` to
-# change it; the text there goes to the model as it is.
-GUILD_PROMPT = (Path(__file__).resolve().parent.parent / "prompt" / "system_prompt.md").read_bytes().decode("utf-8")
 
 # How the assistant behaves in the guild's chat, whatever the guild prompt says: it comes after that
 # prompt, so that editing `system_prompt.md` can't drop it.
@@ -74,9 +71,19 @@ TLDR_INSTRUCTIONS = (
 CUT_SHORT_NOTE = '_(This answer was cut short. Reply to it with "continue" for the rest.)_'
 
 
-def system_prompt(bot_name: str) -> str:
+def load_guild_prompt(path: Path) -> str:
+    """What the guild is, who is in it and how the assistant treats them: the text of `path`
+    (`prompts/system_prompt.md`, or `SYSTEM_PROMPT_PATH`), which goes to the model as it is. Read as
+    bytes, so it is the same text whichever line endings the file was saved with."""
+    try:
+        return path.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        raise ConfigError(f"Failed to read the AI assistant's prompt at `{path}` (`SYSTEM_PROMPT_PATH`): {e}") from None
+
+
+def system_prompt(bot_name: str, guild_prompt: str) -> str:
     """The guild's prompt, then how to behave in a Discord chat, then the rules."""
-    guild = GUILD_PROMPT.replace("\r\n", "\n").strip()
+    guild = guild_prompt.replace("\r\n", "\n").strip()
     return (
         f"{guild}\n\n"
         f"You are {bot_name}, the guild's Discord bot, chatting with its members in a Discord server. "
