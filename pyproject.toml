@@ -31,6 +31,6 @@ select = ["E", "F", "W", "I", "B", "UP", "ASYNC"]
 ignore = ["E501", "ASYNC109"]
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "scripts"]
 pythonVersion = "3.13"
 typeCheckingMode = "standard"

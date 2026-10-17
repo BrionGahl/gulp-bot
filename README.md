@@ -101,6 +101,10 @@ ruff check . && ruff format --check .
 The database tests (`tests/test_database.py`) are skipped unless `TEST_DATABASE_URL` points at a Postgres
 database they may empty, e.g. `TEST_DATABASE_URL=postgres://gulp:<password>@localhost:5432/gulp_test pytest`.
 
+[COMMANDS.md](COMMANDS.md) lists every command, with its parameters and who may use it. It is generated from
+the commands themselves: after adding or changing one, run `python scripts/generate_commands_md.py`. A test
+fails while the file is out of date.
+
 The code is in `src/gulp_bot`; `pip install -r requirements-dev.txt` also installs it (editable), so that
 `python -m gulp_bot` finds it. To run the bot outside Docker, set the environment variables below (with a
 `DATABASE_URL` your machine can reach) and run `python -m gulp_bot`. Its log is one JSON object per line on standard output.
@@ -136,6 +140,8 @@ For example, `/announcement add` is `resource/announcement_resource.py`, which c
 `job/announcement_job.py` posts it whenever it is due.
 
 ## Using the bot
+
+Every command, its parameters and who may use it are listed in [COMMANDS.md](COMMANDS.md).
 
 ### Environment Variables
 
