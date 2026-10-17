@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "gulp-bot"
 version = "0.1.0"
@@ -13,19 +17,24 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff"]
 
+[tool.setuptools.package-data]
+# The guild's prompt for the AI assistant is read from the package at run time.
+gulp_bot = ["prompt/*.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 160
 target-version = "py313"
+src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "ASYNC"]
 ignore = ["E501", "ASYNC109"]
 
 [tool.pyright]
-include = ["gulp_bot", "tests"]
+include = ["src", "tests"]
 pythonVersion = "3.13"
 typeCheckingMode = "standard"

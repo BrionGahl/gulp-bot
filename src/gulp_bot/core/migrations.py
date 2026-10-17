@@ -21,8 +21,9 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-# `migrations/` at the root of the repository (and of the image), next to the `gulp_bot` package.
-MIGRATIONS_DIR = Path(__file__).resolve().parent.parent.parent / "migrations"
+# `migrations/` at the root of the repository (and of the image), next to `src/`: this file is
+# `src/gulp_bot/core/migrations.py`.
+MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "migrations"
 
 _FILE_NAME = re.compile(r"^(\d+)_(.+)\.sql$")
 

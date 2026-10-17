@@ -13,7 +13,8 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY migrations ./migrations
-COPY gulp_bot ./gulp_bot
+COPY src ./src
+ENV PYTHONPATH=/app/src
 
 # The bot needs no privileges of its own.
 RUN useradd --system --no-create-home gulp
