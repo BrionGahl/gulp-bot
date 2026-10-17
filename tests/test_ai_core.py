@@ -16,7 +16,7 @@ from gulp_bot.core.paths import DEFAULT_SYSTEM_PROMPT_PATH
 from gulp_bot.exception.ai_exception import DailyLimit, Disabled, Maintenance, NotAllowed, RateLimited, Unavailable
 from gulp_bot.mapper.ai_model_mapper import anthropic_reply, anthropic_request, api_error_message, ollama_reply, ollama_request
 from gulp_bot.schema.ai_schema import Access, ApiFailure, CheckOk, KeyRejected, MemberUsage, Question, TldrBusy, TldrReady, TldrWait, Tokens, Turn
-from gulp_bot.schema.guild_settings_schema import AiSettings, GuildSettings
+from gulp_bot.schema.guild_settings_schema import AiSettings, GuildSettings, ThinkSetting
 from gulp_bot.service.ai_access_service import access_for_member, ensure_switches_allow
 from gulp_bot.service.ai_assistant_service import EVERYBODY, MAX_REQUESTS_PER_USER, RATE_LIMIT_WINDOW, AiAssistantService
 from gulp_bot.service.ai_prompt_service import (
@@ -53,8 +53,8 @@ def anthropic_ai(http=None, model="model", effort=None, daily_limit=100):
     return AiAssistantService(AnthropicClient(http or FakeHttp(), "test-key"), model, effort, "system", daily_limit)
 
 
-def local_ai(http=None, model="qwen3.5:9b"):
-    return AiAssistantService(OllamaClient(http or FakeHttp(), "http://ollama:11434", False), model, None, "system", 100)
+def local_ai(http=None, model="qwen3.5:9b", think: bool | None = False):
+    return AiAssistantService(OllamaClient(http or FakeHttp(), "http://ollama:11434"), model, None, "system", 100, think=think)
 
 
 def run(coroutine):
@@ -113,6 +113,28 @@ def test_a_local_model_has_no_effort_whatever_was_chosen():
     assert ai.is_local and not anthropic_ai().is_local
     assert ai.resolve(AiSettings(effort="high")) == ("qwen3.5:9b", None)
     assert ai.resolve(AiSettings(model="gemma4:12b")) == ("gemma4:12b", None)
+
+
+def test_thinking_is_what_the_developers_chose_else_what_the_bot_was_configured_with():
+    ai = local_ai(think=False)
+    assert ai.configured_think is False and ai.resolve_think(AiSettings()) is False
+    assert ai.resolve_think(AiSettings(think=ThinkSetting.ON)) is True
+    assert ai.resolve_think(AiSettings(think=ThinkSetting.OFF)) is False
+    assert ai.resolve_think(AiSettings(think=ThinkSetting.DEFAULT)) is None
+    assert local_ai(think=None).resolve_think(AiSettings()) is None
+
+
+def test_a_local_model_is_told_to_think_as_the_developers_chose():
+    answer = json.dumps({"message": {"content": "sup"}, "done_reason": "stop"})
+    http = FakeHttp(Response(200, answer), Response(200, answer), Response(200, answer))
+    ai = local_ai(http, think=False)
+    run(ai.ask(7, 2, Access.RAIDER, AiSettings(), HELLO))
+    run(ai.ask(7, 3, Access.RAIDER, AiSettings(think=ThinkSetting.ON), HELLO))
+    run(ai.ask(8, 4, Access.RAIDER, AiSettings(think=ThinkSetting.DEFAULT), HELLO))
+    sent = [request["json"] for request in http.requests]
+    assert sent[0]["think"] is False and sent[0]["options"]["num_predict"] == 1024
+    assert sent[1]["think"] is True and sent[1]["options"]["num_predict"] == 4096
+    assert "think" not in sent[2] and sent[2]["options"]["num_predict"] == 4096
 
 
 def test_what_the_developers_chose_wins_over_what_the_bot_was_configured_with():

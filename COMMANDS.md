@@ -207,7 +207,7 @@ If the slash commands don't show up in a server, register them there with `?regi
 
 *`/ai`: Only members with the developer role (`/settings dev_role`) can use these commands, and every use is written to the bot's log with who ran it. What is switched here applies only to the server the command is used in, and is kept when the bot restarts.*
 
-- **`/ai status`** — Show the assistant's state, model, effort, today's use and latest API failures
+- **`/ai status`** — Show the assistant's state, model, effort or thinking, today's use and latest API failures
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
 - **`/ai on`** — Turn the AI assistant on
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
@@ -221,6 +221,9 @@ If the slash commands don't show up in a server, register them there with `?regi
 - **`/ai effort <level>`** — Change how much effort the model puts into an answer. Lower is quicker and cheaper
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
   - `level`: The effort, or as configured
+- **`/ai think <mode>`** — Turn a local model's thinking on or off. On answers slower, but follows instructions better
+  - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
+  - `mode`: On, off, left to the model, or as configured
 - **`/ai maintenance <enabled>`** — Turn maintenance mode on or off: only Officers and Developers get answers
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
   - `enabled`: True to turn maintenance mode on, false to turn it off

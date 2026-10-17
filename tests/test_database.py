@@ -24,7 +24,15 @@ from gulp_bot.repository.wcl_consumable_ability_repository import ConsumableAbil
 from gulp_bot.repository.wcl_ignored_player_repository import IgnoredPlayerRepository  # noqa: E402
 from gulp_bot.repository.wcl_tracked_ability_repository import TrackedAbilityRepository  # noqa: E402
 from gulp_bot.schema.announcement_schema import NewAnnouncement  # noqa: E402
-from gulp_bot.schema.guild_settings_schema import GuildIdSetting, RaidVoice, WclCredentials, WclSource, WowUtilsCredentials  # noqa: E402
+from gulp_bot.schema.guild_settings_schema import (  # noqa: E402
+    AiSettings,
+    GuildIdSetting,
+    RaidVoice,
+    ThinkSetting,
+    WclCredentials,
+    WclSource,
+    WowUtilsCredentials,
+)
 from gulp_bot.schema.officer_channel_schema import RegisteredOfficerChannel  # noqa: E402
 from gulp_bot.schema.wcl_settings_schema import ConsumableKind, IgnorePlayerOutcome, RegisterConsumableOutcome, TrackAbilityOutcome  # noqa: E402
 from gulp_bot.service import wcl_consumable_service, wcl_ignored_player_service, wcl_tracked_ability_service  # noqa: E402
@@ -52,7 +60,7 @@ def test_migrating_twice_changes_nothing():
     async def test(pool):
         await run_migrations(pool)
         rows = await pool.fetch("SELECT version, success FROM _sqlx_migrations ORDER BY version")
-        assert [row["version"] for row in rows] == list(range(1, 15)) and all(row["success"] for row in rows)
+        assert [row["version"] for row in rows] == list(range(1, 16)) and all(row["success"] for row in rows)
 
     with_pool(test)
 
@@ -93,6 +101,7 @@ def test_settings_round_trip_and_stay_scoped_to_their_guild():
         await store.set_wcl_credentials(GUILD_A, credentials)
         await store.set_wcl_credentials(GUILD_B, credentials)
         await store.set_wcl_credentials(GUILD_B, None)
+        await store.set_ai(GUILD_A, AiSettings(maintenance=True, model="qwen3:14b", effort="high", think=ThinkSetting.ON))
         await store.add_clips_channel(GUILD_A, 5)
         await store.add_clips_channel(GUILD_A, 5)
         await store.add_clips_channel(GUILD_B, 6)
@@ -109,10 +118,12 @@ def test_settings_round_trip_and_stay_scoped_to_their_guild():
             assert a.raid_notes_cron is not None and a.raid_notes_cron.source == tuesdays.source
             assert a.raid_voice is not None and a.raid_voice.channel_id == 77 and a.raid_voice.end.source == "0 0 23 * * Tue,Thu *"
             assert a.wcl_source == source and a.wcl_credentials == credentials
+            assert a.ai == AiSettings(maintenance=True, model="qwen3:14b", effort="high", think=ThinkSetting.ON)
             b = loaded.get(GUILD_B)
             assert b.mod_role_id is None and not b.clips_channel_ids and b.bart_token == "bart-b"
             assert b.wowutils_token is None and b.raid_notes_cron is None and b.raid_voice is None
             assert b.wcl_source is None and b.wcl_credentials is None
+            assert b.ai == AiSettings()
 
     with_pool(test)
 

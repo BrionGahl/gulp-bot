@@ -30,12 +30,10 @@ def is_installed(installed: Sequence[str], model: str) -> bool:
 
 
 class OllamaClient:
-    def __init__(self, http: HttpClient, url: str, think: bool | None):
-        """`url` is where the Ollama server listens, without a trailing slash. `think` is sent as is:
-        `None` leaves thinking to the model."""
+    def __init__(self, http: HttpClient, url: str):
+        """`url` is where the Ollama server listens, without a trailing slash."""
         self._http = http
         self.url = url
-        self.think = think
         # The model answers one question at a time on its GPU; the others wait here for their turn rather
         # than all loading the GPU at once.
         self._queue = asyncio.Semaphore(1)
@@ -44,9 +42,10 @@ class OllamaClient:
     def is_local(self) -> bool:
         return True
 
-    async def complete(self, model: str, system: str, turns: Sequence[Turn], effort: str | None) -> ModelReply:
-        """`effort` is ignored: a local model has no such setting."""
-        request = ollama_request(model, system, turns, self.think)
+    async def complete(self, model: str, system: str, turns: Sequence[Turn], effort: str | None, think: bool | None) -> ModelReply:
+        """`effort` is ignored: a local model has no such setting. `think` is sent as is: `None` leaves
+        thinking to the model."""
+        request = ollama_request(model, system, turns, think)
 
         # Held until the answer is in, so the GPU works on one question at a time.
         async with self._queue:

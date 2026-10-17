@@ -16,9 +16,10 @@ class ChatModelClient(Protocol):
         """Whether the model runs on the guild's own hardware rather than the Anthropic API."""
         ...
 
-    async def complete(self, model: str, system: str, turns: Sequence[Turn], effort: str | None) -> ModelReply:
-        """One request to `model` with `turns` as the conversation. Raises `Unavailable` if there is no
-        answer."""
+    async def complete(self, model: str, system: str, turns: Sequence[Turn], effort: str | None, think: bool | None) -> ModelReply:
+        """One request to `model` with `turns` as the conversation. `effort` is for the Anthropic API and
+        `think` for a local model (`None` sends nothing); each server ignores the other's. Raises
+        `Unavailable` if there is no answer."""
         ...
 
     async def check(self, model: str) -> ModelCheck:

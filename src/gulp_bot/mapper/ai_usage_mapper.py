@@ -63,3 +63,8 @@ def format_price(value: float) -> str:
 def describe_effort(effort: str | None) -> str:
     """An effort as a developer reads it."""
     return "none sent" if effort is None else f"`{effort}`"
+
+
+def describe_think(think: bool | None) -> str:
+    """Whether a local model thinks, as a developer reads it."""
+    return "left to the model" if think is None else ("**on**" if think else "**off**")

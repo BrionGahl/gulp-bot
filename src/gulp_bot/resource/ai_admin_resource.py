@@ -14,9 +14,9 @@ from discord import app_commands
 from ..core.discord_context import GulpContext, slash_context
 from ..core.permission_checks import check_is_developer, interaction_is_developer, is_developer, slash_check
 from ..exception.ai_exception import ModelNameProblem
-from ..mapper.ai_usage_mapper import describe_effort, format_price, usage_lines
+from ..mapper.ai_usage_mapper import describe_effort, describe_think, format_price, usage_lines
 from ..schema.ai_schema import CheckOk, KeyRejected, Unreachable
-from ..schema.guild_settings_schema import AiSettings
+from ..schema.guild_settings_schema import AiSettings, ThinkSetting
 from ..service.ai_assistant_service import AiAssistantService
 from ..service.ai_model_catalog_service import KNOWN_MODELS, normalize_model_name, price_per_million
 from .resource_support import filter_choices, meta, reply_in_chunks
@@ -31,6 +31,14 @@ EFFORT_CHOICES = [
     app_commands.Choice(name="Low", value="low"),
     app_commands.Choice(name="Medium", value="medium"),
     app_commands.Choice(name="High", value="high"),
+]
+
+# Whether a local model thinks before it answers. "configured" is stored as nothing (`LOCAL_MODEL_THINK`).
+THINK_CHOICES = [
+    app_commands.Choice(name="As configured", value="configured"),
+    app_commands.Choice(name="On", value=ThinkSetting.ON.value),
+    app_commands.Choice(name="Off", value=ThinkSetting.OFF.value),
+    app_commands.Choice(name="Left to the model (send nothing)", value=ThinkSetting.DEFAULT.value),
 ]
 
 
@@ -103,7 +111,7 @@ def model_names(names: list[str]) -> str:
     return ", ".join(f"`{name}`" for name in names) if names else "none"
 
 
-@ai_group.command(name="status", description="Show the assistant's state, model, effort, today's use and latest API failures")
+@ai_group.command(name="status", description="Show the assistant's state, model, effort or thinking, today's use and latest API failures")
 @slash_check(check_is_developer)
 async def ai_status(interaction: discord.Interaction) -> None:
     command = await start_developer_command(interaction, "status")
@@ -121,7 +129,10 @@ async def ai_status(interaction: discord.Interaction) -> None:
         state = "**on**"
     model_note = f"set with `/ai model`; the bot was configured with `{ai.configured_model}`" if settings.model is not None else "as configured"
     if ai.is_local:
-        effort_line = "not used by a local model"
+        think_note = (
+            f"set with `/ai think`; the bot was configured with {describe_think(ai.configured_think)}" if settings.think is not None else "as configured"
+        )
+        effort_line = f"not used by a local model\nThinking: {describe_think(ai.resolve_think(settings))} ({think_note})"
     else:
         note = f"set with `/ai effort`; the bot was configured with {describe_effort(ai.configured_effort)}" if settings.effort is not None else "as configured"
         effort_line = f"{describe_effort(effort)} ({note})"
@@ -268,6 +279,32 @@ async def ai_effort(interaction: discord.Interaction, level: str) -> None:
     await reply_in_chunks(
         ctx,
         f"{message} It applies from the next question on. If the API rejects it, answers fail until you choose another; `/ai status` shows the latest failure.",
+    )
+
+
+@ai_group.command(name="think", description="Turn a local model's thinking on or off. On answers slower, but follows instructions better")
+@slash_check(check_is_developer)
+@app_commands.describe(mode="On, off, left to the model, or as configured")
+@app_commands.choices(mode=THINK_CHOICES)
+async def ai_think(interaction: discord.Interaction, mode: str) -> None:
+    command = await start_developer_command(interaction, "think")
+    if command is None:
+        return
+    ctx, ai = command.ctx, command.ai
+    if not ai.is_local:
+        await reply_in_chunks(ctx, "Only a local model is told whether to think; the Anthropic API uses `/ai effort`. Nothing was changed.")
+        return
+
+    stored = None if mode == "configured" else ThinkSetting(mode)
+    settings = await change_ai_settings(
+        command, f"thinking set to {'configured' if stored is None else stored.value}", lambda settings: setattr(settings, "think", stored)
+    )
+
+    now = describe_think(ai.resolve_think(settings))
+    message = f"Thinking is back to the configured setting: {now}." if stored is None else f"Thinking is now {now}."
+    await reply_in_chunks(
+        ctx,
+        f"{message} It applies from the next question on. With thinking on, answers take longer: the model writes out its reasoning first, which isn't shown.",
     )
 
 

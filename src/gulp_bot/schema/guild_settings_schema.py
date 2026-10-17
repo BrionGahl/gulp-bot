@@ -12,11 +12,26 @@ from dataclasses import dataclass, field
 from ..core.cron import Schedule
 
 
+class ThinkSetting(enum.Enum):
+    """Whether a local model thinks before it answers, as the guild's developers set it with `/ai think`. The
+    value is how it is stored in the database."""
+
+    ON = "on"
+    OFF = "off"
+    # Nothing is sent: the model decides.
+    DEFAULT = "default"
+
+    @property
+    def think(self) -> bool | None:
+        """What is sent to Ollama as `think`: `None` sends nothing."""
+        return {ThinkSetting.ON: True, ThinkSetting.OFF: False, ThinkSetting.DEFAULT: None}[self]
+
+
 @dataclass
 class AiSettings:
     """How the AI assistant has been switched, in a guild, by its developers with the `/ai` commands. The
-    default is the assistant on, in no special mode, with the model and effort the bot was configured
-    with."""
+    default is the assistant on, in no special mode, with the model, effort and thinking the bot was
+    configured with."""
 
     # Off: the assistant answers nobody, whatever their role.
     disabled: bool = False
@@ -26,6 +41,8 @@ class AiSettings:
     model: str | None = None
     # The effort to use instead of the configured one; `off` means none is sent.
     effort: str | None = None
+    # Whether a local model thinks, instead of the configured `LOCAL_MODEL_THINK`.
+    think: ThinkSetting | None = None
 
 
 @dataclass(frozen=True)

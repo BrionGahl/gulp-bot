@@ -16,6 +16,7 @@ from ..schema.guild_settings_schema import (
     GuildIdSetting,
     GuildSettings,
     RaidVoice,
+    ThinkSetting,
     WclCredentials,
     WclSource,
 )
@@ -48,8 +49,19 @@ def settings_from_row(row: Row) -> GuildSettings:
         raid_voice=_raid_voice(row, guild_id),
         wcl_source=_wcl_source(row),
         wcl_credentials=_wcl_credentials(row),
-        ai=AiSettings(disabled=row["ai_disabled"], maintenance=row["ai_maintenance"], model=row["ai_model"], effort=row["ai_effort"]),
+        ai=AiSettings(
+            disabled=row["ai_disabled"], maintenance=row["ai_maintenance"], model=row["ai_model"], effort=row["ai_effort"], think=_think(row["ai_think"])
+        ),
     )
+
+
+def _think(value: str | None) -> ThinkSetting | None:
+    """The stored `/ai think` choice; one the bot doesn't know is taken as none, the configured one."""
+    try:
+        return None if value is None else ThinkSetting(value)
+    except ValueError:
+        log.warning("ignoring the unknown /ai think setting %r", value)
+        return None
 
 
 def _raid_notes_schedule(row: Row, guild_id: int) -> Schedule | None:

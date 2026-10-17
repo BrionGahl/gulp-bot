@@ -161,7 +161,7 @@ ANTHROPIC_DAILY_LIMIT=<most questions answered in 24 hours, all members together
 AI_BACKEND=<anthropic or local; defaults to anthropic. local runs the model with Ollama and needs no key>
 LOCAL_MODEL_URL=<Ollama server for AI_BACKEND=local; defaults to http://ollama:11434>
 LOCAL_MODEL=<model Ollama runs; defaults to qwen3.5:9b>
-LOCAL_MODEL_THINK=<false, true or default; defaults to false (no "thinking", quicker answers)>
+LOCAL_MODEL_THINK=<false, true or default; defaults to false (no "thinking", quicker answers); `/ai think` changes it per server>
 SYSTEM_PROMPT_PATH=<file with the AI assistant's guild prompt; defaults to ext_resources/system_prompt.md>
 
 # Other (optional)
@@ -203,12 +203,13 @@ The members with the developer role (registered by an administrator with `/setti
 
 | Command | What it does |
 | --- | --- |
-| `/ai status` | Whether the assistant is on, off or in maintenance, the model and effort in use, the questions answered in the last 24 hours, and the latest API failures |
+| `/ai status` | Whether the assistant is on, off or in maintenance, the model and effort (or, for a local model, thinking) in use, the questions answered in the last 24 hours, and the latest API failures |
 | `/ai on`, `/ai off` | Switch the assistant on or off for everybody (nobody is answered while it is off) |
 | `/ai maintenance <true/false>` | Maintenance mode: only Officers and Developers get answers |
 | `/ai usage` | Tokens used and an estimate of the cost, by model, for the last 24 hours and since the bot started |
 | `/ai model <name>` | Use another model, for example a cheaper one if the spending rises, or `default` for the configured one. The API is asked first whether it knows the model |
 | `/ai effort <level>` | Use another effort (as configured, off, low, medium, high) |
+| `/ai think <mode>` | With a local model: have it think before it answers, or not (as configured, on, off, left to the model). On is slower but follows instructions better |
 | `/ai limits <member>` | How many questions a member has asked in the last 10 minutes |
 | `/ai reset <member>` | Give a member their whole allowance of questions back |
 | `/ai check` | Check that the registered roles exist, that the API key works and lists the model, and the state of the assistant. It costs no tokens |
@@ -217,7 +218,7 @@ The token counts and the failures are kept in memory and start again when the bo
 
 #### Running the model locally
 
-With `AI_BACKEND=local` the assistant asks a model on your own GPU instead of Claude, through [Ollama](https://ollama.com), and nothing it is told leaves the machine. No Anthropic key is needed. Everything else works the same (access, limits, memory, replies, `/ai`), except that `/ai effort` does nothing and `/ai usage` shows the tokens as free. A local model answers one question at a time; the others wait their turn.
+With `AI_BACKEND=local` the assistant asks a model on your own GPU instead of Claude, through [Ollama](https://ollama.com), and nothing it is told leaves the machine. No Anthropic key is needed. Everything else works the same (access, limits, memory, replies, `/ai`), except that `/ai effort` does nothing (`/ai think` is its local counterpart) and `/ai usage` shows the tokens as free. A local model answers one question at a time; the others wait their turn.
 
 The default model, `qwen3.5:9b`, fits a 12 GB GPU such as an RTX 3060. To run it next to the bot, add an `ollama` service to the stack on a network with no internet access, and put the bot on that network too:
 
@@ -255,7 +256,7 @@ volumes:
 
 The GPU needs the NVIDIA driver and, on Linux, the NVIDIA Container Toolkit (Docker Desktop on Windows passes the GPU through WSL2). The `ai` network can't reach the internet, so download the model once before moving Ollama onto it: start the service on the default network, run `docker exec -it <ollama container> ollama pull qwen3.5:9b`, then switch it back. The model stays in the `ollama` volume. Then run `/ai check`: it says whether the bot reaches Ollama and whether the model is installed.
 
-If Ollama runs on another computer, set `LOCAL_MODEL_URL` to it (e.g. `http://192.168.1.20:11434`) and only let the bot's host reach that port: Ollama has no password. Qwen thinks before it answers unless told not to; the bot tells it not to (`LOCAL_MODEL_THINK=false`), which makes answers quicker. If a model rejects that, set `LOCAL_MODEL_THINK=default`.
+If Ollama runs on another computer, set `LOCAL_MODEL_URL` to it (e.g. `http://192.168.1.20:11434`) and only let the bot's host reach that port: Ollama has no password. Qwen thinks before it answers unless told not to; the bot tells it not to (`LOCAL_MODEL_THINK=false`), which makes answers quicker. If a model rejects that, set `LOCAL_MODEL_THINK=default`. `/ai think` switches it per server without a restart. With thinking on, a request may use up to 4096 tokens, the thinking included, instead of 1024.
 
 Privacy: what a member writes to the assistant, and the assistant's recent answers in that channel, are sent to Anthropic's API to get an answer (or to your own Ollama server, with `AI_BACKEND=local`). Tell the guild before turning it on.
 

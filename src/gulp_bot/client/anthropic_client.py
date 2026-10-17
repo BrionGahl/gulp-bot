@@ -38,7 +38,8 @@ class AnthropicClient:
     def _headers(self) -> dict[str, str]:
         return {"x-api-key": self._api_key, "anthropic-version": API_VERSION}
 
-    async def complete(self, model: str, system: str, turns: Sequence[Turn], effort: str | None) -> ModelReply:
+    async def complete(self, model: str, system: str, turns: Sequence[Turn], effort: str | None, think: bool | None) -> ModelReply:
+        """`think` is ignored: it is for a local model."""
         try:
             response = await self._http.request(
                 "POST", API_URL, timeout=REQUEST_TIMEOUT, headers=self._headers(), json=anthropic_request(model, system, turns, effort)

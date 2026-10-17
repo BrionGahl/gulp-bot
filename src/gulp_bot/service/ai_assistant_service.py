@@ -62,12 +62,15 @@ def _debug_option(value: str | None) -> str:
 class AiAssistantService:
     """The assistant. Built once, when the bot starts."""
 
-    def __init__(self, model_client: ChatModelClient, model: str, effort: str | None, system: str, daily_limit: int):
+    def __init__(self, model_client: ChatModelClient, model: str, effort: str | None, system: str, daily_limit: int, think: bool | None = False):
         self._model_client = model_client
         self._model = model
         # The `output_config.effort` sent with each request; none if not set (and always none for a local
         # model, which has no such setting).
         self._effort = effort
+        # Whether a local model thinks (`LOCAL_MODEL_THINK`); `None` leaves it to the model. Not used with
+        # the Anthropic API.
+        self._think = think
         # The system prompt without the date, which changes.
         self._system = system
 
@@ -82,7 +85,7 @@ class AiAssistantService:
         self.tldr_cooldowns = TldrCooldowns(TLDR_COOLDOWN)
 
     def __repr__(self) -> str:
-        return f"AiAssistantService(local={self.is_local}, model={self._model!r}, effort={self._effort!r})"
+        return f"AiAssistantService(local={self.is_local}, model={self._model!r}, effort={self._effort!r}, think={self._think!r})"
 
     @classmethod
     def from_config(cls, http: HttpClient, config: Config) -> AiAssistantService | None:
@@ -97,9 +100,9 @@ class AiAssistantService:
         else:
             url = config.local_model_url.rstrip("/")
             log.info("AI assistant enabled, using local model %s at %s", config.local_model, url)
-            model_client, model, effort = OllamaClient(http, url, config.local_model_think), config.local_model, None
+            model_client, model, effort = OllamaClient(http, url), config.local_model, None
         guild_prompt = load_guild_prompt(config.system_prompt_path)
-        return cls(model_client, model, effort, system_prompt(config.bot_name, guild_prompt), config.anthropic_daily_limit)
+        return cls(model_client, model, effort, system_prompt(config.bot_name, guild_prompt), config.anthropic_daily_limit, think=config.local_model_think)
 
     # --- What it runs on ---
 
@@ -117,6 +120,17 @@ class AiAssistantService:
     def configured_effort(self) -> str | None:
         """The effort the bot was configured with (`ANTHROPIC_EFFORT`); `None` if none is sent."""
         return self._effort
+
+    @property
+    def configured_think(self) -> bool | None:
+        """Whether a local model thinks as the bot was configured (`LOCAL_MODEL_THINK`); `None` if that is
+        left to the model."""
+        return self._think
+
+    def resolve_think(self, settings: AiSettings) -> bool | None:
+        """Whether a local model thinks in a guild whose developers have set `settings`: what they chose with
+        `/ai think`, else what the bot was configured with. `None` sends nothing, leaving it to the model."""
+        return self._think if settings.think is None else settings.think.think
 
     def resolve(self, settings: AiSettings) -> tuple[str, str | None]:
         """The model and the effort to use in a guild whose developers have set `settings`: what they chose
@@ -148,12 +162,13 @@ class AiAssistantService:
     async def ask(self, channel: int, user: int, access: Access, settings: AiSettings, question: Question) -> str:
         """Answers `question`, asked by user `user`, who has `access`, in `channel`, in the light of what was
         said in that channel before. Refuses anyone who isn't allowed, and everybody while the guild's
-        developers have the assistant off (`settings`). Uses the model and effort they chose, if they did.
+        developers have the assistant off (`settings`). Uses the model, effort and thinking they chose, if they did.
         Raises `AskError` if there is no answer."""
         if not access.is_allowed():
             raise NotAllowed()
         ensure_switches_allow(settings, access)
         model, effort = self.resolve(settings)
+        think = self.resolve_think(settings)
 
         now = time.monotonic()
         rendered = render_question(question.speaker, question.text, question.replying_to)
@@ -170,7 +185,7 @@ class AiAssistantService:
         turns.append(Turn.user(rendered))
 
         try:
-            answer, cut_short = await self._complete(turns, access, model, effort)
+            answer, cut_short = await self._complete(turns, access, model, effort, think)
         except AskError as e:
             # No answer, no charge: a failure is not held against the member or the day's total.
             self.member_limiter.undo(user)
@@ -190,11 +205,12 @@ class AiAssistantService:
             raise NotAllowed()
         ensure_switches_allow(settings, access)
         model, effort = self.resolve(settings)
+        think = self.resolve_think(settings)
 
         if self.daily_limiter.check(EVERYBODY, time.monotonic()) is not None:
             raise DailyLimit()
         try:
-            summary, cut_short = await self._complete([Turn.user(tldr_request(transcript, omitted))], access, model, effort)
+            summary, cut_short = await self._complete([Turn.user(tldr_request(transcript, omitted))], access, model, effort, think)
         except AskError as e:
             # No summary, no charge.
             self._give_back_daily_request(e)
@@ -206,11 +222,11 @@ class AiAssistantService:
         if isinstance(error, Unavailable):
             self.failures.record(int(time.time()), error.detail)
 
-    async def _complete(self, turns: Sequence[Turn], access: Access, model: str, effort: str | None) -> tuple[str, bool]:
+    async def _complete(self, turns: Sequence[Turn], access: Access, model: str, effort: str | None, think: bool | None) -> tuple[str, bool]:
         """One request to `model` with `turns` as the conversation, the last of which is from a member with
         `access`. Returns the answer, and whether it ran out of tokens before it was finished."""
         system = system_prompt_for_request(self._system, access, datetime.now(CHICAGO))
-        reply = await self._model_client.complete(model, system, turns, effort)
+        reply = await self._model_client.complete(model, system, turns, effort, think)
 
         if reply.tokens is not None:
             input_tokens, output_tokens = reply.tokens
