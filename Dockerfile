@@ -13,7 +13,6 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY migrations ./migrations
-COPY prompts ./prompts
 COPY src ./src
 ENV PYTHONPATH=/app/src
 

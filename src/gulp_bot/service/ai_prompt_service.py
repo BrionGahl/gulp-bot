@@ -73,7 +73,7 @@ CUT_SHORT_NOTE = '_(This answer was cut short. Reply to it with "continue" for t
 
 def load_guild_prompt(path: Path) -> str:
     """What the guild is, who is in it and how the assistant treats them: the text of `path`
-    (`prompts/system_prompt.md`, or `SYSTEM_PROMPT_PATH`), which goes to the model as it is. Read as
+    (`src/prompts/system_prompt.md`, or `SYSTEM_PROMPT_PATH`), which goes to the model as it is. Read as
     bytes, so it is the same text whichever line endings the file was saved with."""
     try:
         return path.read_bytes().decode("utf-8")
