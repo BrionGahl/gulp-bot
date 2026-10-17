@@ -17,6 +17,13 @@ MAX_TOKENS = 1024
 # in it comfortably; a bigger one takes more GPU memory and makes answers slower.
 LOCAL_CONTEXT_TOKENS = 8192
 
+# What a local model that thinks may write: Ollama counts the thinking in `num_predict` too, and a model
+# like Qwen easily thinks for more than `MAX_TOKENS` about a one-line question. With only `MAX_TOKENS`
+# it runs out while still thinking and answers nothing. The context window grows by as much, so the
+# prompt and the memory still fit next to it.
+LOCAL_THINKING_TOKENS = 4096
+LOCAL_THINKING_CONTEXT_TOKENS = LOCAL_CONTEXT_TOKENS + LOCAL_THINKING_TOKENS - MAX_TOKENS
+
 
 def wire_messages(turns: Sequence[Turn]) -> list[dict[str, str]]:
     """The conversation as both APIs take it."""
@@ -34,12 +41,17 @@ def anthropic_request(model: str, system: str, turns: Sequence[Turn], effort: st
 def ollama_request(model: str, system: str, turns: Sequence[Turn], think: bool | None) -> dict[str, Any]:
     """A request to Ollama's `/api/chat`: the system prompt first, as a message of its own, the whole
     answer in one response (`stream: false`), with the context window (`num_ctx`) and the most tokens to
-    answer with (`num_predict`)."""
+    answer with (`num_predict`). Unless thinking is off (`think` false), the model may think first, so it
+    gets room for that too."""
+    may_think = think is not False
     request: dict[str, Any] = {
         "model": model,
         "messages": [{"role": "system", "content": system}, *wire_messages(turns)],
         "stream": False,
-        "options": {"num_ctx": LOCAL_CONTEXT_TOKENS, "num_predict": MAX_TOKENS},
+        "options": {
+            "num_ctx": LOCAL_THINKING_CONTEXT_TOKENS if may_think else LOCAL_CONTEXT_TOKENS,
+            "num_predict": LOCAL_THINKING_TOKENS if may_think else MAX_TOKENS,
+        },
     }
     if think is not None:
         request["think"] = think

@@ -146,6 +146,9 @@ def test_requests_are_serialised_as_the_apis_expect():
     assert local["options"] == {"num_ctx": 8192, "num_predict": 1024}
     # `default` leaves thinking to the model: the field isn't sent.
     assert "think" not in ollama_request("m", "s", [], None)
+    # A model that may think gets room for it: Ollama counts the thinking in `num_predict`.
+    for think in (True, None):
+        assert ollama_request("m", "s", [], think)["options"] == {"num_ctx": 11264, "num_predict": 4096}
 
 
 def test_answers_are_read():

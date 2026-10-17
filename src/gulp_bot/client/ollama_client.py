@@ -12,8 +12,9 @@ from ..mapper.ai_model_mapper import api_error_message, ollama_reply, ollama_req
 from ..schema.ai_schema import CheckOk, ModelCheck, ModelReply, Turn, Unreachable
 
 # Gives up on a local model after this long. Longer than for the API: the first question after a while
-# loads the model into the GPU, and a question waits for the one before it to finish.
-REQUEST_TIMEOUT = 120.0
+# loads the model into the GPU, a question waits for the one before it to finish, and a model that thinks
+# may write a few thousand tokens before it answers.
+REQUEST_TIMEOUT = 240.0
 
 # Gives up on asking which models are installed after this long, when a developer checks the server.
 CHECK_TIMEOUT = 15.0
