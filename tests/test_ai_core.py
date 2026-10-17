@@ -21,6 +21,7 @@ from gulp_bot.service.ai_access_service import access_for_member, ensure_switche
 from gulp_bot.service.ai_assistant_service import EVERYBODY, MAX_REQUESTS_PER_USER, RATE_LIMIT_WINDOW, AiAssistantService
 from gulp_bot.service.ai_prompt_service import (
     CUT_SHORT_NOTE,
+    FOCUS,
     RULES,
     TLDR_INSTRUCTIONS,
     TONE,
@@ -67,6 +68,7 @@ def test_the_system_prompt_is_the_guilds_followed_by_the_chat_rules():
     assert "You are gulp-bot, the guild's Discord bot" in prompt
     assert "[replying to Name:" in prompt
     assert TONE in prompt and "no pet names" in TONE
+    assert FOCUS in prompt and "Answer just what you were asked" in FOCUS
     assert "\r" not in prompt
 
 
