@@ -42,6 +42,12 @@ def plural(count: int, noun: str) -> str:
     return f"1 {noun}" if count == 1 else f"{count} {noun}s"
 
 
+def pull_time(ms: float) -> str:
+    """A time into a pull, given in milliseconds, as `m:ss`: `1:05`."""
+    seconds = max(int(ms // 1000), 0)
+    return f"{seconds // 60}:{seconds % 60:02}"
+
+
 def split_message(text: str, max_chars: int = DISCORD_MAX_CHARS) -> list[str]:
     """Splits `text` into messages of at most `max_chars` characters, cutting at a line break if it can,
     else at a space, else in the middle of a word. Nothing is lost except the whitespace at the cuts.

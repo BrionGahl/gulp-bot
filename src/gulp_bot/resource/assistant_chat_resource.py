@@ -19,6 +19,15 @@ from ..service.chat_trigger_service import mentions_bot_please
 log = logging.getLogger(__name__)
 
 
+def talks_to_assistant(services: Services, message: discord.Message) -> bool:
+    """Whether `message` is chat with the AI assistant: it says "Bot please", or it replies to one of the
+    assistant's answers. Whether the assistant is on, or would answer its author, doesn't matter."""
+    if mentions_bot_please(message.content):
+        return True
+    replied = replied_message(message)
+    return services.ai is not None and replied is not None and services.ai.is_answer(replied.id)
+
+
 async def answer_if_called(services: Services, message: discord.Message) -> None:
     """Answers `message` in its channel if it says "Bot please", or if it is a reply to one of the
     assistant's answers (which carries the conversation on). If `message` replies to a message, that message

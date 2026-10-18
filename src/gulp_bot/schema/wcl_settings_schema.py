@@ -1,5 +1,5 @@
-"""What a guild's officers set up for the Warcraft Logs overviews: the abilities they track, the players
-they leave out, and the abilities that count as consumables."""
+"""What a guild's officers set up for the Warcraft Logs overviews: the abilities and enemies they track, the
+players they leave out, and the abilities that count as consumables."""
 
 from __future__ import annotations
 
@@ -31,6 +31,14 @@ class TrackAbilityResult:
     outcome: TrackAbilityOutcome
     # With `NAME_TAKEN`, the ID of the ability that has the name.
     other_ability_id: int | None = None
+
+
+class TrackEnemyOutcome(enum.Enum):
+    ADDED = enum.auto()
+    # An enemy with this name is already tracked, possibly in another capitalisation.
+    ALREADY_TRACKED = enum.auto()
+    # The server already tracks as many enemies as it may.
+    FULL = enum.auto()
 
 
 class IgnorePlayerOutcome(enum.Enum):

@@ -23,6 +23,7 @@ from gulp_bot.repository.raid_attendance_repository import RaidAttendanceReposit
 from gulp_bot.repository.wcl_consumable_ability_repository import ConsumableAbilityRepository  # noqa: E402
 from gulp_bot.repository.wcl_ignored_player_repository import IgnoredPlayerRepository  # noqa: E402
 from gulp_bot.repository.wcl_tracked_ability_repository import TrackedAbilityRepository  # noqa: E402
+from gulp_bot.repository.wcl_tracked_enemy_repository import TrackedEnemyRepository  # noqa: E402
 from gulp_bot.schema.announcement_schema import NewAnnouncement  # noqa: E402
 from gulp_bot.schema.guild_settings_schema import (  # noqa: E402
     AiSettings,
@@ -34,12 +35,19 @@ from gulp_bot.schema.guild_settings_schema import (  # noqa: E402
     WowUtilsCredentials,
 )
 from gulp_bot.schema.officer_channel_schema import RegisteredOfficerChannel  # noqa: E402
-from gulp_bot.schema.wcl_settings_schema import ConsumableKind, IgnorePlayerOutcome, RegisterConsumableOutcome, TrackAbilityOutcome  # noqa: E402
-from gulp_bot.service import wcl_consumable_service, wcl_ignored_player_service, wcl_tracked_ability_service  # noqa: E402
+from gulp_bot.schema.wcl_settings_schema import (  # noqa: E402
+    ConsumableKind,
+    IgnorePlayerOutcome,
+    RegisterConsumableOutcome,
+    TrackAbilityOutcome,
+    TrackEnemyOutcome,
+)
+from gulp_bot.service import wcl_consumable_service, wcl_ignored_player_service, wcl_tracked_ability_service, wcl_tracked_enemy_service  # noqa: E402
 from gulp_bot.service.guild_settings_service import GuildSettingsService  # noqa: E402
 from gulp_bot.service.wcl_consumable_service import ConsumableService, ids_of_kind  # noqa: E402
 from gulp_bot.service.wcl_ignored_player_service import IgnoredPlayerService  # noqa: E402
 from gulp_bot.service.wcl_tracked_ability_service import TrackedAbilityService  # noqa: E402
+from gulp_bot.service.wcl_tracked_enemy_service import TrackedEnemyService  # noqa: E402
 
 GUILD_A, GUILD_B = 111, 222
 
@@ -208,6 +216,26 @@ def test_tracked_abilities_are_scoped_to_their_guild_and_limited():
             assert (await mechanics.track(GUILD_A, ability_id, f"Ability {ability_id}")).outcome is added
         assert (await mechanics.track(GUILD_A, 999, "One too many")).outcome is TrackAbilityOutcome.FULL
         assert (await mechanics.track(GUILD_A, 100, "Renamed at the limit")).outcome is TrackAbilityOutcome.RENAMED
+
+    with_pool(test)
+
+
+def test_tracked_enemies_are_scoped_to_their_guild_and_limited():
+    async def test(pool):
+        await pool.execute("TRUNCATE wcl_tracked_enemies")
+        enemies = TrackedEnemyService(TrackedEnemyRepository(pool))
+        added, already = TrackEnemyOutcome.ADDED, TrackEnemyOutcome.ALREADY_TRACKED
+        assert await enemies.track(GUILD_A, "Sporecaller") is added
+        assert await enemies.track(GUILD_A, "Nexus-King Salhadaar") is added
+        assert await enemies.track(GUILD_A, "SPORECALLER") is already
+        assert await enemies.track(GUILD_B, "Sporecaller") is added
+        assert await enemies.list_tracked(GUILD_A) == ["Nexus-King Salhadaar", "Sporecaller"]
+        assert not await enemies.untrack(GUILD_A, "Dimensius")
+        assert await enemies.untrack(GUILD_A, "sporecaller")
+        assert await enemies.list_tracked(GUILD_B) == ["Sporecaller"]
+        for n in range(wcl_tracked_enemy_service.MAX_TRACKED - 1):
+            assert await enemies.track(GUILD_A, f"Add {n}") is added
+        assert await enemies.track(GUILD_A, "One too many") is TrackEnemyOutcome.FULL
 
     with_pool(test)
 

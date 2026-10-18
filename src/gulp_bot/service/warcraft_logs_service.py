@@ -18,19 +18,28 @@ from ..schema.wcl_report_schema import (
     ReportCode,
     ReportOverview,
     ReportTarget,
+    WindowDamageReport,
 )
 from ..schema.wcl_settings_schema import ConsumableAbility, TrackedAbility
 from .warcraft_logs_analysis_service import (
+    boss_ids,
     build_ability_damage,
+    build_boss_damage,
     build_consumables_report,
     build_damage_report,
+    build_enemy_damage,
+    build_focus_damage,
     build_last_wipe,
     build_overview,
+    build_window_damage_report,
+    enemy_targets,
     ignored_set,
     is_ignored,
     last_wipe_of,
     newest_by_uploader,
+    pull_window,
     select_fights,
+    select_pull,
     totals_of,
 )
 from .wcl_ignored_player_service import IgnoredPlayerService
@@ -114,6 +123,59 @@ class WarcraftLogsService:
 
         log.info("Fetched consumables in Warcraft Logs report %s: %d pulls, %d registered abilities", code, len(fights), len(registered))
         return build_consumables_report(report, fights, boss, registered, totals, len(ignored))
+
+    async def window_damage_report(
+        self,
+        client: WarcraftLogsClient,
+        code: str,
+        boss: str,
+        pull: int | None,
+        start_seconds: int,
+        end_seconds: int,
+        enemies: Sequence[str],
+        ignored: Sequence[str],
+        focus: str | None = None,
+    ) -> WindowDamageReport:
+        """How much damage each player did to each of the tracked `enemies` (names) between `start_seconds`
+        and `end_seconds` into one pull of the boss whose name contains `boss`: the `pull`th, or the last.
+        Every enemy of the report with one of those names counts towards it. With `focus` (one of the
+        `enemies`), the damage to it is set apart and the damage to the others is added together. Players
+        named in `ignored` are left out."""
+        report = await client.fetch_report(code)
+        fight, number = select_pull(report.fights, boss, pull)
+        window = pull_window(fight, number, start_seconds, end_seconds)
+
+        targets = enemy_targets(await client.fetch_enemies(code), enemies)
+        target_ids = list(dict.fromkeys(target_id for ids in targets for target_id in ids))
+        tables = await client.fetch_damage_done_tables(code, fight.id, window.report_start_ms, window.report_end_ms, target_ids) if target_ids else {}
+        names = ignored_set(ignored)
+        damage = [build_enemy_damage(name, ids, tables, names) for name, ids in zip(enemies, targets, strict=True)]
+
+        log.info(
+            "Fetched damage done in Warcraft Logs report %s, fight %d, %d-%d ms: %d enemies", code, fight.id, window.start_ms, window.end_ms, len(target_ids)
+        )
+        set_apart = build_focus_damage(focus, damage) if focus is not None else None
+        return build_window_damage_report(report, window, damage, len(ignored), set_apart)
+
+    async def window_boss_damage_report(
+        self, client: WarcraftLogsClient, code: str, boss: str, pull: int | None, start_seconds: int, end_seconds: int, ignored: Sequence[str]
+    ) -> WindowDamageReport:
+        """How much damage each player did to the bosses, and to everything else, between `start_seconds` and
+        `end_seconds` into one pull of the boss whose name contains `boss`: the `pull`th, or the last. The
+        bosses are the enemies Warcraft Logs counts as bosses. Players named in `ignored` are left out."""
+        report = await client.fetch_report(code)
+        fight, number = select_pull(report.fights, boss, pull)
+        window = pull_window(fight, number, start_seconds, end_seconds)
+
+        actors = await client.fetch_enemies(code)
+        bosses = boss_ids(actors)
+        start_ms, end_ms = window.report_start_ms, window.report_end_ms
+        boss_tables = await client.fetch_damage_done_tables(code, fight.id, start_ms, end_ms, bosses) if bosses else {}
+        all_damage = await client.fetch_all_damage_done(code, fight.id, start_ms, end_ms)
+        split = build_boss_damage(actors, boss_tables, all_damage, ignored_set(ignored))
+
+        log.info("Fetched boss damage in Warcraft Logs report %s, fight %d, %d-%d ms: %d bosses", code, fight.id, window.start_ms, window.end_ms, len(bosses))
+        return build_window_damage_report(report, window, [], len(ignored), boss_damage=split)
 
     async def last_wipe(self, client: WarcraftLogsClient, code: str) -> LastWipe:
         """The last Mythic boss pull of the report that was a wipe, and where in it to start a replay. Pulls

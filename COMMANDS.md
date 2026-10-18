@@ -134,6 +134,15 @@ If the slash commands don't show up in a server, register them there with `?regi
   - `name`: Tracked ability to remove
 - **`/settings wcl mechanic_list`** — List the abilities tracked in the Warcraft Logs overview
   - **Who:** Administrators and the moderator role · also `?settings wcl mechanic_list` · answers privately
+- **`/settings wcl enemy_add <name>`** — Track an enemy in /wcl damage_window, to see who damaged it and how much
+  - **Who:** Administrators and the moderator role · also `?settings wcl enemy_add` · answers privately
+  - `name`: The enemy's name as Warcraft Logs shows it, e.g. Sporecaller
+  - Give the name exactly as Warcraft Logs shows it in a report's Damage Done tab, by target; capitals don't matter. Every enemy with that name counts as one, so a pull's adds of one kind are added together.
+- **`/settings wcl enemy_remove <name>`** — Stop tracking an enemy in /wcl damage_window
+  - **Who:** Administrators and the moderator role · also `?settings wcl enemy_remove` · answers privately
+  - `name`: Tracked enemy to remove
+- **`/settings wcl enemy_list`** — List the enemies tracked in /wcl damage_window
+  - **Who:** Administrators and the moderator role · also `?settings wcl enemy_list` · answers privately
 - **`/settings wcl ignore_add <name>`** — Leave a player out of the Warcraft Logs overview
   - **Who:** Administrators and the moderator role · also `?settings wcl ignore_add` · answers privately
   - `name`: Character name, e.g. Tritonian
@@ -193,6 +202,16 @@ If the slash commands don't show up in a server, register them there with `?regi
   - `boss` (optional): Only the pulls of the boss whose name contains this
   - `report` (optional): Report link or code; defaults to the newest report from the registered uploader
   - Every use counts, in every pull, including once the raid had started wiping: this is about what the raid consumed. The abilities that count are the ones registered with `/settings wcl consumable_add`. Only Mythic boss pulls are included. Without a report, the newest report from the uploader registered with `/settings wcl source` is used.
+- **`/wcl damage_window <boss> <start> <end> [pull] [focus] [boss_damage] [report]`** — Post how much damage each player did to each tracked enemy in a moment of a pull
+  - **Who:** Administrators and the moderator role · slash only
+  - `boss`: The boss whose pull it is: a name, or part of one
+  - `start`: Start of the window, from the start of the pull: 40, 40s or 0:40
+  - `end`: End of the window, from the start of the pull: 60, 60s or 1:00
+  - `pull` (optional): Which pull of that boss, counting from 1; defaults to the last one
+  - `focus` (optional): A tracked enemy to set apart; the damage to the others is added together
+  - `boss_damage` (optional): Show boss against non-boss damage instead of the tracked enemies
+  - `report` (optional): Report link or code; defaults to the newest report from the registered uploader
+  - The times are counted from the start of the pull. Every enemy registered with `/settings wcl enemy_add` gets a ranking of the players who damaged it in that window, with the total each did; enemies with the same name count as one. With `focus`, one tracked enemy is set apart and the damage to the other tracked enemies is added together, in one ranking by the damage to the enemy set apart. With `boss_damage`, each player's damage is split instead into damage to the bosses, as Warcraft Logs counts them, and to everything else; no tracked enemies are needed. Only Mythic boss pulls are included. Without a report, the newest report from the uploader registered with `/settings wcl source` is used.
 - **`/wcl replay [report]`** — Post a replay link to the last wipe in a raid night's report
   - **Who:** Administrators and the moderator role · slash only
   - `report` (optional): Report link or code; defaults to the newest report from the registered uploader
@@ -246,4 +265,12 @@ If the slash commands don't show up in a server, register them there with `?regi
 | A message with the words **"Bot please"** (any case, any punctuation between them) | The AI assistant answers it in the channel. If the message is a reply, the message replied to goes along with the question | The AI assistant's access, like `/ask` |
 | A reply to one of the assistant's answers | Carries the conversation on | The AI assistant's access, like `/ask` |
 | A reply to someone's message with the words **"bot get them"** | Deletes the message replied to and barks. The bot needs Manage Messages in the channel | Moderator role, administrators and the developer role |
+| A message from **Tritonian** after 8 hours without one in the server | A message in the same channel: one of 5 responses, at random | Tritonian (username, global name or nickname) |
+| A message with **"Onlydam"** in it (any case) | A message in the same channel: "I miss him :(" or "I miss the jaguar warrior", at random. At most once every 24 hours per server | Everyone |
+| A message with **"Yuki"** in it (any case) | A message in the same channel: "Bring him back!!!!". At most once every 24 hours per server | Everyone |
+| A message with **"Nartana"** in it (any case) | A message in the same channel: "*Giggles*". At most once every 24 hours per server | Everyone |
+| A message with **"Sono"** in it (any case) | A reply: "the goat". At most once every 24 hours per server | Everyone |
+| A message with **"Getcha"** in it (any case) | A 25% chance of a reply: "Did you mean Bitcha?" | Everyone |
+| A message from **Kailanton** | A 2% chance of a message in the same channel: "thats right horsefly" | Kailanton (username, global name or nickname) |
+| Any of the reactions above | At most one reaction to a message (the first in this table wins), and at most one every 10 minutes per server. Chat with the AI assistant ("Bot please" and replies to its answers) sets nothing off and counts towards no cooldown. Nobody is pinged, not even by a reply. Kept in memory only: after the bot restarts, the first match is answered | As the reaction |
 | `@bot <command>` | The same as `?<command>` | As the command |

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..exception.warcraft_logs_exception import WarcraftLogsError
-from ..schema.wcl_report_schema import DeathEntry, Fight, PlayerEntry, Report, ReportSummary
+from ..schema.wcl_report_schema import Actor, DeathEntry, Fight, PlayerEntry, Report, ReportSummary
 
 NOT_PUBLIC = "That report doesn't exist, or isn't public."
 
@@ -82,8 +82,17 @@ def deaths_from_data(data: dict[str, Any]) -> list[DeathEntry]:
         raise _unexpected(e) from None
 
 
+def actors_from_data(data: dict[str, Any]) -> list[Actor]:
+    """The enemies (NPCs) of a report, from its master data."""
+    report = report_object(data)
+    try:
+        return [Actor(int(actor["id"]), str(actor["name"]), actor.get("subType") == "Boss") for actor in (report["masterData"] or {}).get("actors") or []]
+    except (KeyError, TypeError, ValueError) as e:
+        raise _unexpected(e) from None
+
+
 def player_entries_from_table(table: Any) -> list[PlayerEntry]:
-    """The entries of a damage taken or casts table."""
+    """The entries of a damage taken, damage done or casts table."""
     try:
         return [PlayerEntry(str(entry["name"]), str(entry.get("type") or ""), float(entry["total"])) for entry in table["data"]["entries"]]
     except (KeyError, TypeError, ValueError) as e:

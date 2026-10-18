@@ -1,5 +1,5 @@
 """`/settings wcl`: this server's Warcraft Logs settings: the API client, where reports come from, the
-abilities tracked, the players left out and the abilities counted as consumables.
+abilities and enemies tracked, the players left out and the abilities counted as consumables.
 
 A group of its own because Discord allows a command at most 25 subcommands, and `/settings` had more than
 that with these directly under it. `settings_resource.py` puts it under `/settings`.
@@ -16,11 +16,18 @@ from discord.ext import commands
 from ..core.discord_context import GulpContext, slash_context
 from ..core.permission_checks import check_is_admin_or_moderator, prefix_check, slash_check
 from ..schema.guild_settings_schema import ClearableSetting, WclCredentials, WclSource
-from ..schema.wcl_settings_schema import ALL_CONSUMABLE_KINDS, ConsumableKind, IgnorePlayerOutcome, RegisterConsumableOutcome, TrackAbilityOutcome
-from ..service import wcl_consumable_service, wcl_ignored_player_service, wcl_tracked_ability_service
+from ..schema.wcl_settings_schema import (
+    ALL_CONSUMABLE_KINDS,
+    ConsumableKind,
+    IgnorePlayerOutcome,
+    RegisterConsumableOutcome,
+    TrackAbilityOutcome,
+    TrackEnemyOutcome,
+)
+from ..service import wcl_consumable_service, wcl_ignored_player_service, wcl_tracked_ability_service, wcl_tracked_enemy_service
 from ..service.wcl_consumable_service import ids_of_kind
 from .resource_support import choice_value, meta, reply, require_guild, subcommand_required
-from .wcl_autocomplete import autocomplete_ignored_player, autocomplete_tracked_ability
+from .wcl_autocomplete import autocomplete_ignored_player, autocomplete_tracked_ability, autocomplete_tracked_enemy
 
 # The largest ID Warcraft Logs uses: its IDs are signed 32-bit integers, and zero is never one.
 MAX_WCL_ID = 2**31 - 1
@@ -35,7 +42,7 @@ def is_valid_wcl_id(value: int) -> bool:
     return 1 <= value <= MAX_WCL_ID
 
 
-@commands.hybrid_group(name="wcl", description="Warcraft Logs settings: API client, report source, abilities, ignored players, consumables")
+@commands.hybrid_group(name="wcl", description="Warcraft Logs settings: API client, report source, abilities, enemies, ignored players, consumables")
 async def settings_wcl(ctx: GulpContext) -> None:
     await subcommand_required(ctx)
 
@@ -149,6 +156,66 @@ async def wcl_mechanic_list(ctx: GulpContext) -> None:
 
 
 _sub(wcl_mechanic_list)
+
+
+# --- Tracked enemies ---
+
+
+@settings_wcl.command(name="enemy_add", description="Track an enemy in /wcl damage_window, to see who damaged it and how much")
+@prefix_check(check_is_admin_or_moderator)
+@app_commands.describe(name="The enemy's name as Warcraft Logs shows it, e.g. Sporecaller")
+async def wcl_enemy_add(ctx: GulpContext, name: str) -> None:
+    guild_id = require_guild(ctx)
+    name = name.strip()
+    if not name or len(name) > wcl_tracked_enemy_service.MAX_NAME_CHARS:
+        await reply(ctx, f"The name has to be 1 to {wcl_tracked_enemy_service.MAX_NAME_CHARS} characters.")
+        return
+
+    match await ctx.services.tracked_enemies.track(guild_id, name):
+        case TrackEnemyOutcome.ADDED:
+            message = f"Tracking **{name}**."
+        case TrackEnemyOutcome.ALREADY_TRACKED:
+            message = f"**{name}** is already tracked."
+        case TrackEnemyOutcome.FULL:
+            message = f"This server already tracks {wcl_tracked_enemy_service.MAX_TRACKED} enemies. Remove one with `/settings wcl enemy_remove` first."
+    await reply(ctx, message)
+
+
+_sub(
+    wcl_enemy_add,
+    "Give the name exactly as Warcraft Logs shows it in a report's Damage Done tab, by target; capitals don't matter. "
+    "Every enemy with that name counts as one, so a pull's adds of one kind are added together.",
+)
+
+
+@settings_wcl.command(name="enemy_remove", description="Stop tracking an enemy in /wcl damage_window")
+@prefix_check(check_is_admin_or_moderator)
+@app_commands.describe(name="Tracked enemy to remove")
+async def wcl_enemy_remove(ctx: GulpContext, name: str) -> None:
+    guild_id = require_guild(ctx)
+    name = name.strip()
+    if await ctx.services.tracked_enemies.untrack(guild_id, name):
+        await reply(ctx, f"No longer tracking **{name}**.")
+    else:
+        await reply(ctx, f"No tracked enemy is called **{name}**. See `/settings wcl enemy_list`.")
+
+
+_sub(wcl_enemy_remove)
+wcl_enemy_remove.autocomplete("name")(autocomplete_tracked_enemy)
+
+
+@settings_wcl.command(name="enemy_list", description="List the enemies tracked in /wcl damage_window")
+@prefix_check(check_is_admin_or_moderator)
+async def wcl_enemy_list(ctx: GulpContext) -> None:
+    guild_id = require_guild(ctx)
+    tracked = await ctx.services.tracked_enemies.list_tracked(guild_id)
+    if not tracked:
+        await reply(ctx, "No enemies are tracked. Add one with `/settings wcl enemy_add`.")
+        return
+    await reply(ctx, f"Tracked enemies ({len(tracked)} of {wcl_tracked_enemy_service.MAX_TRACKED}): {', '.join(f'**{name}**' for name in tracked)}")
+
+
+_sub(wcl_enemy_list)
 
 
 # --- Ignored players ---

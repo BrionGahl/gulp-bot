@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Sequence
 
-from ..core.text import ascii_lower
+from ..core.text import ascii_lower, pull_time
 from ..exception.warcraft_logs_exception import ReportRequestProblem, WarcraftLogsError
 from ..schema.guild_settings_schema import GuildSettings
 from ..schema.wcl_report_schema import (
@@ -14,23 +14,31 @@ from ..schema.wcl_report_schema import (
     WIPE_DEATHS,
     WIPE_WINDOW_MS,
     AbilityDamage,
+    Actor,
+    BossDamage,
+    BossRow,
     ConsumablesReport,
     ConsumableUse,
     DamageReport,
     DeathEntry,
     EncounterSummary,
+    EnemyDamage,
     Fight,
+    FocusDamage,
+    FocusRow,
     LastWipe,
     NewestReport,
     PlayerCount,
     PlayerEntry,
     PlayerTotal,
     PlayerTotals,
+    PullWindow,
     Report,
     ReportCode,
     ReportOverview,
     ReportSummary,
     ReportTarget,
+    WindowDamageReport,
 )
 from ..schema.wcl_settings_schema import ALL_CONSUMABLE_KINDS, ConsumableAbility, TrackedAbility
 
@@ -226,6 +234,168 @@ def build_last_wipe(code: str, fight: Fight, pull: int, death_times: Sequence[fl
         moment = max([fight.end_time, *death_times])
     position_ms = max(moment - REPLAY_LEAD_IN_MS, fight.start_time) - fight.start_time
     return LastWipe(code, fight.id, fight.name, pull, position_ms, wipe_found)
+
+
+# --- Damage done in a moment of a pull ---
+
+# The longest time into a pull that can be asked for: no boss pull lasts an hour.
+MAX_PULL_SECONDS = 59 * 60 + 59
+
+_SECONDS = re.compile(r"([0-9]{1,4})\s*s?")
+_MINUTES_SECONDS = re.compile(r"([0-9]{1,2}):([0-5][0-9])")
+
+
+def parse_pull_time(text: str) -> int | None:
+    """A time into a pull as an officer typed it, in seconds: `40`, `40s` or `1:05`. `None` if it isn't one."""
+    text = text.strip().lower()
+    if not text.isascii():
+        return None
+    if match := _MINUTES_SECONDS.fullmatch(text):
+        seconds = int(match.group(1)) * 60 + int(match.group(2))
+    elif match := _SECONDS.fullmatch(text):
+        seconds = int(match.group(1))
+    else:
+        return None
+    return seconds if seconds <= MAX_PULL_SECONDS else None
+
+
+def select_pull(fights: Sequence[Fight], boss: str, pull: int | None) -> tuple[Fight, int]:
+    """One pull of the boss whose name contains `boss`: the `pull`th of the report (from 1), or the last one
+    when `pull` is `None`. Returns it with which pull of the boss it is. Raises with what the report does
+    have when that pull isn't there, or when `boss` matches more than one boss."""
+    matching = select_fights(fights, boss)
+    names = sorted({fight.name for fight in matching})
+    if len(names) > 1:
+        raise WarcraftLogsError(f"`{boss.strip()}` matches more than one boss: {', '.join(names)}. Give more of the name.")
+    if not matching:
+        # Only when `boss` is blank: `select_fights` raises when a name matches nothing.
+        raise WarcraftLogsError("This report has no Mythic boss pulls.")
+    if pull is None:
+        return matching[-1], len(matching)
+    if not 1 <= pull <= len(matching):
+        raise WarcraftLogsError(f"This report has {len(matching)} Mythic pulls of {names[0]}. Pick one from 1 to {len(matching)}.")
+    return matching[pull - 1], pull
+
+
+def pull_window(fight: Fight, pull: int, start_seconds: int, end_seconds: int) -> PullWindow:
+    """The window of `fight` from `start_seconds` to `end_seconds` after it started, cut at the end of the
+    pull. Raises if it is empty, or starts after the pull ended."""
+    if end_seconds <= start_seconds:
+        raise WarcraftLogsError("The end of the window has to be after its start.")
+    length_ms = max(int(fight.end_time - fight.start_time), 0)
+    start_ms, end_ms = start_seconds * 1000, end_seconds * 1000
+    if start_ms >= length_ms:
+        raise WarcraftLogsError(f"Pull {pull} of {fight.name} lasted {pull_time(length_ms)}, so nothing happened from {pull_time(start_ms)} on.")
+    cut = end_ms > length_ms
+    return PullWindow(fight, pull, start_ms, min(end_ms, length_ms), cut)
+
+
+def enemy_targets(actors: Sequence[Actor], enemies: Sequence[str]) -> list[list[int]]:
+    """For each of `enemies` (names), in order, the IDs of every enemy of the report with that name,
+    ignoring case: adds with the same name count as one enemy."""
+    by_name: dict[str, list[int]] = {}
+    for actor in actors:
+        ids = by_name.setdefault(actor.name.strip().lower(), [])
+        if actor.id not in ids:
+            ids.append(actor.id)
+    return [by_name.get(name.strip().lower(), []) for name in enemies]
+
+
+def build_enemy_damage(name: str, target_ids: Sequence[int], tables: dict[int, list[PlayerEntry]], ignored: set[str]) -> EnemyDamage:
+    """The damage done to the enemy `name`: every one of its `target_ids` added together, per player."""
+    players: PlayerTotals = {}
+    for target_id in target_ids:
+        add_totals(players, tables.get(target_id, []), ignored)
+    ranking = ranked_players(players)
+    return EnemyDamage(name, bool(target_ids), sum(player.total for player in ranking), ranking)
+
+
+def build_focus_damage(focus: str, enemies: Sequence[EnemyDamage]) -> FocusDamage:
+    """The damage to the tracked enemy named `focus` set apart from the damage to all the other tracked
+    `enemies`, which is added together, per player."""
+    key = focus.strip().lower()
+    chosen = next((enemy for enemy in enemies if enemy.name.strip().lower() == key), None)
+    rest = [enemy for enemy in enemies if enemy is not chosen and enemy.in_report]
+
+    # Per player: (class, damage to the enemy set apart, damage to the rest).
+    players: dict[str, tuple[str, int, int]] = {}
+    for enemy, set_apart in [*([(chosen, True)] if chosen is not None else []), *((other, False) for other in rest)]:
+        for player in enemy.players:
+            class_name, focus_total, rest_total = players.get(player.name, (player.class_name, 0, 0))
+            if set_apart:
+                focus_total += player.total
+            else:
+                rest_total += player.total
+            players[player.name] = (class_name, focus_total, rest_total)
+
+    rows = [FocusRow(name, class_name, focus_total, rest_total) for name, (class_name, focus_total, rest_total) in players.items()]
+    rows.sort(key=lambda row: (-row.focus, -row.rest, row.name))
+    return FocusDamage(
+        name=chosen.name if chosen is not None else focus.strip(),
+        in_report=chosen is not None and chosen.in_report,
+        total=chosen.total if chosen is not None else 0,
+        rest_names=[enemy.name for enemy in rest],
+        rest_total=sum(enemy.total for enemy in rest),
+        players=rows,
+    )
+
+
+def boss_ids(actors: Sequence[Actor]) -> list[int]:
+    """The IDs of the enemies Warcraft Logs counts as bosses, each once."""
+    return list(dict.fromkeys(actor.id for actor in actors if actor.boss))
+
+
+def build_boss_damage(actors: Sequence[Actor], boss_tables: dict[int, list[PlayerEntry]], all_damage: Sequence[PlayerEntry], ignored: set[str]) -> BossDamage:
+    """Each player's damage to the bosses (`boss_tables`, by boss ID) against their damage to everything
+    else: their damage to every target (`all_damage`) less what went to the bosses."""
+    to_bosses: PlayerTotals = {}
+    for entries in boss_tables.values():
+        add_totals(to_bosses, entries, ignored)
+    to_all = totals_of(all_damage, ignored)
+
+    rows = []
+    for name in dict.fromkeys([*to_bosses, *to_all]):
+        class_name, boss_total = to_bosses.get(name, (to_all.get(name, ("", 0))[0], 0))
+        everything = to_all.get(name, (class_name, 0))[1]
+        rows.append(BossRow(name, class_name, boss_total, max(everything - boss_total, 0)))
+    rows.sort(key=lambda row: (-row.boss, -row.other, row.name))
+
+    names_by_id = {actor.id: actor.name for actor in actors}
+    hit = [names_by_id[boss_id] for boss_id, entries in boss_tables.items() if boss_id in names_by_id and any(entry.total > 0 for entry in entries)]
+    return BossDamage(
+        boss_names=list(dict.fromkeys(hit)),
+        boss_total=sum(row.boss for row in rows),
+        other_total=sum(row.other for row in rows),
+        players=rows,
+    )
+
+
+def build_window_damage_report(
+    report: Report,
+    window: PullWindow,
+    enemies: list[EnemyDamage],
+    ignored: int,
+    focus: FocusDamage | None = None,
+    boss_damage: BossDamage | None = None,
+) -> WindowDamageReport:
+    return WindowDamageReport(
+        code=report.code,
+        title=report.title,
+        started_at=report.started_at,
+        fight_id=window.fight.id,
+        boss=window.fight.name,
+        pull=window.pull,
+        kill=window.fight.kill,
+        start_ms=window.start_ms,
+        end_ms=window.end_ms,
+        cut_at_pull_end=window.cut_at_pull_end,
+        report_start_ms=window.report_start_ms,
+        report_end_ms=window.report_end_ms,
+        enemies=enemies,
+        ignored=ignored,
+        focus=focus,
+        boss_damage=boss_damage,
+    )
 
 
 # --- What an officer asked for ---

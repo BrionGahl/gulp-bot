@@ -184,7 +184,7 @@ def test_ids_above_the_signed_maximum_round_trip_as_the_rust_bot_stored_them():
 
 def test_migrations_are_read_as_sqlx_reads_them():
     migrations = load_migrations()
-    assert [migration.version for migration in migrations] == list(range(1, 16))
+    assert [migration.version for migration in migrations] == list(range(1, 17))
     first = migrations[0]
     assert first.description == "guild settings"
     raw = (Path(__file__).resolve().parent.parent / "migrations" / "0001_guild_settings.sql").read_bytes()

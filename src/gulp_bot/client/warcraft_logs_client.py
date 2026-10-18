@@ -17,6 +17,7 @@ from typing import Any
 from ..core.http_client import HttpClient, RequestFailed, RequestTimeout, status_text
 from ..exception.warcraft_logs_exception import WarcraftLogsError
 from ..mapper.warcraft_logs_response_mapper import (
+    actors_from_data,
     data_from_response,
     deaths_from_data,
     player_entries_from_table,
@@ -25,7 +26,7 @@ from ..mapper.warcraft_logs_response_mapper import (
     report_summaries_from_data,
 )
 from ..schema.guild_settings_schema import WclCredentials
-from ..schema.wcl_report_schema import WIPE_CUTOFF, DeathEntry, PlayerEntry, Report, ReportSummary
+from ..schema.wcl_report_schema import WIPE_CUTOFF, Actor, DeathEntry, PlayerEntry, Report, ReportSummary
 
 TOKEN_URL = "https://www.warcraftlogs.com/oauth/token"
 API_URL = "https://www.warcraftlogs.com/api/v2/client"
@@ -36,6 +37,10 @@ MYTHIC_DIFFICULTY = 5
 # The most fights asked about in one query. An uncut deaths table came back with exactly 200 entries,
 # which looks like a cap; with the cutoff a fight yields about two entries, so this stays well under it.
 FIGHTS_PER_QUERY = 50
+
+# The most enemies asked about in one damage done query, a table each. A tracked enemy with many adds of the
+# same name has an actor each, and a query with too many tables costs more of the API's hourly points.
+TARGETS_PER_QUERY = 25
 
 # How many of the guild's newest reports are searched for one from the registered uploader.
 REPORTS_TO_SEARCH = 25
@@ -68,6 +73,16 @@ DEATHS_QUERY = (
 # Every death in some pulls, with no cutoff: the replay needs to see the wipe itself.
 ALL_DEATHS_QUERY = "query($code: String!, $fightIDs: [Int]) { reportData { report(code: $code) { table(dataType: Deaths, fightIDs: $fightIDs) } } }"
 
+# The enemies of a report: their IDs in it, which the damage done tables filter by, and their names.
+ACTORS_QUERY = 'query($code: String!) { reportData { report(code: $code) { masterData { actors(type: "NPC") { id name subType } } } } }'
+
+# The damage done to everything in one pull between two moments, given in milliseconds since the start of
+# the report: every target together.
+ALL_DAMAGE_DONE_QUERY = (
+    "query($code: String!, $fightIDs: [Int], $startTime: Float, $endTime: Float) { reportData { report(code: $code) { "
+    "table(dataType: DamageDone, fightIDs: $fightIDs, startTime: $startTime, endTime: $endTime) } } }"
+)
+
 
 def table_alias(index: int) -> str:
     """The alias of the table for the ability at `index` in an abilities query."""
@@ -84,6 +99,22 @@ def ability_tables_query(data_type: str, ability_ids: Sequence[int], cut_off: bo
         for index, ability_id in enumerate(ability_ids)
     )
     return f"query($code: String!, $fightIDs: [Int]) {{ reportData {{ report(code: $code) {{{tables} }} }} }}"
+
+
+def target_alias(index: int) -> str:
+    """The alias of the table for the target at `index` in a damage done query."""
+    return f"t{index}"
+
+
+def damage_done_tables_query(target_ids: Sequence[int]) -> str:
+    """One damage done table per target (an enemy's ID in the report), each listing the players who damaged
+    it in one pull between two moments, given in milliseconds since the start of the report. No cutoff:
+    the moment is chosen by whoever asks."""
+    tables = "".join(
+        f" {target_alias(index)}: table(dataType: DamageDone, fightIDs: $fightIDs, startTime: $startTime, endTime: $endTime, targetID: {int(target_id)})"
+        for index, target_id in enumerate(target_ids)
+    )
+    return f"query($code: String!, $fightIDs: [Int], $startTime: Float, $endTime: Float) {{ reportData {{ report(code: $code) {{{tables} }} }} }}"
 
 
 def _chunks(items: list[int], size: int) -> Iterable[list[int]]:
@@ -151,6 +182,30 @@ class WarcraftLogsClient:
                 if table is not None:
                     entries.extend(player_entries_from_table(table))
         return tables
+
+    async def fetch_enemies(self, code: str) -> list[Actor]:
+        """The enemies (NPCs) of a report."""
+        return actors_from_data(await self.query(ACTORS_QUERY, {"code": code}))
+
+    async def fetch_damage_done_tables(self, code: str, fight_id: int, start_ms: int, end_ms: int, target_ids: list[int]) -> dict[int, list[PlayerEntry]]:
+        """For each of `target_ids`, the players who damaged it in pull `fight_id` between `start_ms` and
+        `end_ms` (milliseconds since the start of the report), and how much. Targets beyond
+        `TARGETS_PER_QUERY` take further requests."""
+        tables: dict[int, list[PlayerEntry]] = {}
+        variables = {"code": code, "fightIDs": [fight_id], "startTime": float(start_ms), "endTime": float(end_ms)}
+        for chunk in _chunks(target_ids, TARGETS_PER_QUERY):
+            report = report_object(await self.query(damage_done_tables_query(chunk), variables))
+            for index, target_id in enumerate(chunk):
+                table = report.get(target_alias(index))
+                tables[target_id] = player_entries_from_table(table) if table is not None else []
+        return tables
+
+    async def fetch_all_damage_done(self, code: str, fight_id: int, start_ms: int, end_ms: int) -> list[PlayerEntry]:
+        """The players' damage to every target together in pull `fight_id` between `start_ms` and `end_ms`
+        (milliseconds since the start of the report)."""
+        variables = {"code": code, "fightIDs": [fight_id], "startTime": float(start_ms), "endTime": float(end_ms)}
+        table = report_object(await self.query(ALL_DAMAGE_DONE_QUERY, variables)).get("table")
+        return player_entries_from_table(table) if table is not None else []
 
     async def query(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
         """Sends one GraphQL query and returns its data, or raises with the API's own error messages."""

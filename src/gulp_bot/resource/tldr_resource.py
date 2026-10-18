@@ -23,6 +23,9 @@ from .resource_support import meta, refuse, reply_in_chunks
 
 log = logging.getLogger(__name__)
 
+# What the bot says first, while it reads the channel back and the summary is written.
+INTRO = "*sucking all the data for the overlords*"
+
 # Messages are read back 100 at a time (Discord's most), at most this many times: 500 messages.
 MAX_PAGES = 5
 PAGE_SIZE = 100
@@ -83,6 +86,7 @@ async def post_summary(ctx: GulpContext, ai: AiAssistantService, settings: Guild
     posted."""
     # Reading the channel and the model both take longer than Discord waits for a first response.
     await ctx.defer()
+    await ctx.send(INTRO, allowed_mentions=NO_MENTIONS)
 
     now = int(time.time())
     try:

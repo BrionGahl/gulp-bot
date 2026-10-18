@@ -22,6 +22,17 @@ async def autocomplete_tracked_ability(interaction: discord.Interaction, partial
     return filter_choices(names, partial)
 
 
+async def autocomplete_tracked_enemy(interaction: discord.Interaction, partial: str) -> list[app_commands.Choice[str]]:
+    """The names of this server's tracked enemies that contain what has been typed so far."""
+    names: list[str] = []
+    if interaction.guild_id is not None and interaction_is_admin_or_moderator(interaction):
+        try:
+            names = await interaction.client.services.tracked_enemies.list_tracked(interaction.guild_id)  # type: ignore[attr-defined]
+        except Exception:
+            names = []
+    return filter_choices(names, partial)
+
+
 async def autocomplete_ignored_player(interaction: discord.Interaction, partial: str) -> list[app_commands.Choice[str]]:
     """The ignored players whose names contain what has been typed so far."""
     names: list[str] = []

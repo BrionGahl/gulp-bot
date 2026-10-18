@@ -26,6 +26,7 @@ from .repository.replay_message_memory_repository import ReplayMessageMemoryRepo
 from .repository.wcl_consumable_ability_repository import ConsumableAbilityRepository
 from .repository.wcl_ignored_player_repository import IgnoredPlayerRepository
 from .repository.wcl_tracked_ability_repository import TrackedAbilityRepository
+from .repository.wcl_tracked_enemy_repository import TrackedEnemyRepository
 from .service.ai_assistant_service import AiAssistantService
 from .service.announcement_service import AnnouncementService
 from .service.bot_get_them_service import BotGetThemService
@@ -38,10 +39,12 @@ from .service.officer_channel_service import OfficerChannelService
 from .service.raid_attendance_service import RaidAttendanceService
 from .service.raid_notes_service import RaidNotesService
 from .service.raid_report_service import RaidReportService
+from .service.reactions_service import ReactionsService
 from .service.warcraft_logs_service import WarcraftLogsService
 from .service.wcl_consumable_service import ConsumableService
 from .service.wcl_ignored_player_service import IgnoredPlayerService
 from .service.wcl_tracked_ability_service import TrackedAbilityService
+from .service.wcl_tracked_enemy_service import TrackedEnemyService
 
 if TYPE_CHECKING:
     import asyncpg
@@ -63,10 +66,13 @@ class Services:
     message_replay: MessageReplayService
     bot_get_them: BotGetThemService
     tracked_abilities: TrackedAbilityService
+    tracked_enemies: TrackedEnemyService
     ignored_players: IgnoredPlayerService
     consumables: ConsumableService
     warcraft_logs: WarcraftLogsService
     droptimizer: DroptimizerService
+    # The spontaneous reactions to messages: in-jokes of the guild.
+    reactions: ReactionsService
     # The AI assistant behind `/ask`, `/tldr` and "Bot please"; `None` without `ANTHROPIC_API_KEY`, unless it
     # runs on a local model (`AI_BACKEND=local`), which needs no key.
     ai: AiAssistantService | None
@@ -100,10 +106,12 @@ def build_services(
         message_replay=message_replay,
         bot_get_them=BotGetThemService(guild_settings, message_replay),
         tracked_abilities=tracked_abilities,
+        tracked_enemies=TrackedEnemyService(TrackedEnemyRepository(pool)),
         ignored_players=ignored_players,
         consumables=ConsumableService(ConsumableAbilityRepository(pool)),
         warcraft_logs=warcraft_logs,
         droptimizer=DroptimizerService(WowUtilsClient(http)),
+        reactions=ReactionsService(),
         ai=AiAssistantService.from_config(http, config),
     )
 

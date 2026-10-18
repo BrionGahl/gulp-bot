@@ -7,19 +7,23 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ..core.embed import MAX_DESCRIPTION_CHARS, MAX_EMBED_CHARS, MAX_FIELD_CHARS, MAX_TITLE_CHARS, Embed, add_field, new_embed
-from ..core.text import plural, truncate_with_ellipsis, utf8_length
+from ..core.text import plural, pull_time, truncate_with_ellipsis, utf8_length
 from ..schema.wcl_report_schema import (
     WIPE_CUTOFF,
     WIPE_DEATHS,
     WIPE_WINDOW_MS,
     AbilityDamage,
+    BossDamage,
     ConsumablesReport,
     ConsumableUse,
     DamageReport,
+    EnemyDamage,
+    FocusDamage,
     LastWipe,
     PlayerCount,
     PlayerTotal,
     ReportOverview,
+    WindowDamageReport,
 )
 
 # Room kept free in the overview for the footer note that says abilities were left out.
@@ -33,6 +37,7 @@ FIRST_DEATHS_SHOWN = 5
 DAMAGE_SHOWN_IN_OVERVIEW = 5
 DAMAGE_SHOWN = 15
 CONSUMABLE_PLAYERS_SHOWN = 10
+WINDOW_DAMAGE_SHOWN = 20
 
 
 def report_url(code: str) -> str:
@@ -44,6 +49,11 @@ def replay_url(wipe: LastWipe) -> str:
     # Rounded half away from zero, as the Rust bot did.
     position = math.floor(wipe.position_ms + 0.5)
     return f"{report_url(wipe.code)}?fight={wipe.fight_id}&view=replay&position={position}"
+
+
+def window_url(report: WindowDamageReport) -> str:
+    """The link to the Damage Done tab of the pull, narrowed to the same window."""
+    return f"{report_url(report.code)}?fight={report.fight_id}&type=damage-done&start={report.report_start_ms}&end={report.report_end_ms}"
 
 
 # --- /wcl report ---
@@ -170,6 +180,105 @@ def consumable_field(used: ConsumableUse) -> tuple[str, str]:
     return name, ranked_list(count_rows(used.players), CONSUMABLE_PLAYERS_SHOWN, MAX_FIELD_CHARS)
 
 
+# --- /wcl damage_window ---
+
+
+def window_damage_embed(report: WindowDamageReport) -> Embed:
+    window = f"{pull_time(report.start_ms)}–{pull_time(report.end_ms)}"
+    title = truncate_with_ellipsis(f"{report.boss} — pull {report.pull}, {window}", MAX_TITLE_CHARS)
+    outcome = "" if report.kill is None else (" (kill)" if report.kill else " (wipe)")
+    target = "the bosses and everything else" if report.boss_damage is not None else "the tracked enemies"
+    description = (
+        f"<t:{report.started_at}:F> · {truncate_with_ellipsis(report.title, MAX_ABILITY_NAME_CHARS)}\n"
+        f"Damage done to {target} from **{pull_time(report.start_ms)}** to **{pull_time(report.end_ms)}** of pull {report.pull}{outcome}"
+    )
+    if report.cut_at_pull_end:
+        description += f"\nThe pull ended at {pull_time(report.end_ms)}, so the window stops there."
+    if report.boss_damage is not None:
+        return boss_damage_embed(report, report.boss_damage, title, description)
+    footer = f"Enemies with the same name count as one.{ignored_note(report.ignored)}"
+    if report.focus is not None:
+        return focus_embed(report, report.focus, title, description, footer)
+
+    names = [enemy_field_name(enemy) for enemy in report.enemies]
+    # The fields share what is left of Discord's limit on the whole embed.
+    room = MAX_EMBED_CHARS - embed_chars(title, description, footer, [(name, "") for name in names])
+    per_field = min(MAX_FIELD_CHARS, room // max(len(names), 1))
+
+    embed = new_embed(title=title, url=window_url(report), description=description, footer=footer)
+    for name, enemy in zip(names, report.enemies, strict=True):
+        add_field(embed, name, enemy_field_value(enemy, per_field))
+    return embed
+
+
+def focus_embed(report: WindowDamageReport, focus: FocusDamage, title: str, description: str, footer: str) -> Embed:
+    """The embed with one enemy set apart: a single ranking, each player's damage to it and to the rest."""
+    description += f"\n**{truncate_with_ellipsis(focus.name, MAX_ABILITY_NAME_CHARS)}** set apart; the rest is {rest_text(focus.rest_names)}."
+    missing = [enemy.name for enemy in report.enemies if not enemy.in_report]
+    if missing:
+        description += f"\nNot in this report: {', '.join(missing)}."
+    description = truncate_with_ellipsis(description, MAX_DESCRIPTION_CHARS)
+
+    embed = new_embed(title=title, url=window_url(report), description=description, footer=footer)
+    name = truncate_with_ellipsis(f"{focus.name} — {format_damage(focus.total)} · the rest — {format_damage(focus.rest_total)}", MAX_TITLE_CHARS)
+    add_field(embed, name, focus_field_value(focus))
+    return embed
+
+
+def boss_damage_embed(report: WindowDamageReport, split: BossDamage, title: str, description: str) -> Embed:
+    """The embed of boss against non-boss damage: a single ranking, each player's damage to the bosses and to
+    everything else."""
+    if split.boss_names:
+        bosses = ", ".join(truncate_with_ellipsis(name, MAX_ABILITY_NAME_CHARS) for name in split.boss_names)
+        description += f"\nBosses: {bosses}."
+    description = truncate_with_ellipsis(description, MAX_DESCRIPTION_CHARS)
+    footer = f"Boss damage as Warcraft Logs counts it; non-boss is everything else the players damaged.{ignored_note(report.ignored)}"
+
+    embed = new_embed(title=title, url=window_url(report), description=description, footer=footer)
+    name = f"Boss — {format_damage(split.boss_total)} · non-boss — {format_damage(split.other_total)}"
+    if not split.players:
+        value = "Nobody did any damage in this window."
+    else:
+        rows = [RankingRow(row.name, row.class_name, f"{format_damage(row.boss)} · non-boss {format_damage(row.other)}") for row in split.players]
+        value = ranked_list(rows, WINDOW_DAMAGE_SHOWN, MAX_FIELD_CHARS)
+    add_field(embed, name, value)
+    return embed
+
+
+def rest_text(names: Sequence[str]) -> str:
+    """The other tracked enemies, as a sentence says them: `A`, `A and B`, `A, B and C`."""
+    if not names:
+        return "nothing: no other tracked enemy is in this report"
+    shown = [truncate_with_ellipsis(name, MAX_ABILITY_NAME_CHARS) for name in names]
+    return shown[0] if len(shown) == 1 else f"{', '.join(shown[:-1])} and {shown[-1]}"
+
+
+def focus_field_value(focus: FocusDamage) -> str:
+    """Who damaged the enemy set apart and the rest, most to the enemy set apart first. Always has a value."""
+    if not focus.in_report:
+        return "Not in this report. Check the name against the report's Damage Done tab, by target."
+    if not focus.players:
+        return "Nobody damaged the tracked enemies in this window."
+    rows = [RankingRow(row.name, row.class_name, f"{format_damage(row.focus)} · rest {format_damage(row.rest)}") for row in focus.players]
+    return ranked_list(rows, WINDOW_DAMAGE_SHOWN, MAX_FIELD_CHARS)
+
+
+def enemy_field_name(enemy: EnemyDamage) -> str:
+    name = truncate_with_ellipsis(enemy.name, MAX_ABILITY_NAME_CHARS)
+    if not enemy.in_report or not enemy.players:
+        return name
+    return f"{name} — {format_damage(enemy.total)} damage"
+
+
+def enemy_field_value(enemy: EnemyDamage, max_chars: int) -> str:
+    """Who damaged the enemy, most first. Always has a value, since Discord turns down an empty one."""
+    if not enemy.in_report:
+        return "Not in this report. Check the name against the report's Damage Done tab, by target."
+    if not enemy.players:
+        return "Nobody damaged it in this window."
+    return ranked_list(amount_rows(enemy.players), WINDOW_DAMAGE_SHOWN, max_chars)
+
+
 # --- /wcl replay ---
 
 
@@ -232,6 +341,11 @@ def death_rows(players: Sequence[PlayerCount]) -> list[RankingRow]:
 def count_rows(players: Sequence[PlayerTotal]) -> list[RankingRow]:
     """Each player's count, for a ranking of how many they used."""
     return [RankingRow(player.name, player.class_name, str(player.total)) for player in players]
+
+
+def amount_rows(players: Sequence[PlayerTotal]) -> list[RankingRow]:
+    """Each player's damage, for a ranking of how much they did."""
+    return [RankingRow(player.name, player.class_name, format_damage(player.total)) for player in players]
 
 
 def damage_rows(ability: AbilityDamage) -> list[RankingRow]:

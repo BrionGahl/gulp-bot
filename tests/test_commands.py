@@ -80,10 +80,14 @@ def test_the_commands_are_the_rust_bots():
         "settings wcl client",
         "settings wcl source",
         "settings wcl consumable_list",
+        "settings wcl enemy_add",
+        "settings wcl enemy_remove",
+        "settings wcl enemy_list",
         "settings clear",
         "announcement add",
         "wcl report",
         "wcl replay",
+        "wcl damage_window",
         "ai status",
         "ai check",
         "ask",
@@ -93,7 +97,7 @@ def test_the_commands_are_the_rust_bots():
     ]:
         assert expected in names
     assert len(settings.app_command.commands) == 20
-    assert len(settings_wcl.app_command.commands) == 11
+    assert len(settings_wcl.app_command.commands) == 14
     assert settings_wcl.app_command.qualified_name == "settings wcl"
 
 

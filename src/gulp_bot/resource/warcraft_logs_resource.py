@@ -16,12 +16,13 @@ from ..core.discord_helpers import NO_MENTIONS
 from ..core.embed import to_discord_embed
 from ..core.permission_checks import check_is_admin_or_moderator, slash_check
 from ..exception.warcraft_logs_exception import ReportRequestProblem, WarcraftLogsError
-from ..mapper.warcraft_logs_embed_mapper import consumables_embed, damage_embed, overview_embed, replay_embed
+from ..mapper.warcraft_logs_embed_mapper import consumables_embed, damage_embed, overview_embed, replay_embed, window_damage_embed
 from ..schema.guild_settings_schema import GuildSettings
 from ..schema.wcl_report_schema import ReportTarget
-from ..service.warcraft_logs_analysis_service import parse_report_target, resolve_ability
+from ..service.warcraft_logs_analysis_service import parse_pull_time, parse_report_target, resolve_ability
+from ..service.wcl_tracked_enemy_service import same_enemy
 from .resource_support import meta, refuse
-from .wcl_autocomplete import autocomplete_tracked_ability
+from .wcl_autocomplete import autocomplete_tracked_ability, autocomplete_tracked_enemy
 
 log = logging.getLogger(__name__)
 
@@ -221,6 +222,98 @@ meta(
         "Every use counts, in every pull, including once the raid had started wiping: this is about what the raid consumed. The abilities that count "
         "are the ones registered with `/settings wcl consumable_add`. Only Mythic boss pulls are included. Without a report, the newest report from "
         "the uploader registered with `/settings wcl source` is used."
+    ),
+)
+
+
+@wcl.command(name="damage_window", description="Post how much damage each player did to each tracked enemy in a moment of a pull")
+@slash_check(check_is_admin_or_moderator)
+@app_commands.describe(
+    boss="The boss whose pull it is: a name, or part of one",
+    start="Start of the window, from the start of the pull: 40, 40s or 0:40",
+    end="End of the window, from the start of the pull: 60, 60s or 1:00",
+    pull="Which pull of that boss, counting from 1; defaults to the last one",
+    focus="A tracked enemy to set apart; the damage to the others is added together",
+    boss_damage="Show boss against non-boss damage instead of the tracked enemies",
+    report=REPORT_DESCRIPTION,
+)
+@app_commands.autocomplete(focus=autocomplete_tracked_enemy)
+async def damage_window(
+    interaction: discord.Interaction,
+    boss: str,
+    start: str,
+    end: str,
+    pull: app_commands.Range[int, 1, 999] | None = None,
+    focus: str | None = None,
+    boss_damage: bool = False,
+    report: str | None = None,
+) -> None:
+    request = await start_request(interaction, report)
+    if request is None:
+        return
+    ctx, services = request.ctx, request.ctx.services
+    start_seconds, end_seconds = parse_pull_time(start), parse_pull_time(end)
+    if start_seconds is None or end_seconds is None:
+        wrong = start if start_seconds is None else end
+        await refuse(ctx, f"`{wrong.strip()}` isn't a time into the pull. Give seconds (`40`, `40s`) or minutes and seconds (`0:40`).")
+        return
+    if end_seconds <= start_seconds:
+        await refuse(ctx, "The end of the window has to be after its start.")
+        return
+    if boss_damage and focus is not None:
+        await refuse(ctx, "`focus` and `boss_damage` are two different views. Pick one.")
+        return
+    ignored = await services.ignored_players.list_ignored(request.guild_id)
+    if boss_damage:
+        await post_boss_damage(request, boss, pull, start_seconds, end_seconds, ignored)
+        return
+
+    enemies = await services.tracked_enemies.list_tracked(request.guild_id)
+    if not enemies:
+        await refuse(ctx, "No enemies are tracked on this server. Add them with `/settings wcl enemy_add`.")
+        return
+    if focus is not None:
+        chosen = next((name for name in enemies if same_enemy(name, focus)), None)
+        if chosen is None:
+            await refuse(ctx, f"`{focus.strip()}` isn't a tracked enemy. See `/settings wcl enemy_list`.")
+            return
+        focus = chosen
+
+    await ctx.defer()
+    code = await resolve_report_code(request)
+    if code is None:
+        return
+    try:
+        damage = await services.warcraft_logs.window_damage_report(request.client, code, boss, pull, start_seconds, end_seconds, enemies, ignored, focus)
+    except WarcraftLogsError as e:
+        await say_it_failed(ctx, e)
+        return
+    await ctx.send(embed=to_discord_embed(window_damage_embed(damage)), allowed_mentions=NO_MENTIONS)
+
+
+async def post_boss_damage(request: WclRequest, boss: str, pull: int | None, start_seconds: int, end_seconds: int, ignored: list[str]) -> None:
+    """`/wcl damage_window boss_damage:True`: boss against non-boss damage, which needs no tracked enemies."""
+    ctx = request.ctx
+    await ctx.defer()
+    code = await resolve_report_code(request)
+    if code is None:
+        return
+    try:
+        damage = await ctx.services.warcraft_logs.window_boss_damage_report(request.client, code, boss, pull, start_seconds, end_seconds, ignored)
+    except WarcraftLogsError as e:
+        await say_it_failed(ctx, e)
+        return
+    await ctx.send(embed=to_discord_embed(window_damage_embed(damage)), allowed_mentions=NO_MENTIONS)
+
+
+meta(
+    damage_window,
+    help_text=(
+        "The times are counted from the start of the pull. Every enemy registered with `/settings wcl enemy_add` gets a ranking of the players "
+        "who damaged it in that window, with the total each did; enemies with the same name count as one. With `focus`, one tracked enemy is set apart and the damage to the other tracked enemies "
+        "is added together, in one ranking by the damage to the enemy set apart. With `boss_damage`, each player's damage is split instead into "
+        "damage to the bosses, as Warcraft Logs counts them, and to everything else; no tracked enemies are needed. Only Mythic boss pulls are included. "
+        "Without a report, the newest report from the uploader registered with `/settings wcl source` is used."
     ),
 )
 

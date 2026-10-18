@@ -90,6 +90,18 @@ class PlayerEntry:
     total: float
 
 
+@dataclass(frozen=True)
+class Actor:
+    """An enemy (NPC) of a report, as its master data lists it. Each kind of enemy usually has one, but adds
+    can have several under the same name."""
+
+    # The ID the report gives it, which the tables filter by (`targetID`); not the game's NPC ID.
+    id: int
+    name: str
+    # Whether Warcraft Logs counts it as a boss (its `subType` is `Boss`): what its boss damage is done to.
+    boss: bool = False
+
+
 # A player's running total for one ability, by name: `(class, total)`.
 PlayerTotals = dict[str, tuple[str, int]]
 
@@ -186,6 +198,116 @@ class ConsumablesReport:
     # One entry for each kind, healthstones first.
     uses: list[ConsumableUse]
     ignored: int
+
+
+@dataclass(frozen=True)
+class EnemyDamage:
+    """The damage the players did to one tracked enemy in a moment of a pull: in all, and by each player."""
+
+    name: str
+    # Whether the report has an enemy by that name at all; if not, there is nothing to count.
+    in_report: bool
+    total: int
+    # Most damage first (ties in name order).
+    players: list[PlayerTotal]
+
+
+@dataclass(frozen=True)
+class FocusRow:
+    """One player's damage to the enemy set apart, and to the other tracked enemies together."""
+
+    name: str
+    class_name: str
+    focus: int
+    rest: int
+
+
+@dataclass(frozen=True)
+class FocusDamage:
+    """One tracked enemy set apart from the others, whose damage is added together: in all, and by player."""
+
+    name: str
+    # Whether the report has an enemy by that name at all.
+    in_report: bool
+    total: int
+    # The other tracked enemies that are in the report, whose damage makes up the rest.
+    rest_names: list[str]
+    rest_total: int
+    # Most damage to the enemy set apart first, then most to the rest (ties in name order).
+    players: list[FocusRow]
+
+
+@dataclass(frozen=True)
+class BossRow:
+    """One player's damage to the bosses, and to everything else."""
+
+    name: str
+    class_name: str
+    boss: int
+    other: int
+
+
+@dataclass(frozen=True)
+class BossDamage:
+    """The damage done to the bosses of a pull against the damage done to everything else, as Warcraft Logs
+    tells boss damage apart: in all, and by player."""
+
+    # The bosses that took damage in the window.
+    boss_names: list[str]
+    boss_total: int
+    other_total: int
+    # Most damage to the bosses first, then most to everything else (ties in name order).
+    players: list[BossRow]
+
+
+@dataclass(frozen=True)
+class WindowDamageReport:
+    """What `/wcl damage_window` shows: the damage done to each tracked enemy between two moments of a pull."""
+
+    code: str
+    title: str
+    started_at: int
+    fight_id: int
+    boss: str
+    # Which pull of this boss it was, counting from 1.
+    pull: int
+    kill: bool | None
+    # The window, in milliseconds since the start of the pull. `end_ms` is at most the pull's length.
+    start_ms: int
+    end_ms: int
+    # Whether the window asked for went past the end of the pull, and was cut there.
+    cut_at_pull_end: bool
+    # Milliseconds since the start of the report, for a link to the same moment.
+    report_start_ms: int
+    report_end_ms: int
+    # One entry per tracked enemy, in the order they are tracked.
+    enemies: list[EnemyDamage]
+    ignored: int
+    # With an enemy set apart (`focus`), its damage against the other tracked enemies' together.
+    focus: FocusDamage | None = None
+    # With `boss_damage`, the damage to the bosses against the damage to everything else; `enemies` is
+    # then empty.
+    boss_damage: BossDamage | None = None
+
+
+@dataclass(frozen=True)
+class PullWindow:
+    """A moment of one pull, asked for in seconds since the pull started."""
+
+    fight: Fight
+    pull: int
+    start_ms: int
+    end_ms: int
+    cut_at_pull_end: bool
+
+    @property
+    def report_start_ms(self) -> int:
+        """The start of the window in milliseconds since the start of the report, as the API takes it."""
+        return int(self.fight.start_time) + self.start_ms
+
+    @property
+    def report_end_ms(self) -> int:
+        return int(self.fight.start_time) + self.end_ms
 
 
 @dataclass(frozen=True)
