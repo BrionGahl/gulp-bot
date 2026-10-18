@@ -6,10 +6,11 @@ having spoken in the server too recently (`away_secs`). When it goes off, the bo
 `responses`, picked at random, in the same channel: as a plain message, or as a reply (`reply`). Either way
 it pings nobody.
 
-Messages that are chat with the AI assistant never reach this service (`message_event_resource`), so they
-set nothing off and count towards no cooldown. Two limits hold over all of them:
+Messages that are chat with the AI assistant, or in a clips channel, never reach this service
+(`message_event_resource`), so they set nothing off and count towards no cooldown. Two limits hold over all of them:
 - at most one reaction to a message: the first in `REACTIONS` that goes off wins;
-- at most one reaction every `MIN_GAP_SECS` in a server, whatever set it off.
+- at most one reaction every `MIN_GAP_SECS` in a server, whatever set it off, except for a reaction with
+  `ignores_gap`, which goes off regardless and doesn't start the gap.
 
 No Discord in here; times are `time.monotonic()` seconds. Everything is kept in memory only: after a
 restart every clock starts afresh, so the first match is answered (and someone the bot hasn't seen yet counts
@@ -47,6 +48,8 @@ class Reaction:
     away_secs: float | None = None
     # Whether the bot replies to the message rather than just saying something in the channel.
     reply: bool = False
+    # Whether it goes off even within `MIN_GAP_SECS` of another reaction, and without starting that gap.
+    ignores_gap: bool = False
 
 
 REACTIONS = [
@@ -54,6 +57,7 @@ REACTIONS = [
         name="tritonian_welcome_back",
         author="Tritonian",
         away_secs=8 * HOUR,
+        ignores_gap=True,
         responses=(
             "Welcome back, hairless one! Missed you :3",
             "Heeeeeeeello my favorite baldie",
@@ -154,8 +158,8 @@ class ReactionsService:
 
     def response_for(self, guild_id: int, author_id: int, names: Iterable[str | None], content: str, now: float) -> Response | None:
         """What the bot says to a message in `guild_id` by `author_id`, who goes by `names`, with `content`,
-        sent at `now`: the first reaction that goes off, if the server hasn't had one in `min_gap_secs`;
-        else nothing."""
+        sent at `now`: the first reaction that goes off, if the server hasn't had one in `min_gap_secs` (or the
+        reaction ignores that gap); else nothing."""
         names = list(names)
         set_off = [reaction for reaction in self._reactions if sets_off(reaction, names, content)]
 
@@ -163,9 +167,10 @@ class ReactionsService:
         back = {reaction.name for reaction in set_off if reaction.away_secs is not None and self._note_seen(guild_id, author_id, reaction, now)}
 
         last = self._last_reaction.get(guild_id)
-        if last is not None and now - last < self._min_gap_secs:
-            return None
+        in_gap = last is not None and now - last < self._min_gap_secs
         for reaction in set_off:
+            if in_gap and not reaction.ignores_gap:
+                continue
             if reaction.away_secs is not None and reaction.name not in back:
                 continue
             fired = self._last_fired.get((guild_id, reaction.name))
@@ -173,7 +178,8 @@ class ReactionsService:
                 continue
             if self._rng.random() >= reaction.chance:
                 continue
-            self._last_reaction[guild_id] = now
+            if not reaction.ignores_gap:
+                self._last_reaction[guild_id] = now
             self._last_fired[(guild_id, reaction.name)] = now
             return Response(reaction.name, self._rng.choice(reaction.responses), reaction.reply)
         return None
@@ -222,6 +228,8 @@ def describe(reaction: Reaction) -> tuple[str, str, str]:
     what = f"{how[0].upper()}{how[1:]}: {said}" if reaction.chance >= 1 else f"A {reaction.chance:.0%} chance of {how}: {said}"
     if reaction.cooldown_secs:
         what += f". At most once every {_duration(reaction.cooldown_secs)} per server"
+    if reaction.ignores_gap:
+        what += ". Not held back by, and doesn't count towards, the 10-minute limit below"
     return message, what, who
 
 
@@ -229,8 +237,9 @@ def limits_row(min_gap_secs: float = MIN_GAP_SECS) -> tuple[str, str, str]:
     """The row saying how the reactions are held back together."""
     return (
         "Any of the reactions above",
-        f"At most one reaction to a message (the first in this table wins), and at most one every {_duration(min_gap_secs)} per server. "
-        'Chat with the AI assistant ("Bot please" and replies to its answers) sets nothing off and counts towards no cooldown. '
+        f"At most one reaction to a message (the first in this table wins), and at most one every {_duration(min_gap_secs)} per server "
+        "(except those that say otherwise). "
+        'Chat with the AI assistant ("Bot please" and replies to its answers) and messages in clips channels set nothing off and count towards no cooldown. '
         "Nobody is pinged, not even by a reply. Kept in memory only: after the bot restarts, the first match is answered",
         "As the reaction",
     )

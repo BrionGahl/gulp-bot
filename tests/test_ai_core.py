@@ -62,14 +62,20 @@ def run(coroutine):
 
 
 def test_the_system_prompt_is_the_guilds_followed_by_the_chat_rules():
-    prompt = system_prompt("gulp-bot", load_guild_prompt(DEFAULT_SYSTEM_PROMPT_PATH))
-    assert prompt.startswith("We are a North American World of Warcraft Retail Guild")
-    assert "The hairless one" in prompt
-    assert "You are gulp-bot, the guild's Discord bot" in prompt
+    prompt = system_prompt("gulp-bot", "We are a guild.\nThe hairless one tanks.")
+    assert prompt.startswith("We are a guild.\nThe hairless one tanks.\n\nYou are gulp-bot, the guild's Discord bot")
     assert "[replying to Name:" in prompt
     assert TONE in prompt and "no pet names" in TONE and "start every sentence with a capital letter" in TONE
     assert FOCUS in prompt and "Answer just what you were asked" in FOCUS
     assert "\r" not in prompt
+
+
+def test_without_a_guild_prompt_it_starts_with_how_to_behave():
+    for empty in ["", "  \r\n\n "]:
+        prompt = system_prompt("gulp-bot", empty)
+        assert prompt.startswith("You are gulp-bot, the guild's Discord bot") and prompt.endswith(RULES)
+    # The file shipped with the bot can be left empty: it is read all the same.
+    assert isinstance(load_guild_prompt(DEFAULT_SYSTEM_PROMPT_PATH), str)
 
 
 def test_the_guild_prompt_is_read_whatever_its_line_endings(tmp_path):

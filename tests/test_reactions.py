@@ -44,7 +44,8 @@ def text_of(response):
 def test_the_reactions_are_the_ones_asked_for_in_order():
     assert [reaction.name for reaction in REACTIONS] == ["tritonian_welcome_back", "onlydam", "yuki", "nartana", "sono", "getcha", "horsefly"]
     trit = by_name("tritonian_welcome_back")
-    assert (trit.author, trit.away_secs, trit.reply) == ("Tritonian", 8 * HOUR, False)
+    assert (trit.author, trit.away_secs, trit.reply, trit.ignores_gap) == ("Tritonian", 8 * HOUR, False, True)
+    assert not any(reaction.ignores_gap for reaction in REACTIONS if reaction is not trit)
     assert trit.responses == (
         "Welcome back, hairless one! Missed you :3",
         "Heeeeeeeello my favorite baldie",
@@ -200,13 +201,20 @@ def test_at_most_one_reaction_every_ten_minutes_per_server():
     assert reactions.response_for(GUILD, SOMEONE, SOMEONE_NAMES, "onlydam", MIN_GAP_SECS) is not None
 
 
-def test_tritonians_clock_runs_even_when_the_limit_holds_his_greeting_back():
+def test_tritonian_is_greeted_within_the_ten_minutes_and_doesnt_start_them():
     reactions = service()
     assert reactions.response_for(GUILD, SOMEONE, SOMEONE_NAMES, "onlydam", 0) is not None
-    # He comes back during the ten minutes: no greeting, and his message still counts as having spoken.
-    assert reactions.response_for(GUILD, TRIT, TRIT_NAMES, "hi", 60) is None
-    assert reactions.response_for(GUILD, TRIT, TRIT_NAMES, "hi", MIN_GAP_SECS + 60) is None
-    assert reactions.response_for(GUILD, TRIT, TRIT_NAMES, "hi", 9 * HOUR) is not None
+    # He comes back during the ten minutes of another reaction: greeted all the same.
+    assert reactions.response_for(GUILD, TRIT, TRIT_NAMES, "hi", 60) is not None
+    # And his greeting doesn't hold the next reaction back: the gap still runs from onlydam.
+    assert reactions.response_for(GUILD, SOMEONE, SOMEONE_NAMES, "getcha", MIN_GAP_SECS - 1) is None
+    assert reactions.response_for(GUILD, SOMEONE, SOMEONE_NAMES, "getcha", MIN_GAP_SECS) is not None
+    # Greeted first, then a reaction right after: it isn't held back.
+    other = service()
+    assert other.response_for(GUILD, TRIT, TRIT_NAMES, "hi", 0) is not None
+    assert other.response_for(GUILD, SOMEONE, SOMEONE_NAMES, "getcha", 1) is not None
+    # Still one reaction per message, and his greeting still waits for him to have been away.
+    assert other.response_for(GUILD, TRIT, TRIT_NAMES, "hi", 2) is None
 
 
 def test_a_message_that_sets_nothing_off_changes_nothing():

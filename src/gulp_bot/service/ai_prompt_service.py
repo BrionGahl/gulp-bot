@@ -96,11 +96,10 @@ def load_guild_prompt(path: Path) -> str:
 
 def system_prompt(bot_name: str, guild_prompt: str) -> str:
     """The guild's prompt, then how to behave in a Discord chat (staying on the question: `FOCUS`), then the
-    rules."""
+    rules. The guild's prompt may be empty: the prompt then starts with how to behave."""
     guild = guild_prompt.replace("\r\n", "\n").strip()
     return (
-        f"{guild}\n\n"
-        f"You are {bot_name}, the guild's Discord bot, chatting with its members in a Discord server. "
+        (f"{guild}\n\n" if guild else "") + f"You are {bot_name}, the guild's Discord bot, chatting with its members in a Discord server. "
         'Every message you receive starts with the speaker\'s name and a colon, like "Name: message", '
         "and several people can talk to you in the same channel. A message may end with "
         '[replying to Name: "..."]: the message in the channel that the member replied to, given as '

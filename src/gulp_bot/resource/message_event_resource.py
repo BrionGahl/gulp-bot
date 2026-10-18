@@ -32,8 +32,11 @@ async def _converse(services: Services, message: discord.Message) -> None:
 
 def _react(services: Services, message: discord.Message) -> None:
     """The bot's spontaneous reaction to the message, if one goes off: at most one. Chat with the AI assistant
-    is left alone: it sets nothing off and counts towards no cooldown."""
+    is left alone, and so are clips channels, where only videos may stay: both set nothing off and count
+    towards no cooldown."""
     if message.guild is None or message.author.bot or talks_to_assistant(services, message):
+        return
+    if message.channel.id in services.guild_settings.get(message.guild.id).clips_channel_ids:
         return
     author = message.author
     names = [author.name, author.global_name, getattr(author, "nick", None)]
