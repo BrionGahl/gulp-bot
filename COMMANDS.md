@@ -222,7 +222,7 @@ If the slash commands don't show up in a server, register them there with `?regi
 - **`/ask <question>`** — Ask the guild's AI assistant anything
   - **Who:** Raider role, moderator role, administrators and the developer role (the AI assistant's access) · slash only
   - `question`: What do you want to ask?
-  - Only for raiders. The assistant remembers the last few questions asked in the same channel, and answers messages that say "Bot please" the same way. Reply to one of its answers to carry the conversation on.
+  - Only for raiders. The assistant remembers the last few questions asked in the same channel, and answers messages that say "Bot please" or "hey bot" the same way. Reply to one of its answers to carry the conversation on.
 
 *`/ai`: Only members with the developer role (`/settings dev_role`) can use these commands, and every use is written to the bot's log with who ran it. What is switched here applies only to the server the command is used in, and is kept when the bot restarts.*
 
@@ -262,7 +262,7 @@ If the slash commands don't show up in a server, register them there with `?regi
 
 | Message | What happens | Who |
 |---|---|---|
-| A message with the words **"Bot please"** (any case, any punctuation between them) | The AI assistant answers it in the channel. If the message is a reply, the message replied to goes along with the question | The AI assistant's access, like `/ask` |
+| A message with the words **"Bot please"** or **"hey bot"** (any case, any punctuation between them) | The AI assistant answers it in the channel. If the message is a reply, the message replied to goes along with the question | The AI assistant's access, like `/ask` |
 | A reply to one of the assistant's answers | Carries the conversation on | The AI assistant's access, like `/ask` |
 | A reply to someone's message with the words **"bot get them"** | Deletes the message replied to and barks. The bot needs Manage Messages in the channel | Moderator role, administrators and the developer role |
 | A message from **Tritonian** after 8 hours without one in the server | A message in the same channel: one of 18 responses, at random. Not held back by, and doesn't count towards, the 10-minute limit below | Tritonian (username, global name or nickname) |
@@ -272,5 +272,5 @@ If the slash commands don't show up in a server, register them there with `?regi
 | A message with **"Sono"** in it (any case) | A reply: "the goat". At most once every 24 hours per server | Everyone |
 | A message with **"Getcha"** in it (any case) | A 25% chance of a reply: "Did you mean Bitcha?" | Everyone |
 | A message from **Kailanton** | A 2% chance of a message in the same channel: "thats right horsefly" | Kailanton (Discord username only) |
-| Any of the reactions above | At most one reaction to a message (the first in this table wins), and at most one every 10 minutes per server (except those that say otherwise). Chat with the AI assistant ("Bot please" and replies to its answers) and messages in clips channels set nothing off and count towards no cooldown. Nobody is pinged, not even by a reply. Kept in memory only: after the bot restarts, the first match is answered | As the reaction |
+| Any of the reactions above | At most one reaction to a message (the first in this table wins), and at most one every 10 minutes per server (except those that say otherwise). Chat with the AI assistant ("Bot please", "hey bot" and replies to its answers) and messages in clips channels set nothing off and count towards no cooldown. Nobody is pinged, not even by a reply. Kept in memory only: after the bot restarts, the first match is answered | As the reaction |
 | `@bot <command>` | The same as `?<command>` | As the command |

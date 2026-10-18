@@ -14,7 +14,7 @@ the git history, up to commit `351747e`. Both use the same database, so one can 
 - **WoW Guild** — Bart Timeline Reminders addon info, class Discord links, and droptimizer report submission via WowUtils
 - **Clips channels** — deletes any message posted in a configured channel that doesn't contain a video (uploaded video file or an unfurled video link embed)
 - **Warcraft Logs** — officers get an overview of a raid night's report (Mythic pulls, who died the most, who died first, damage taken from tracked abilities, healthstones and health potions used) with `/wcl report`, `/wcl damage_taken` and `/wcl consumables`, posted in that week's raid notes thread; the overview is also posted there by itself after each raid
-- **AI assistant** — raiders ask Claude with `/ask` or by saying "Bot please" in a message; the guild's context and personality are in `ext_resources/system_prompt.md`. Off until `ANTHROPIC_API_KEY` is set
+- **AI assistant** — raiders ask Claude with `/ask` or by saying "Bot please" or "hey bot" in a message; the guild's context and personality are in `ext_resources/system_prompt.md`. Off until `ANTHROPIC_API_KEY` is set
 - **Personal officer channels** — when a member is given the trial or raider role, creates a private text channel for them under a configured category, visible only to them and the officer (moderator) role
 
 ## Deployment
@@ -180,7 +180,7 @@ They are registered per server with the `/settings` commands below.
 Only members with the Raider role (the one registered with `/settings`) or are Officers (they hold the registered moderator role, or are server administrators, who are treated like moderators everywhere in the bot) get answers; trials, and everyone else, don't. `/ask` tells them so privately, and "Bot please" is simply ignored. Raiders can ask in two ways:
 
 - `/ask <question>`
-- any message that has the words "Bot please" in it (any case; "Bot, please ..." works too). The bot answers as a reply to that message.
+- any message that has the words "Bot please" or "hey bot" in it (any case; "Bot, please ..." and "Hey, bot ..." work too). The bot answers as a reply to that message.
 - a reply to one of its answers (from `/ask` or "Bot please"), which carries the conversation on without saying "Bot please" again. A reply to anything else the bot posted doesn't count.
 
 When the message calling it replies to another message ("Bot please, what does he mean?"), the assistant also gets that message's author and text (up to 500 characters), as context. If an answer runs out of room, it ends with a note saying it was cut short; replying "continue" to it gets the rest.

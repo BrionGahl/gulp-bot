@@ -7,7 +7,7 @@ installed:
 
 The commands, their descriptions, parameters and notes come from the registered command tree, the same
 place `/help` reads them from, so the file can't say something the bot doesn't. Who may use a command comes
-from the checks on it. The few things members do without a command ("Bot please", "bot get them") are
+from the checks on it. The few things members do without a command ("Bot please", "hey bot", "bot get them") are
 written here by hand, in `MESSAGE_TRIGGERS`, except the spontaneous reactions, which are listed from
 `reactions_service.REACTIONS`.
 """
@@ -50,7 +50,7 @@ MESSAGE_TRIGGERS = f"""## Without a command
 
 | Message | What happens | Who |
 |---|---|---|
-| A message with the words **"Bot please"** (any case, any punctuation between them) | The AI assistant answers it in the channel. If the message is a reply, the message replied to goes along with the question | The AI assistant's access, like `/ask` |
+| A message with the words **"Bot please"** or **"hey bot"** (any case, any punctuation between them) | The AI assistant answers it in the channel. If the message is a reply, the message replied to goes along with the question | The AI assistant's access, like `/ask` |
 | A reply to one of the assistant's answers | Carries the conversation on | The AI assistant's access, like `/ask` |
 | A reply to someone's message with the words **"bot get them"** | Deletes the message replied to and barks. The bot needs Manage Messages in the channel | Moderator role, administrators and the developer role |
 {reaction_rows()}| `@bot <command>` | The same as `{PREFIX}<command>` | As the command |

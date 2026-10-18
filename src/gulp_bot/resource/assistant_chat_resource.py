@@ -1,4 +1,5 @@
-"""The AI assistant in the channels: answers messages that say "Bot please", and replies to its answers."""
+"""The AI assistant in the channels: answers messages that say "Bot please" or "hey bot", and replies to its
+answers."""
 
 from __future__ import annotations
 
@@ -14,22 +15,22 @@ from ..schema.ai_schema import Question
 from ..service.ai_access_service import access_for_member
 from ..service.ai_prompt_service import speaker_label
 from ..service.bot_get_them_service import replied_message
-from ..service.chat_trigger_service import mentions_bot_please
+from ..service.chat_trigger_service import calls_assistant
 
 log = logging.getLogger(__name__)
 
 
 def talks_to_assistant(services: Services, message: discord.Message) -> bool:
-    """Whether `message` is chat with the AI assistant: it says "Bot please", or it replies to one of the
+    """Whether `message` is chat with the AI assistant: it says "Bot please" or "hey bot", or it replies to one of the
     assistant's answers. Whether the assistant is on, or would answer its author, doesn't matter."""
-    if mentions_bot_please(message.content):
+    if calls_assistant(message.content):
         return True
     replied = replied_message(message)
     return services.ai is not None and replied is not None and services.ai.is_answer(replied.id)
 
 
 async def answer_if_called(services: Services, message: discord.Message) -> None:
-    """Answers `message` in its channel if it says "Bot please", or if it is a reply to one of the
+    """Answers `message` in its channel if it says "Bot please" or "hey bot", or if it is a reply to one of the
     assistant's answers (which carries the conversation on). If `message` replies to a message, that message
     goes along with the question, so "Bot please, what does he mean?" has something to go on.
 
@@ -42,7 +43,7 @@ async def answer_if_called(services: Services, message: discord.Message) -> None
         return
     replied = replied_message(message)
     replies_to_answer = replied is not None and ai.is_answer(replied.id)
-    if not replies_to_answer and not mentions_bot_please(message.content):
+    if not replies_to_answer and not calls_assistant(message.content):
         return
 
     settings = services.guild_settings.get(message.guild.id)

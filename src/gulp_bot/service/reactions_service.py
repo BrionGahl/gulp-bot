@@ -239,7 +239,7 @@ def limits_row(min_gap_secs: float = MIN_GAP_SECS) -> tuple[str, str, str]:
         "Any of the reactions above",
         f"At most one reaction to a message (the first in this table wins), and at most one every {_duration(min_gap_secs)} per server "
         "(except those that say otherwise). "
-        'Chat with the AI assistant ("Bot please" and replies to its answers) and messages in clips channels set nothing off and count towards no cooldown. '
+        'Chat with the AI assistant ("Bot please", "hey bot" and replies to its answers) and messages in clips channels set nothing off and count towards no cooldown. '
         "Nobody is pinged, not even by a reply. Kept in memory only: after the bot restarts, the first match is answered",
         "As the reaction",
     )

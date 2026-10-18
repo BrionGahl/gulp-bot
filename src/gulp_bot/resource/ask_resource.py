@@ -66,7 +66,7 @@ meta(
     ask,
     category="AI",
     help_text=(
-        'Only for raiders. The assistant remembers the last few questions asked in the same channel, and answers messages that say "Bot please" '
+        'Only for raiders. The assistant remembers the last few questions asked in the same channel, and answers messages that say "Bot please" or "hey bot" '
         "the same way. Reply to one of its answers to carry the conversation on."
     ),
 )

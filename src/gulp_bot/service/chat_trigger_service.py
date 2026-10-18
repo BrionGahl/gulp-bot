@@ -1,5 +1,5 @@
-"""The phrases members use to call on the bot in a channel: "Bot please" for the AI assistant, and "bot get
-them" to have a message deleted. No Discord in here."""
+"""The phrases members use to call on the bot in a channel: "Bot please" or "hey bot" for the AI assistant,
+and "bot get them" to have a message deleted. No Discord in here."""
 
 from __future__ import annotations
 
@@ -10,6 +10,17 @@ def mentions_bot_please(content: str) -> bool:
     """Whether the message calls the assistant: the words "bot please" in a row, in any case and with any
     punctuation between them ("Bot, please ...", "BOT PLEASE!"). "robot please" doesn't count."""
     return has_phrase(content, ["bot", "please"])
+
+
+def mentions_hey_bot(content: str) -> bool:
+    """Whether the message says "hey bot": those words in a row, like `mentions_bot_please` ("Hey, bot ...",
+    "HEY BOT!"). "they bot" and "hey bots" don't count."""
+    return has_phrase(content, ["hey", "bot"])
+
+
+def calls_assistant(content: str) -> bool:
+    """Whether the message calls the AI assistant: it says "Bot please" or "hey bot"."""
+    return mentions_bot_please(content) or mentions_hey_bot(content)
 
 
 def mentions_bot_get_them(content: str) -> bool:
