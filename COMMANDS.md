@@ -271,6 +271,6 @@ If the slash commands don't show up in a server, register them there with `?regi
 | A message with **"Nartana"** in it (any case) | A message in the same channel: "*Giggles*". At most once every 24 hours per server | Everyone |
 | A message with **"Sono"** in it (any case) | A reply: "the goat". At most once every 24 hours per server | Everyone |
 | A message with **"Getcha"** in it (any case) | A 25% chance of a reply: "Did you mean Bitcha?" | Everyone |
-| A message from **Kailanton** | A 2% chance of a message in the same channel: "thats right horsefly" | Kailanton (username, global name or nickname) |
+| A message from **Kailanton** | A 2% chance of a message in the same channel: "thats right horsefly" | Kailanton (Discord username only) |
 | Any of the reactions above | At most one reaction to a message (the first in this table wins), and at most one every 10 minutes per server. Chat with the AI assistant ("Bot please" and replies to its answers) sets nothing off and counts towards no cooldown. Nobody is pinged, not even by a reply. Kept in memory only: after the bot restarts, the first match is answered | As the reaction |
 | `@bot <command>` | The same as `?<command>` | As the command |

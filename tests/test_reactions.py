@@ -8,7 +8,7 @@ GUILD, OTHER_GUILD = 1, 2
 TRIT, KAI, SOMEONE = 10, 11, 12
 HOUR = 60 * 60
 TRIT_NAMES = ["tritonian", "Trit", None]
-KAI_NAMES = ["kai_99", None, "Kailanton"]
+KAI_NAMES = ["kailanton", "Kai", "The Horsefly"]
 SOMEONE_NAMES = ["someone", None, None]
 
 
@@ -77,7 +77,13 @@ def test_the_reactions_are_the_ones_asked_for_in_order():
     sono = by_name("sono")
     assert (sono.word, sono.chance, sono.cooldown_secs, sono.reply, sono.responses) == ("Sono", 1.0, 24 * HOUR, True, ("the goat",))
     horsefly = by_name("horsefly")
-    assert (horsefly.author, horsefly.chance, horsefly.reply, horsefly.responses) == ("Kailanton", 0.02, False, ("thats right horsefly",))
+    assert (horsefly.author, horsefly.username_only, horsefly.chance, horsefly.reply, horsefly.responses) == (
+        "Kailanton",
+        True,
+        0.02,
+        False,
+        ("thats right horsefly",),
+    )
     assert MIN_GAP_SECS == 10 * 60
 
 
@@ -89,6 +95,16 @@ def test_authors_are_known_by_any_of_their_names_and_words_are_found_anywhere_in
         assert sets_off(onlydam, SOMEONE_NAMES, content), content
     assert not sets_off(onlydam, SOMEONE_NAMES, "only dam")
     assert sets_off(getcha, SOMEONE_NAMES, "gonna GETCHA") and not sets_off(getcha, SOMEONE_NAMES, "gotcha")
+
+
+def test_kailanton_is_known_by_his_discord_username_only():
+    horsefly = by_name("horsefly")
+    assert sets_off(horsefly, KAI_NAMES, "") and sets_off(horsefly, ["KAILANTON", None, None], "")
+    # A global name or a server nickname of Kailanton isn't him.
+    assert not sets_off(horsefly, ["kai_99", "Kailanton", None], "")
+    assert not sets_off(horsefly, ["kai_99", None, "Kailanton"], "")
+    # Tritonian is still known by any of his names.
+    assert sets_off(by_name("tritonian_welcome_back"), ["trit_01", None, "Tritonian"], "")
 
 
 def test_tritonian_is_greeted_on_his_first_message_and_after_eight_hours_away():

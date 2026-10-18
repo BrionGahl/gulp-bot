@@ -35,6 +35,8 @@ class Reaction:
     responses: tuple[str, ...]
     # Set off by a member with this as their username, global name or server nickname, in any case.
     author: str | None = None
+    # With `author`: only the account's Discord username counts, not its global name or server nickname.
+    username_only: bool = False
     # Set off by a message with this in it, anywhere and in any case.
     word: str | None = None
     # The chance it goes off when it is set off.
@@ -108,6 +110,7 @@ REACTIONS = [
     Reaction(
         name="horsefly",
         author="Kailanton",
+        username_only=True,
         chance=0.02,
         responses=("thats right horsefly",),
     ),
@@ -128,10 +131,12 @@ def _same_name(a: str, b: str) -> bool:
 
 
 def sets_off(reaction: Reaction, names: Sequence[str | None], content: str) -> bool:
-    """Whether a message by a member with `names` (username, global name, nickname) and `content` sets
-    `reaction` off, before chance, cooldowns and limits."""
-    if reaction.author is not None and not any(name is not None and _same_name(name, reaction.author) for name in names):
-        return False
+    """Whether a message by a member with `names` (username, then global name and nickname) and `content`
+    sets `reaction` off, before chance, cooldowns and limits."""
+    if reaction.author is not None:
+        candidates = names[:1] if reaction.username_only else names
+        if not any(name is not None and _same_name(name, reaction.author) for name in candidates):
+            return False
     return reaction.word is None or reaction.word.lower() in content.lower()
 
 
@@ -202,7 +207,7 @@ def describe(reaction: Reaction) -> tuple[str, str, str]:
             message += f' with **"{reaction.word}"** in it (any case)'
         if reaction.away_secs is not None:
             message += f" after {_duration(reaction.away_secs)} without one in the server"
-        who = f"{reaction.author} (username, global name or nickname)"
+        who = f"{reaction.author} ({'Discord username only' if reaction.username_only else 'username, global name or nickname'})"
     else:
         message = f'A message with **"{reaction.word}"** in it (any case)'
         who = "Everyone"
