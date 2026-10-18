@@ -51,6 +51,19 @@ def test_the_reactions_are_the_ones_asked_for_in_order():
         "Trit!!!! How was the pushing yesterday, furless one?",
         "Haaaaaaaaai Trit! if it ain't the chrome dome himself!",
         "*Holds the giggle* hii Trit :)",
+        "Welcome back Trit! Your head is still the best mirror in Azeroth",
+        "Trit!!!! How many depleted keys did we bring back today?",
+        "*Shields eyes* oh it's just Trit, thought the sun came in",
+        "Hiiii Trit :) still the most aerodynamic tank in the guild",
+        "Heeeello Trit! Wind resistance: zero. Key timer: crushed",
+        "*Polishes the welcome mat and Trit's head* hiii!",
+        "Heeey Trit! Shampoo budget still at zero I see",
+        "Trit! Every guild needs a north star, ours just happens to be your head",
+        "*Adjusts sunglasses* sup Trit",
+        "*Plays dramatic entrance music* the Trit has arrived",
+        "Trit is here! Who needs a world buff when we have the dome",
+        "Trit returns! The guild's MVP: Most Visible Pate",
+        "*Puts on welding goggles* okay, hi Trit",
     )
     onlydam = by_name("onlydam")
     assert (onlydam.word, onlydam.cooldown_secs, onlydam.chance, onlydam.reply) == ("Onlydam", 24 * HOUR, 1.0, False)
@@ -62,7 +75,7 @@ def test_the_reactions_are_the_ones_asked_for_in_order():
     nartana = by_name("nartana")
     assert (nartana.word, nartana.chance, nartana.cooldown_secs, nartana.reply, nartana.responses) == ("Nartana", 1.0, 24 * HOUR, False, ("*Giggles*",))
     sono = by_name("sono")
-    assert (sono.word, sono.chance, sono.cooldown_secs, sono.reply, sono.responses) == ("Sono", 1.0, 0.0, True, ("the goat",))
+    assert (sono.word, sono.chance, sono.cooldown_secs, sono.reply, sono.responses) == ("Sono", 1.0, 24 * HOUR, True, ("the goat",))
     horsefly = by_name("horsefly")
     assert (horsefly.author, horsefly.chance, horsefly.reply, horsefly.responses) == ("Kailanton", 0.02, False, ("thats right horsefly",))
     assert MIN_GAP_SECS == 10 * 60
@@ -119,12 +132,16 @@ def test_nartana_is_giggled_at_once_a_day_per_server():
     assert reactions.response_for(GUILD, SOMEONE, SOMEONE_NAMES, "nartana", 24 * HOUR) is not None
 
 
-def test_sono_is_replied_to_whenever_someone_says_it():
+def test_sono_is_replied_to_once_a_day_per_server():
+    for content in ["Sono", "is SONO on tonight?", "sono!"]:
+        response = service(gap=0).response_for(GUILD, SOMEONE, SOMEONE_NAMES, content, 0)
+        assert response is not None and response.text == "the goat" and response.reply, content
     reactions = service(gap=0)
     assert reactions.response_for(GUILD, SOMEONE, SOMEONE_NAMES, "so no", 0) is None
-    for n, content in enumerate(["Sono", "is SONO on tonight?", "sono!"]):
-        response = reactions.response_for(GUILD, SOMEONE, SOMEONE_NAMES, content, n)
-        assert response is not None and response.text == "the goat" and response.reply, content
+    assert reactions.response_for(GUILD, SOMEONE, SOMEONE_NAMES, "sono", 0) is not None
+    assert reactions.response_for(GUILD, SOMEONE, SOMEONE_NAMES, "sono", 24 * HOUR - 1) is None
+    assert reactions.response_for(OTHER_GUILD, SOMEONE, SOMEONE_NAMES, "sono", 1) is not None
+    assert reactions.response_for(GUILD, SOMEONE, SOMEONE_NAMES, "sono", 24 * HOUR) is not None
 
 
 def test_getcha_and_horsefly_go_off_by_chance():

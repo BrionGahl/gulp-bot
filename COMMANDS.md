@@ -265,7 +265,7 @@ If the slash commands don't show up in a server, register them there with `?regi
 | A message with the words **"Bot please"** (any case, any punctuation between them) | The AI assistant answers it in the channel. If the message is a reply, the message replied to goes along with the question | The AI assistant's access, like `/ask` |
 | A reply to one of the assistant's answers | Carries the conversation on | The AI assistant's access, like `/ask` |
 | A reply to someone's message with the words **"bot get them"** | Deletes the message replied to and barks. The bot needs Manage Messages in the channel | Moderator role, administrators and the developer role |
-| A message from **Tritonian** after 8 hours without one in the server | A message in the same channel: one of 5 responses, at random | Tritonian (username, global name or nickname) |
+| A message from **Tritonian** after 8 hours without one in the server | A message in the same channel: one of 18 responses, at random | Tritonian (username, global name or nickname) |
 | A message with **"Onlydam"** in it (any case) | A message in the same channel: "I miss him :(" or "I miss the jaguar warrior", at random. At most once every 24 hours per server | Everyone |
 | A message with **"Yuki"** in it (any case) | A message in the same channel: "Bring him back!!!!". At most once every 24 hours per server | Everyone |
 | A message with **"Nartana"** in it (any case) | A message in the same channel: "*Giggles*". At most once every 24 hours per server | Everyone |
