@@ -191,7 +191,7 @@ Its rules (in `RULES` in `src/gulp_bot/service/ai_prompt_service.py`, after the 
 
 #### `/tldr`
 
-`/tldr` sums up the channel it is used in, plainly and only with what was said: the last 4 hours of chat, stopping at the first pause of an hour or more between two messages, read back from Discord when it is asked (up to 500 messages; the oldest are left out if the chat is too long). Bots' messages are left out. It is for the same members as `/ask` and follows `/ai off` and maintenance mode. Each channel can have one every hour; until then, `/tldr` privately points to the last one. A summary counts towards `ANTHROPIC_DAILY_LIMIT`, not towards a member's own limit, and a reply to it carries on with the assistant. The bot needs the Read Message History permission in the channel. The cooldown is kept in memory, so a restart lets every channel be summed up again.
+`/tldr` sums up the channel it is used in, in one plain paragraph about what was talked about, without saying who said what: the last 4 hours of chat, stopping at the first pause of an hour or more between two messages, read back from Discord when it is asked (up to 500 messages; the oldest are left out if the chat is too long). Bots' messages are left out. It is for the same members as `/ask` and follows `/ai off` and maintenance mode. Each channel can have one every hour; until then, `/tldr` privately points to the last one. A summary counts towards `ANTHROPIC_DAILY_LIMIT`, not towards a member's own limit, and a reply to it carries on with the assistant. The bot needs the Read Message History permission in the channel. The cooldown is kept in memory, so a restart lets every channel be summed up again.
 
 #### "bot get them"
 
