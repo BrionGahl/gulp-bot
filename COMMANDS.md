@@ -235,7 +235,7 @@ If the slash commands don't show up in a server, register them there with `?regi
   - `user`: The member whose limit to reset
 - **`/ai check`** — Check the registered roles, the API key and the model
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
-- **`/tldr`** — Sum up this channel's recent chat, with jokes
+- **`/tldr`** — Sum up this channel's recent chat
   - **Who:** Raider role, moderator role, administrators and the developer role (the AI assistant's access) · slash only
   - Reads back up to 4 hours, stopping at the first pause of an hour or more. One per channel per hour: until then, it points to the last one. Only for raiders.
 

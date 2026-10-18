@@ -1,4 +1,4 @@
-"""`/tldr`: a funny summary of the channel's recent chat."""
+"""`/tldr`: a plain summary of the channel's recent chat."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ MAX_PAGES = 5
 PAGE_SIZE = 100
 
 
-@app_commands.command(name="tldr", description="Sum up this channel's recent chat, with jokes")
+@app_commands.command(name="tldr", description="Sum up this channel's recent chat")
 @app_commands.guild_only()
 async def tldr(interaction: discord.Interaction) -> None:
     ctx = await slash_context(interaction)

@@ -197,7 +197,7 @@ class AiAssistantService:
         return with_cut_short_note(answer, cut_short)
 
     async def summarize(self, access: Access, settings: AiSettings, transcript: str, omitted: int) -> str:
-        """A funny summary of a channel's conversation, written out in `transcript` (`omitted` older messages
+        """A plain summary of a channel's conversation, written out in `transcript` (`omitted` older messages
         didn't fit), asked for by a member with `access`. Counts towards the limit for all members together,
         but not towards the member's own: `/tldr` has its own cooldown. Not kept in the channel's memory.
         Raises `AskError` if there is no summary."""
