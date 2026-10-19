@@ -157,7 +157,7 @@ DATABASE_URL=<Postgres connection URL, e.g. postgres://gulp:<password>@db:5432/g
 ANTHROPIC_API_KEY=<API key from console.anthropic.com>
 ANTHROPIC_MODEL=<Claude model; defaults to claude-sonnet-5-5>
 ANTHROPIC_EFFORT=<low, medium, high...; defaults to low; off doesn't send the setting>
-ANTHROPIC_DAILY_LIMIT=<most questions answered in 24 hours, all members together; defaults to 100>
+AI_DAILY_LIMIT=<most questions answered in 24 hours, all members together; defaults to 100>
 AI_BACKEND=<anthropic or local; defaults to anthropic. local runs the model with Ollama and needs no key>
 LOCAL_MODEL_URL=<Ollama server for AI_BACKEND=local; defaults to http://ollama:11434>
 LOCAL_MODEL=<model Ollama runs; defaults to qwen3.5:9b>
@@ -185,13 +185,13 @@ Only members with the Raider role (the one registered with `/settings`) or are O
 
 When the message calling it replies to another message ("Bot please, what does he mean?"), the assistant also gets that message's author and text (up to 500 characters), as context. If an answer runs out of room, it ends with a note saying it was cut short; replying "continue" to it gets the rest.
 
-It answers with Claude through the Anthropic API, which is billed per use and separately from a Claude subscription. Set a monthly spending limit in the Anthropic Console. It remembers the last 8 turns of each channel (in memory only, forgotten after an hour without questions or when the bot restarts), each member may ask up to 10 times in 10 minutes, and the assistant answers at most `ANTHROPIC_DAILY_LIMIT` questions (100 by default) in any 24 hours, from everybody together; a question that gets no answer because of an error doesn't count. What it was told in a channel is remembered with the access level of whoever asked and is shown only to members of that level or higher, so what an Officer was told isn't repeated to a raider. It never pings anyone.
+It answers with Claude through the Anthropic API, which is billed per use and separately from a Claude subscription. Set a monthly spending limit in the Anthropic Console. It remembers the last 8 turns of each channel (in memory only, forgotten after an hour without questions or when the bot restarts), each member may ask up to 10 times in 10 minutes, and the assistant answers at most `AI_DAILY_LIMIT` questions (100 by default) in any 24 hours, from everybody together; a question that gets no answer because of an error doesn't count. What it was told in a channel is remembered with the access level of whoever asked and is shown only to members of that level or higher, so what an Officer was told isn't repeated to a raider. It never pings anyone.
 
 Its rules (in `RULES` in `src/gulp_bot/service/ai_prompt_service.py`, after the guild text so editing that can't remove them): it only speaks English, stays away from politics, doesn't violate human rights or demean people, only an Officer may ask it to do anything involving Warcraft Logs, and only an Officer may ask it to change any file, setting or data. It can't change anything today, so that last rule is only the model's own behaviour; any tool added later that changes something must check `Access.OFFICER` in code, not trust the prompt.
 
 #### `/tldr`
 
-`/tldr` sums up the channel it is used in, in one plain paragraph about what was talked about, without saying who said what: the last 4 hours of chat, stopping at the first pause of an hour or more between two messages, read back from Discord when it is asked (up to 500 messages; the oldest are left out if the chat is too long). Bots' messages are left out. The bot first says *sucking all the data for the overlords*, then posts the summary. It is for the same members as `/ask` and follows `/ai off` and maintenance mode. Each channel can have one every hour; until then, `/tldr` privately points to the last one. A summary counts towards `ANTHROPIC_DAILY_LIMIT`, not towards a member's own limit, and a reply to it carries on with the assistant. The bot needs the Read Message History permission in the channel. The cooldown is kept in memory, so a restart lets every channel be summed up again.
+`/tldr` sums up the channel it is used in, in one plain paragraph about what was talked about, without saying who said what: the last 4 hours of chat, stopping at the first pause of an hour or more between two messages, read back from Discord when it is asked (up to 500 messages; the oldest are left out if the chat is too long). Bots' messages are left out. The bot first says *sucking all the data for the overlords*, then posts the summary. It is for the same members as `/ask` and follows `/ai off` and maintenance mode. Each channel can have one every hour; until then, `/tldr` privately points to the last one. A summary counts towards `AI_DAILY_LIMIT`, not towards a member's own limit, and a reply to it carries on with the assistant. The bot needs the Read Message History permission in the channel. The cooldown is kept in memory, so a restart lets every channel be summed up again.
 
 #### "bot get them"
 
@@ -220,41 +220,26 @@ The token counts and the failures are kept in memory and start again when the bo
 
 With `AI_BACKEND=local` the assistant asks a model on your own GPU instead of Claude, through [Ollama](https://ollama.com), and nothing it is told leaves the machine. No Anthropic key is needed. Everything else works the same (access, limits, memory, replies, `/ai`), except that `/ai effort` does nothing (`/ai think` is its local counterpart) and `/ai usage` shows the tokens as free. A local model answers one question at a time; the others wait their turn.
 
-The default model, `qwen3.5:9b`, fits a 12 GB GPU such as an RTX 3060. To run it next to the bot, add an `ollama` service to the stack on a network with no internet access, and put the bot on that network too:
+The default model, `qwen3.5:9b`, fits a 12 GB GPU such as an RTX 3060. `docker-compose.ollama.yml` runs it next to the bot: added on top of `docker-compose.yml`, it starts an `ollama` service on a network with no way out (`ai`), puts the bot on that network too, and sets `AI_BACKEND=local`. `docker-compose.yml` itself stays as it is, so a host without a GPU is unaffected.
 
-```yaml
-services:
-  ollama:
-    image: ollama/ollama:<pin a version>
-    restart: unless-stopped
-    volumes:
-      - ollama:/root/.ollama
-    environment:
-      OLLAMA_KEEP_ALIVE: 24h   # keep the model loaded on the GPU
-    networks: [ai]
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+The GPU needs the NVIDIA driver and, on Linux, the NVIDIA Container Toolkit (Docker Desktop on Windows passes the GPU through WSL2). Then:
 
-  gulp-bot:
-    # ...as above, plus:
-    environment:
-      AI_BACKEND: local
-    networks: [default, ai]   # the internet for Discord, and the model
+1. Set `OLLAMA_VERSION` to an Ollama release tag from [Docker Hub](https://hub.docker.com/r/ollama/ollama/tags), next to the other variables. The file refuses to run without it, so the version never changes by itself.
+2. Download the model once. The `ai` network can't reach the internet, so `ollama-pull` does it from the default network into the same volume, and exits; it never runs with the stack:
 
-networks:
-  ai:
-    internal: true            # no route out of it
+   ```shell
+   docker compose -f docker-compose.yml -f docker-compose.ollama.yml --profile pull run --rm ollama-pull
+   ```
 
-volumes:
-  ollama:
-```
+   It downloads `LOCAL_MODEL` (`qwen3.5:9b` unless set). The model stays in the `ollama-data` volume; run it again only to change models.
+3. Start the stack with both files:
 
-The GPU needs the NVIDIA driver and, on Linux, the NVIDIA Container Toolkit (Docker Desktop on Windows passes the GPU through WSL2). The `ai` network can't reach the internet, so download the model once before moving Ollama onto it: start the service on the default network, run `docker exec -it <ollama container> ollama pull qwen3.5:9b`, then switch it back. The model stays in the `ollama` volume. Then run `/ai check`: it says whether the bot reaches Ollama and whether the model is installed.
+   ```shell
+   docker compose -f docker-compose.yml -f docker-compose.ollama.yml up -d
+   ```
+
+   In Portainer, add `docker-compose.ollama.yml` as an additional path of a stack deployed from the Git repository, or paste in the merged file that `docker compose -f docker-compose.yml -f docker-compose.ollama.yml config --no-interpolate` prints (without `--no-interpolate`, it would hold the values of your `.env`, the token and passwords included).
+4. Check that Ollama found the GPU: `docker logs gulp-bot-ollama` names it when it starts. On the CPU alone, answers take minutes. Then run `/ai check` in Discord: it says whether the bot reaches Ollama and whether the model is installed. The first answer is slower, while the model loads onto the GPU.
 
 If Ollama runs on another computer, set `LOCAL_MODEL_URL` to it (e.g. `http://192.168.1.20:11434`) and only let the bot's host reach that port: Ollama has no password. Qwen thinks before it answers unless told not to; the bot tells it not to (`LOCAL_MODEL_THINK=false`), which makes answers quicker. If a model rejects that, set `LOCAL_MODEL_THINK=default`. `/ai think` switches it per server without a restart. With thinking on, a request may use up to 4096 tokens, the thinking included, instead of 1024.
 

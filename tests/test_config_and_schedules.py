@@ -30,7 +30,7 @@ def test_the_defaults_are_the_rust_bots():
     assert config.bot_name == "gulp-bot"
     assert config.anthropic_model == "claude-sonnet-5-5"
     assert config.anthropic_effort == "low"
-    assert config.anthropic_daily_limit == 100
+    assert config.ai_daily_limit == 100
     assert config.ai_backend is AiBackend.ANTHROPIC
     assert config.local_model_url == "http://ollama:11434"
     assert config.local_model == "qwen3.5:9b"
@@ -48,11 +48,11 @@ def test_the_prompt_and_the_migrations_are_at_the_root_of_the_repository():
 
 
 def test_empty_variables_mean_unset_and_off_sends_no_effort():
-    config = Config.from_env(env(ANTHROPIC_API_KEY="", ANTHROPIC_MODEL=" ", ANTHROPIC_EFFORT="OFF", ANTHROPIC_DAILY_LIMIT="7"))
+    config = Config.from_env(env(ANTHROPIC_API_KEY="", ANTHROPIC_MODEL=" ", ANTHROPIC_EFFORT="OFF", AI_DAILY_LIMIT="7"))
     assert config.anthropic_api_key is None
     assert config.anthropic_model == "claude-sonnet-5-5"
     assert config.anthropic_effort is None
-    assert config.anthropic_daily_limit == 7
+    assert config.ai_daily_limit == 7
     assert Config.from_env(env(ANTHROPIC_EFFORT="High")).anthropic_effort == "high"
 
 
@@ -62,7 +62,7 @@ def test_bad_variables_are_refused():
     with pytest.raises(ConfigError):
         Config.from_env(env(LOG_LEVEL="loud"))
     with pytest.raises(ConfigError):
-        Config.from_env(env(ANTHROPIC_DAILY_LIMIT="lots"))
+        Config.from_env(env(AI_DAILY_LIMIT="lots"))
 
 
 def test_the_backend_is_anthropic_unless_set_to_local():

@@ -57,7 +57,7 @@ class Config:
     anthropic_effort: str | None
     # The most questions the assistant answers in 24 hours, from everybody together: what keeps the
     # bill from running away (or, with a local model, the GPU from being kept busy). Default 100.
-    anthropic_daily_limit: int
+    ai_daily_limit: int
     # Which model answers: Claude through the Anthropic API, or a model on the guild's own hardware
     # through Ollama (`AI_BACKEND=local`). Default: Anthropic.
     ai_backend: AiBackend
@@ -101,13 +101,13 @@ class Config:
         else:
             anthropic_effort = effort.lower()
 
-        daily_limit = optional("ANTHROPIC_DAILY_LIMIT")
+        daily_limit = optional("AI_DAILY_LIMIT")
         if daily_limit is None:
-            anthropic_daily_limit = 100
+            ai_daily_limit = 100
         elif daily_limit.isascii() and daily_limit.isdigit():
-            anthropic_daily_limit = int(daily_limit)
+            ai_daily_limit = int(daily_limit)
         else:
-            raise ConfigError("Failed to parse `ANTHROPIC_DAILY_LIMIT` env variable. It must be a whole number.")
+            raise ConfigError("Failed to parse `AI_DAILY_LIMIT` env variable. It must be a whole number.")
 
         return cls(
             discord_token=required("DISCORD_TOKEN"),
@@ -117,7 +117,7 @@ class Config:
             anthropic_api_key=optional("ANTHROPIC_API_KEY"),
             anthropic_model=optional("ANTHROPIC_MODEL") or "claude-sonnet-5-5",
             anthropic_effort=anthropic_effort,
-            anthropic_daily_limit=anthropic_daily_limit,
+            ai_daily_limit=ai_daily_limit,
             ai_backend=parse_backend(optional("AI_BACKEND")),
             local_model_url=optional("LOCAL_MODEL_URL") or "http://ollama:11434",
             local_model=optional("LOCAL_MODEL") or "qwen3.5:9b",

@@ -14,10 +14,7 @@ services:
       BOT_NAME: ${BOT_NAME:-gulp-bot}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # AI assistant (`/ask` and "Bot please"); without a key it stays off. Empty means "use the default".
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
-      ANTHROPIC_EFFORT: ${ANTHROPIC_EFFORT:-}
-      ANTHROPIC_DAILY_LIMIT: ${ANTHROPIC_DAILY_LIMIT:-}
+      AI_DAILY_LIMIT: ${AI_DAILY_LIMIT:-}
       # A model on your own GPU instead of Claude: AI_BACKEND=local and an Ollama server (see the
       # README, "Running the model locally"). Empty means "use the default".
       AI_BACKEND: ${AI_BACKEND:-}

@@ -40,7 +40,7 @@ FORGET_AFTER = 60.0 * 60
 MAX_REQUESTS_PER_USER = 10
 RATE_LIMIT_WINDOW = 10.0 * 60
 
-# The window of the limit on all members together (`ANTHROPIC_DAILY_LIMIT` requests in it), which caps the
+# The window of the limit on all members together (`AI_DAILY_LIMIT` requests in it), which caps the
 # bill whatever the number of members. It slides: it is the last 24 hours, not a calendar day.
 DAILY_WINDOW = 24.0 * 60 * 60
 
@@ -102,7 +102,7 @@ class AiAssistantService:
             log.info("AI assistant enabled, using local model %s at %s", config.local_model, url)
             model_client, model, effort = OllamaClient(http, url), config.local_model, None
         guild_prompt = load_guild_prompt(config.system_prompt_path)
-        return cls(model_client, model, effort, system_prompt(config.bot_name, guild_prompt), config.anthropic_daily_limit, think=config.local_model_think)
+        return cls(model_client, model, effort, system_prompt(config.bot_name, guild_prompt), config.ai_daily_limit, think=config.local_model_think)
 
     # --- What it runs on ---
 
