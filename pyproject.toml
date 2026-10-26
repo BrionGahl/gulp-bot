@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gulp-bot"
+version = "0.1.0"
+description = "A Discord bot for a World of Warcraft raiding guild"
+requires-python = ">=3.13"
+dependencies = [
+    "discord.py==2.6.4",
+    "asyncpg==0.30.0",
+    "aiohttp==3.12.15",
+    "tzdata==2025.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 160
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "ASYNC"]
+ignore = ["E501", "ASYNC109"]
+
+[tool.pyright]
+include = ["src", "tests", "scripts"]
+pythonVersion = "3.13"
+typeCheckingMode = "standard"

@@ -1,0 +1,63 @@
+# The AI assistant on a model of your own, served by Ollama on this host's NVIDIA GPU (AI_BACKEND=local, the
+# default in docker-compose.yml).
+# Added on top of docker-compose.yml, which stays as it is for a host without a GPU:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.ollama.yml up -d
+#
+# Ollama sits on a network with no way out (`ai`): only the bot talks to it, and nothing it is told can
+# leave the machine. The model is downloaded once into the `ollama-data` volume by the `ollama-pull`
+# service, which is on the default network and only runs when asked for (see the README):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.ollama.yml --profile pull run --rm ollama-pull
+
+services:
+  gulp-bot:
+    # The internet for Discord, and the model.
+    networks: [default, ai]
+    depends_on:
+      ollama:
+        condition: service_started
+
+  ollama:
+    image: ollama/ollama:${OLLAMA_VERSION:?set OLLAMA_VERSION to an Ollama release tag, from hub.docker.com/r/ollama/ollama/tags}
+    container_name: gulp-bot-ollama
+    restart: unless-stopped
+    environment:
+      # Keep the model loaded on the GPU between questions.
+      OLLAMA_KEEP_ALIVE: 24h
+    volumes:
+      - ollama-data:/root/.ollama
+    networks: [ai]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Downloads the model into the same volume, then exits. On the default network, the only way out to the
+  # internet; it never runs with the stack, only with `--profile pull run`.
+  ollama-pull:
+    image: ollama/ollama:${OLLAMA_VERSION:?set OLLAMA_VERSION to an Ollama release tag, from hub.docker.com/r/ollama/ollama/tags}
+    profiles: [pull]
+    volumes:
+      - ollama-data:/root/.ollama
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'ollama serve >/dev/null 2>&1 & until ollama list >/dev/null 2>&1; do sleep 1; done; ollama pull "$${LOCAL_MODEL:-qwen3.5:9b}"'
+    environment:
+      LOCAL_MODEL: ${LOCAL_MODEL:-}
+
+networks:
+  ai:
+    # No route out of it.
+    internal: true
+
+volumes:
+  ollama-data:

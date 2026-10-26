@@ -1,4 +1,9 @@
-/target
 .idea
 .env
 gulp-bot-*.tar
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
