@@ -23,6 +23,21 @@ The bot is packaged as a Docker image and runs on a self-hosted Docker host next
 container, managed together as a Portainer stack. There is no registry involved: the image is built locally, exported to
 a tarball, and loaded onto the host.
 
+### Requirements
+
+Estimates for sizing the host (a VM or a container), not measurements:
+
+| What runs | CPU | Memory | Disk | GPU |
+| --- | --- | --- | --- | --- |
+| The bot and Postgres (`docker-compose.yml`), with the model elsewhere or the assistant on Claude | 1–2 cores | 1 GB | ~2 GB: the images and the database | none |
+| Also Ollama with `qwen3.5:9b` (`docker-compose.ollama.yml`) | 4 cores | 8 GB in all, 16 GB to be comfortable | ~10 GB more: the model (6.6 GB) and the Ollama image | NVIDIA, 8 GB of VRAM at least, 12 GB to be comfortable (an RTX 3060 12 GB answers at about 35 tokens a second) |
+
+On Proxmox, the GPU has to be passed through to the VM that runs Docker (PCI passthrough), with the NVIDIA
+driver and the NVIDIA Container Toolkit installed in that VM. Without a GPU, Ollama runs the model on the
+CPU: it needs about 12 GB of memory and answers a few tokens a second, so a reply takes a minute or more.
+A model that doesn't fit in the GPU's memory spills over to the CPU and slows down the same way;
+`docker exec gulp-bot-ollama ollama ps` says how it is split.
+
 ### Building the image
 
 The `Dockerfile` installs the pinned dependencies (`requirements.txt`) into the official `python:3.13-slim`
@@ -158,7 +173,7 @@ ANTHROPIC_API_KEY=<API key from console.anthropic.com>
 ANTHROPIC_MODEL=<Claude model; defaults to claude-sonnet-5-5>
 ANTHROPIC_EFFORT=<low, medium, high...; defaults to low; off doesn't send the setting>
 AI_DAILY_LIMIT=<most questions answered in 24 hours, all members together; defaults to 100>
-AI_BACKEND=<anthropic or local; defaults to anthropic. local runs the model with Ollama and needs no key>
+AI_BACKEND=<anthropic or local; the bot defaults to anthropic, docker-compose.yml to local. local runs the model with Ollama and needs no key>
 LOCAL_MODEL_URL=<Ollama server for AI_BACKEND=local; defaults to http://ollama:11434>
 LOCAL_MODEL=<model Ollama runs; defaults to qwen3.5:9b>
 LOCAL_MODEL_THINK=<false, true or default; defaults to false (no "thinking", quicker answers); `/ai think` changes it per server>
@@ -220,7 +235,7 @@ The token counts and the failures are kept in memory and start again when the bo
 
 With `AI_BACKEND=local` the assistant asks a model on your own GPU instead of Claude, through [Ollama](https://ollama.com), and nothing it is told leaves the machine. No Anthropic key is needed. Everything else works the same (access, limits, memory, replies, `/ai`), except that `/ai effort` does nothing (`/ai think` is its local counterpart) and `/ai usage` shows the tokens as free. A local model answers one question at a time; the others wait their turn.
 
-The default model, `qwen3.5:9b`, fits a 12 GB GPU such as an RTX 3060. `docker-compose.ollama.yml` runs it next to the bot: added on top of `docker-compose.yml`, it starts an `ollama` service on a network with no way out (`ai`), puts the bot on that network too, and sets `AI_BACKEND=local`. `docker-compose.yml` itself stays as it is, so a host without a GPU is unaffected.
+The default model, `qwen3.5:9b`, fits a 12 GB GPU such as an RTX 3060. `docker-compose.ollama.yml` runs it next to the bot: added on top of `docker-compose.yml`, it starts an `ollama` service on a network with no way out (`ai`), and puts the bot on that network too. `docker-compose.yml` already defaults `AI_BACKEND` to `local`; on a host with no Ollama server, the assistant answers that it couldn't get an answer, and `/ai check` says why.
 
 The GPU needs the NVIDIA driver and, on Linux, the NVIDIA Container Toolkit (Docker Desktop on Windows passes the GPU through WSL2). Then:
 

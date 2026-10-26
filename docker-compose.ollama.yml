@@ -1,4 +1,5 @@
-# The AI assistant on a model of your own, served by Ollama on this host's NVIDIA GPU (AI_BACKEND=local).
+# The AI assistant on a model of your own, served by Ollama on this host's NVIDIA GPU (AI_BACKEND=local, the
+# default in docker-compose.yml).
 # Added on top of docker-compose.yml, which stays as it is for a host without a GPU:
 #
 #   docker compose -f docker-compose.yml -f docker-compose.ollama.yml up -d
@@ -11,8 +12,6 @@
 
 services:
   gulp-bot:
-    environment:
-      AI_BACKEND: ${AI_BACKEND:-local}
     # The internet for Discord, and the model.
     networks: [default, ai]
     depends_on:

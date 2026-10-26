@@ -13,16 +13,17 @@ services:
       # as unset for these two.
       BOT_NAME: ${BOT_NAME:-gulp-bot}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      # AI assistant (`/ask` and "Bot please"); without a key it stays off. Empty means "use the default".
-      AI_DAILY_LIMIT: ${AI_DAILY_LIMIT:-}
-      # A model on your own GPU instead of Claude: AI_BACKEND=local and an Ollama server (see the
-      # README, "Running the model locally"). Empty means "use the default".
-      AI_BACKEND: ${AI_BACKEND:-}
-      LOCAL_MODEL_URL: ${LOCAL_MODEL_URL:-}
-      LOCAL_MODEL: ${LOCAL_MODEL:-}
-      LOCAL_MODEL_THINK: ${LOCAL_MODEL_THINK:-}
-      # The AI assistant's guild prompt; empty means the one in the image (ext_resources/system_prompt.md).
-      SYSTEM_PROMPT_PATH: ${SYSTEM_PROMPT_PATH:-}
+      # The AI assistant (`/ask`, "Bot please", "hey bot"). By default it answers with a model on your own
+      # hardware, through the Ollama server at LOCAL_MODEL_URL, so nothing members write leaves your
+      # machines; docker-compose.ollama.yml runs that server next to the bot (see the README, "Running the
+      # model locally"). Each value below is the default when it isn't set in .env.
+      AI_DAILY_LIMIT: ${AI_DAILY_LIMIT:-100}
+      AI_BACKEND: ${AI_BACKEND:-local}
+      LOCAL_MODEL_URL: ${LOCAL_MODEL_URL:-http://ollama:11434}
+      LOCAL_MODEL: ${LOCAL_MODEL:-qwen3.5:9b}
+      LOCAL_MODEL_THINK: ${LOCAL_MODEL_THINK:-false}
+      # What the assistant knows about the guild: the file in the image, unless you mount your own.
+      SYSTEM_PROMPT_PATH: ${SYSTEM_PROMPT_PATH:-/app/ext_resources/system_prompt.md}
       # database; `db` is the service name below, reachable on the stack's private network
       DATABASE_URL: postgres://gulp:${POSTGRES_PASSWORD}@db:5432/gulp
     depends_on:
