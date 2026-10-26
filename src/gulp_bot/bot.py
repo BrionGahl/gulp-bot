@@ -112,6 +112,9 @@ class GulpBot(commands.Bot):
     async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
         await member_event_resource.on_member_updated(self.services, after)
 
+    async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel) -> None:
+        await member_event_resource.on_channel_deleted(self.services, channel)
+
     # --- Command logging and errors ---
 
     async def on_command(self, ctx: commands.Context[Any]) -> None:

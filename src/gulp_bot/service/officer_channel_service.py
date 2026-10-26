@@ -108,5 +108,15 @@ class OfficerChannelService:
         one on record."""
         return await self._repository.delete(guild_id, user_id)
 
+    async def forget_deleted_channel(self, guild_id: int, channel_id: int, channel_name: str) -> None:
+        """When a recorded personal officer channel is deleted (e.g. by an officer cleaning up after a member
+        leaves the raid team), drops its row, so the bot creates a fresh channel if the member is given the
+        trial or raider role again. Any other channel is no concern of this."""
+        try:
+            if await self._repository.delete_channel(guild_id, channel_id):
+                log.info("Personal officer channel #%s was deleted; forgot its registration", channel_name)
+        except Exception as e:
+            log.error("Failed to forget deleted personal officer channel #%s: %s", channel_name, e)
+
     async def list_registered(self, guild_id: int) -> list[RegisteredOfficerChannel]:
         return await self._repository.list_for_guild(guild_id)

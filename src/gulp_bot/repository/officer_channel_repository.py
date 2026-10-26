@@ -41,6 +41,14 @@ class OfficerChannelRepository:
         status = await self._pool.execute("DELETE FROM personal_officer_channels WHERE guild_id = $1 AND user_id = $2", to_bigint(guild_id), to_bigint(user_id))
         return rows_affected(status) == 1
 
+    async def delete_channel(self, guild_id: int, channel_id: int) -> bool:
+        """Forgets whichever member's row records `channel_id` as their channel. Returns whether there was
+        one."""
+        status = await self._pool.execute(
+            "DELETE FROM personal_officer_channels WHERE guild_id = $1 AND channel_id = $2", to_bigint(guild_id), to_bigint(channel_id)
+        )
+        return rows_affected(status) > 0
+
     async def list_for_guild(self, guild_id: int) -> list[RegisteredOfficerChannel]:
         """Every member of `guild_id` with a row, oldest first."""
         rows = await self._pool.fetch(

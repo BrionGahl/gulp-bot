@@ -68,7 +68,7 @@ def test_migrating_twice_changes_nothing():
     async def test(pool):
         await run_migrations(pool)
         rows = await pool.fetch("SELECT version, success FROM _sqlx_migrations ORDER BY version")
-        assert [row["version"] for row in rows] == list(range(1, 16)) and all(row["success"] for row in rows)
+        assert [row["version"] for row in rows] == list(range(1, 17)) and all(row["success"] for row in rows)
 
     with_pool(test)
 
@@ -176,6 +176,11 @@ def test_a_member_can_only_be_claimed_once_per_guild():
         assert await channels.delete(GUILD_A, bob)
         assert not await channels.delete(GUILD_A, bob)
         assert await channels.claim(GUILD_A, bob)
+
+        # Deleting a member's channel forgets their row, but only in that channel's guild.
+        assert not await channels.delete_channel(GUILD_B, 40)
+        assert await channels.delete_channel(GUILD_A, 40)
+        assert await channels.claim(GUILD_A, alice)
 
     with_pool(test)
 
