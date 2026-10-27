@@ -10,6 +10,7 @@ import discord
 
 from ..container import Services
 from ..core.discord_helpers import NO_MENTIONS
+from ..service.reactions_service import reacts_in
 from .assistant_chat_resource import answer_if_called, talks_to_assistant
 
 log = logging.getLogger(__name__)
@@ -31,10 +32,13 @@ async def _converse(services: Services, message: discord.Message) -> None:
 
 
 def _react(services: Services, message: discord.Message) -> None:
-    """The bot's spontaneous reaction to the message, if one goes off: at most one. Chat with the AI assistant
-    is left alone, and so are clips channels, where only videos may stay: both set nothing off and count
-    towards no cooldown."""
-    if message.guild is None or message.author.bot or talks_to_assistant(services, message):
+    """The bot's spontaneous reaction to the message, if one goes off: at most one. Only in the reaction
+    channels (`reacts_in`); chat with the AI assistant is left alone, and so are clips channels, where only
+    videos may stay. None of those set anything off, count towards a cooldown or count as the author having
+    spoken."""
+    if message.guild is None or message.author.bot or not reacts_in(_channel_name(message.channel)):
+        return
+    if talks_to_assistant(services, message):
         return
     if message.channel.id in services.guild_settings.get(message.guild.id).clips_channel_ids:
         return
@@ -43,6 +47,13 @@ def _react(services: Services, message: discord.Message) -> None:
     response = services.reactions.response_for(message.guild.id, author.id, names, message.content, time.monotonic())
     if response is not None:
         services.tasks.spawn(_send(message, response.text, response.reply))
+
+
+def _channel_name(channel: object) -> str | None:
+    """The name of the channel a message is in; for a thread, that of the channel the thread is in."""
+    if isinstance(channel, discord.Thread):
+        channel = channel.parent
+    return getattr(channel, "name", None)
 
 
 async def _send(message: discord.Message, text: str, reply: bool) -> None:

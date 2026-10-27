@@ -6,8 +6,9 @@ having spoken in the server too recently (`away_secs`). When it goes off, the bo
 `responses`, picked at random, in the same channel: as a plain message, or as a reply (`reply`). Either way
 it pings nobody.
 
-Messages that are chat with the AI assistant, or in a clips channel, never reach this service
-(`message_event_resource`), so they set nothing off and count towards no cooldown. Two limits hold over all of them:
+Only messages in the channels of `REACTION_CHANNELS` (or in their threads) reach this service, and not chat
+with the AI assistant or messages in a clips channel (`message_event_resource`). Anything else sets nothing
+off, counts towards no cooldown, and doesn't count as the author having spoken. Two limits hold over all of them:
 - at most one reaction to a message: the first in `REACTIONS` that goes off wins;
 - at most one reaction every `MIN_GAP_SECS` in a server, whatever set it off, except for a reaction with
   `ignores_gap`, which goes off regardless and doesn't start the gap.
@@ -27,6 +28,14 @@ HOUR = 60 * 60
 
 # The least time between two reactions in one server: 10 minutes.
 MIN_GAP_SECS = 10 * 60
+
+# The only channels the bot reacts in, by name. A thread counts as the channel it is in.
+REACTION_CHANNELS = frozenset({"guild-chat", "mythic-chat"})
+
+
+def reacts_in(channel_name: str | None) -> bool:
+    """Whether the bot reacts to messages in the channel named `channel_name`; never in one with no name."""
+    return channel_name is not None and channel_name.lower() in REACTION_CHANNELS
 
 
 @dataclass(frozen=True)
@@ -212,7 +221,7 @@ def describe(reaction: Reaction) -> tuple[str, str, str]:
         if reaction.word is not None:
             message += f' with **"{reaction.word}"** in it (any case)'
         if reaction.away_secs is not None:
-            message += f" after {_duration(reaction.away_secs)} without one in the server"
+            message += f" after {_duration(reaction.away_secs)} without one in those channels"
         who = f"{reaction.author} ({'Discord username only' if reaction.username_only else 'username, global name or nickname'})"
     else:
         message = f'A message with **"{reaction.word}"** in it (any case)'
@@ -239,6 +248,7 @@ def limits_row(min_gap_secs: float = MIN_GAP_SECS) -> tuple[str, str, str]:
         "Any of the reactions above",
         f"At most one reaction to a message (the first in this table wins), and at most one every {_duration(min_gap_secs)} per server "
         "(except those that say otherwise). "
+        f"Only in {' and '.join(f'#{name}' for name in sorted(REACTION_CHANNELS))} and their threads. "
         'Chat with the AI assistant ("Bot please", "hey bot" and replies to its answers) and messages in clips channels set nothing off and count towards no cooldown. '
         "Nobody is pinged, not even by a reply. Kept in memory only: after the bot restarts, the first match is answered",
         "As the reaction",
