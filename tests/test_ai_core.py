@@ -67,6 +67,7 @@ def test_the_system_prompt_is_the_guilds_followed_by_the_chat_rules():
     assert "[replying to Name:" in prompt
     assert TONE in prompt and "no pet names" in TONE and "start every sentence with a capital letter" in TONE
     assert FOCUS in prompt and "Answer just what you were asked" in FOCUS
+    assert "a simple question gets a one-sentence answer" in prompt
     assert "\r" not in prompt
 
 
