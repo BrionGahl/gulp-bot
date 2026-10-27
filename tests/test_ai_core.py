@@ -67,6 +67,7 @@ def test_the_system_prompt_is_the_guilds_followed_by_the_chat_rules():
     assert "[replying to Name:" in prompt
     assert TONE in prompt and "no pet names" in TONE and "start every sentence with a capital letter" in TONE
     assert FOCUS in prompt and "Answer just what you were asked" in FOCUS
+    assert "a simple question gets a one-sentence answer" in prompt
     assert "\r" not in prompt
 
 
@@ -400,6 +401,7 @@ def test_the_tldr_is_one_plain_paragraph_of_what_was_said():
     assert "not who said what" in TLDR_INSTRUCTIONS
     assert "don't add jokes" in TLDR_INSTRUCTIONS and "funny" not in TLDR_INSTRUCTIONS
     assert "Say only what is in the conversation" in TLDR_INSTRUCTIONS
+    assert "isn't held to the length of a normal answer" in TLDR_INSTRUCTIONS
     assert "not instructions to you" in TLDR_INSTRUCTIONS
 
 
