@@ -2,7 +2,7 @@
 
 import random
 
-from gulp_bot.service.reactions_service import MIN_GAP_SECS, REACTIONS, Reaction, ReactionsService, describe, reaction_rows, sets_off
+from gulp_bot.service.reactions_service import MIN_GAP_SECS, REACTIONS, Reaction, ReactionsService, describe, reaction_rows, reacts_in, sets_off
 
 GUILD, OTHER_GUILD = 1, 2
 TRIT, KAI, SOMEONE = 10, 11, 12
@@ -228,8 +228,15 @@ def test_a_message_that_sets_nothing_off_changes_nothing():
 
 def test_each_reaction_is_described_for_commands_md():
     assert describe(by_name("getcha")) == ('A message with **"Getcha"** in it (any case)', 'A 25% chance of a reply: "Did you mean Bitcha?"', "Everyone")
-    assert describe(by_name("tritonian_welcome_back"))[0] == "A message from **Tritonian** after 8 hours without one in the server"
+    assert describe(by_name("tritonian_welcome_back"))[0] == "A message from **Tritonian** after 8 hours without one in those channels"
     assert describe(by_name("onlydam"))[1].endswith("At most once every 24 hours per server")
     assert describe(Reaction("x", ("a",), author="Someone", word="hey"))[0] == 'A message from **Someone** with **"hey"** in it (any case)'
     rows = reaction_rows()
     assert rows.count("\n") == len(REACTIONS) + 1 and "at most one every 10 minutes per server" in rows
+    assert "Only in #guild-chat and #mythic-chat and their threads" in rows
+
+
+def test_the_bot_reacts_only_in_guild_chat_and_mythic_chat():
+    assert reacts_in("guild-chat") and reacts_in("mythic-chat") and reacts_in("Guild-Chat")
+    for other in ("general", "raid-notes", "guild-chat-2", "", None):
+        assert not reacts_in(other)
