@@ -13,8 +13,8 @@ from pathlib import Path
 
 from .paths import DEFAULT_SYSTEM_PROMPT_PATH
 
-# `LOG_LEVEL` values, as the Rust bot accepted them, and the `logging` level each one means.
-# Python has no TRACE, so it is DEBUG; OFF silences everything.
+# The `LOG_LEVEL` values the bot accepts, and the `logging` level each one means. Python has no TRACE, so
+# it is DEBUG; OFF silences everything.
 LOG_LEVELS = {
     "trace": logging.DEBUG,
     "debug": logging.DEBUG,

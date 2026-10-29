@@ -70,7 +70,7 @@ def test_every_command_is_registered_in_the_order_help_lists_them():
     assert {command.name for command in BOT.commands} == set(TOP_LEVEL_ORDER[:10])
 
 
-def test_the_commands_are_the_rust_bots():
+def test_every_expected_command_is_registered():
     names = {path for path, _ in with_paths(entries())}
     for expected in [
         "settings show",

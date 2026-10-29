@@ -25,7 +25,7 @@ def test_repr_never_holds_a_secret():
         assert secret not in shown
 
 
-def test_the_defaults_are_the_rust_bots():
+def test_the_defaults():
     config = Config.from_env(env())
     assert config.bot_name == "gulp-bot"
     assert config.ai_daily_limit == 100
@@ -101,7 +101,7 @@ def test_fire_times_are_on_the_wall_clock_of_new_york():
     assert str(after_switch.utcoffset()) == "-1 day, 19:00:00"
 
 
-def test_the_cron_syntax_of_the_rust_bot_is_read():
+def test_the_stored_cron_syntax_is_read():
     # Days of the week count Sunday as 1.
     assert Schedule.parse("0 0 12 * * 1 *").after(at(2026, 10, 14)) == at(2026, 10, 18, 12)
     # Names, in any case, short or full, ranges and lists.

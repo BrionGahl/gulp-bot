@@ -1,8 +1,8 @@
-"""The database migrations, applied as `sqlx` applied them.
+"""The database migrations in `migrations/`, applied in order, each once.
 
-The schema is the one the Rust bot created, and so is the migrations table: migrations are recorded in
-`_sqlx_migrations` exactly as `sqlx` recorded them (version, description, SHA-384 checksum), so this bot
-runs on a database the Rust bot set up, and the other way round.
+Each applied migration is recorded in the `_sqlx_migrations` table (version, description, SHA-384
+checksum of the file). Existing databases already have that table under that name and with that layout,
+so neither may change.
 """
 
 from __future__ import annotations
@@ -39,8 +39,7 @@ class Migration:
 
 
 def load_migrations(directory: Path = MIGRATIONS_DIR) -> list[Migration]:
-    """The migrations in `directory`, oldest first, read as `sqlx` reads them: the version is the number
-    before the first `_`, the description the rest of the name with `_` as spaces, and the checksum the
+    """The migrations in `directory`, oldest first: the version is the number before the first `_`, the description the rest of the name with `_` as spaces, and the checksum the
     SHA-384 of the file."""
     migrations = []
     for path in directory.iterdir():
@@ -72,13 +71,14 @@ def same_checksum(applied: bytes, migration: Migration) -> bool:
 
 
 def lock_id(database_name: str) -> int:
-    """The advisory lock `sqlx` takes while migrating, so that it and this never migrate at once."""
+    """The Postgres advisory lock held while migrating, so that two instances never migrate at once. The
+    formula is fixed: every version of the bot must take the same lock."""
     return 0x3D32AD9E * zlib.crc32(database_name.encode("utf-8"))
 
 
 async def run_migrations(pool: asyncpg.Pool, migrations: list[Migration] | None = None) -> None:
-    """Applies the migrations the database doesn't have yet. Refuses, as `sqlx` does, a database with a
-    migration that failed half way, one this bot doesn't know (it was migrated by a newer version), or one
+    """Applies the migrations the database doesn't have yet. Refuses a database with a migration that
+    failed half way, one this bot doesn't know (it was migrated by a newer version), or one
     whose file has changed since it was applied."""
     migrations = load_migrations() if migrations is None else migrations
 

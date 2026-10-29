@@ -9,8 +9,7 @@ from datetime import UTC, datetime
 
 
 class JsonFormatter(logging.Formatter):
-    """One JSON object per line, with the fields Google Cloud Logging reads (`severity`, `time`), as the
-    Rust bot's logs were."""
+    """One JSON object per line, with the fields Google Cloud Logging reads (`severity`, `time`)."""
 
     def format(self, record: logging.LogRecord) -> str:
         entry = {

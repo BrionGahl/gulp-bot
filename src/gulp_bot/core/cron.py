@@ -1,5 +1,5 @@
-"""Quartz-style cron expressions, read the way the Rust `cron` crate reads them, so that every schedule
-the Rust bot stored keeps meaning the same thing.
+"""Quartz-style cron expressions: the schedules stored in the database (raid notes, announcements, raid
+attendance) are written in this syntax, so it must not change.
 
 The format is `sec min hour day-of-month month day-of-week [year]`: six or seven fields, or one of the
 shorthands `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily` and `@hourly`. A field is `*` or `?`

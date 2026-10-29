@@ -6,8 +6,7 @@ The ideas behind the creation of this bot are listed below:
 - consolidate bots in my Discord servers
 
 The bot is written in Python 3.14 with [discord.py](https://github.com/Rapptz/discord.py), `asyncpg` for
-Postgres and `aiohttp` for the other APIs. It was first written in Rust with `poise`; that version is in
-the git history, up to commit `351747e`. Both use the same database, so one can replace the other.
+Postgres and `aiohttp` for the other APIs.
 
 ## Features
 

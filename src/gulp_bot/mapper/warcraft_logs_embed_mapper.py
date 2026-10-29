@@ -46,7 +46,7 @@ def report_url(code: str) -> str:
 
 def replay_url(wipe: LastWipe) -> str:
     """The link to the replay of a pull, opened `position_ms` into the pull."""
-    # Rounded half away from zero, as the Rust bot did.
+    # Rounded half up, not to even as `round` would: 1500.5 is 1501.
     position = math.floor(wipe.position_ms + 0.5)
     return f"{report_url(wipe.code)}?fight={wipe.fight_id}&view=replay&position={position}"
 

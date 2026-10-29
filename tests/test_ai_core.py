@@ -408,7 +408,7 @@ def test_usage_and_failures_are_reported():
     assert ai.failure_report() == (1, [ApiFailure(5, "boom")])
 
 
-def test_the_time_is_given_as_the_rust_bot_gave_it():
+def test_the_time_is_given_in_central_time_with_a_12_hour_clock():
     chicago = ZoneInfo("America/Chicago")
     assert central_time_text(datetime(2026, 10, 16, 1, 56, tzinfo=chicago)) == "Friday, October 16, 2026, 1:56 AM CDT"
     assert central_time_text(datetime(2026, 12, 1, 13, 5, tzinfo=chicago)) == "Tuesday, December 1, 2026, 1:05 PM CST"
