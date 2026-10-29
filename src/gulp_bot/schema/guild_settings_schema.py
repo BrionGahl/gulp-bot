@@ -30,8 +30,8 @@ class ThinkSetting(enum.Enum):
 @dataclass
 class AiSettings:
     """How the AI assistant has been switched, in a guild, by its developers with the `/ai` commands. The
-    default is the assistant on, in no special mode, with the model, effort and thinking the bot was
-    configured with."""
+    default is the assistant on, in no special mode, with the model and thinking the bot was configured
+    with."""
 
     # Off: the assistant answers nobody, whatever their role.
     disabled: bool = False
@@ -39,9 +39,7 @@ class AiSettings:
     maintenance: bool = False
     # The model to use instead of the configured one.
     model: str | None = None
-    # The effort to use instead of the configured one; `off` means none is sent.
-    effort: str | None = None
-    # Whether a local model thinks, instead of the configured `LOCAL_MODEL_THINK`.
+    # Whether the model thinks, instead of the configured `LOCAL_MODEL_THINK`.
     think: ThinkSetting | None = None
 
 

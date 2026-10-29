@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from gulp_bot.core.config import AiBackend, Config, ConfigError, parse_backend, parse_think
+from gulp_bot.core.config import Config, ConfigError, parse_think
 from gulp_bot.core.cron import CronError, Schedule
 from gulp_bot.core.paths import DEFAULT_SYSTEM_PROMPT_PATH, MIGRATIONS_DIR
 from gulp_bot.core.schedule_parsing import EXAMPLE_CRON, parse_user_schedule
@@ -18,24 +18,20 @@ def env(**extra):
 
 
 def test_repr_never_holds_a_secret():
-    config = Config.from_env(env(ANTHROPIC_API_KEY="anthropic-secret-key", AI_BACKEND="local"))
+    config = Config.from_env(env())
     shown = repr(config)
-    assert "gulp-bot" in shown and "claude-sonnet-5-5" in shown and "qwen3.5:9b" in shown
-    for secret in ["discord-secret-token", "db-secret-password", "anthropic-secret-key"]:
+    assert "gulp-bot" in shown and "qwen3.5:9b" in shown
+    for secret in ["discord-secret-token", "db-secret-password"]:
         assert secret not in shown
 
 
 def test_the_defaults_are_the_rust_bots():
     config = Config.from_env(env())
     assert config.bot_name == "gulp-bot"
-    assert config.anthropic_model == "claude-sonnet-5-5"
-    assert config.anthropic_effort == "low"
     assert config.ai_daily_limit == 100
-    assert config.ai_backend is AiBackend.ANTHROPIC
     assert config.local_model_url == "http://ollama:11434"
     assert config.local_model == "qwen3.5:9b"
     assert config.local_model_think is False
-    assert config.anthropic_api_key is None
     assert config.system_prompt_path == DEFAULT_SYSTEM_PROMPT_PATH
 
 
@@ -47,13 +43,11 @@ def test_the_prompt_and_the_migrations_are_at_the_root_of_the_repository():
     assert Config.from_env(env(SYSTEM_PROMPT_PATH="")).system_prompt_path == DEFAULT_SYSTEM_PROMPT_PATH
 
 
-def test_empty_variables_mean_unset_and_off_sends_no_effort():
-    config = Config.from_env(env(ANTHROPIC_API_KEY="", ANTHROPIC_MODEL=" ", ANTHROPIC_EFFORT="OFF", AI_DAILY_LIMIT="7"))
-    assert config.anthropic_api_key is None
-    assert config.anthropic_model == "claude-sonnet-5-5"
-    assert config.anthropic_effort is None
+def test_empty_variables_mean_unset():
+    config = Config.from_env(env(LOCAL_MODEL=" ", LOCAL_MODEL_URL="", AI_DAILY_LIMIT="7"))
+    assert config.local_model == "qwen3.5:9b"
+    assert config.local_model_url == "http://ollama:11434"
     assert config.ai_daily_limit == 7
-    assert Config.from_env(env(ANTHROPIC_EFFORT="High")).anthropic_effort == "high"
 
 
 def test_bad_variables_are_refused():
@@ -63,15 +57,6 @@ def test_bad_variables_are_refused():
         Config.from_env(env(LOG_LEVEL="loud"))
     with pytest.raises(ConfigError):
         Config.from_env(env(AI_DAILY_LIMIT="lots"))
-
-
-def test_the_backend_is_anthropic_unless_set_to_local():
-    assert parse_backend(None) is AiBackend.ANTHROPIC
-    assert parse_backend("anthropic") is AiBackend.ANTHROPIC
-    assert parse_backend("Local") is AiBackend.LOCAL
-    assert parse_backend("ollama") is AiBackend.LOCAL
-    with pytest.raises(ConfigError):
-        parse_backend("openai")
 
 
 def test_the_local_model_does_not_think_unless_asked_to():

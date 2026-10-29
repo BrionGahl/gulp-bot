@@ -1,5 +1,4 @@
-# The AI assistant on a model of your own, served by Ollama on this host's NVIDIA GPU (AI_BACKEND=local, the
-# default in docker-compose.yml).
+# The AI assistant's model, served by Ollama on this host's NVIDIA GPU.
 # Added on top of docker-compose.yml, which stays as it is for a host without a GPU:
 #
 #   docker compose -f docker-compose.yml -f docker-compose.ollama.yml up -d

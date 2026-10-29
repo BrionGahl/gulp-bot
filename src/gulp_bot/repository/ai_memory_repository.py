@@ -1,6 +1,6 @@
-"""What the AI assistant remembers. All of it lives in memory: a restart forgets it, and the Anthropic
-Console stays the authority on what was really billed. No Discord in here; channels, users and messages
-are their numeric IDs, and times are `time.monotonic()` seconds unless they say otherwise."""
+"""What the AI assistant remembers. All of it lives in memory: a restart forgets it. No Discord in here;
+channels, users and messages are their numeric IDs, and times are `time.monotonic()` seconds unless they
+say otherwise."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ class ConversationHistoryRepository:
 
     def __init__(self, max_turns: int, forget_after: float):
         """Keeps the last `max_turns` turns of a channel, and forgets a channel that has been quiet for
-        `forget_after` seconds: an hours-old chat is no use as context, but is billed on every request."""
+        `forget_after` seconds: an hours-old chat is no use as context, but is read again on every request."""
         self._channels: dict[int, _Conversation] = {}
         self._max_turns = max_turns
         self._forget_after = forget_after

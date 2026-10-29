@@ -226,21 +226,18 @@ If the slash commands don't show up in a server, register them there with `?regi
 
 *`/ai`: Only members with the developer role (`/settings dev_role`) can use these commands, and every use is written to the bot's log with who ran it. What is switched here applies only to the server the command is used in, and is kept when the bot restarts.*
 
-- **`/ai status`** — Show the assistant's state, model, effort or thinking, today's use and latest API failures
+- **`/ai status`** — Show the assistant's state, model, thinking, today's use and latest failures
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
 - **`/ai on`** — Turn the AI assistant on
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
 - **`/ai off`** — Turn the AI assistant off for everybody
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
-- **`/ai usage`** — Show the tokens used and what they cost, roughly
+- **`/ai usage`** — Show the tokens used
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
 - **`/ai model <name>`** — Change the model the assistant uses, or go back to the configured one
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
   - `name`: A model name, or `default` for the one the bot was configured with
-- **`/ai effort <level>`** — Change how much effort the model puts into an answer. Lower is quicker and cheaper
-  - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
-  - `level`: The effort, or as configured
-- **`/ai think <mode>`** — Turn a local model's thinking on or off. On answers slower, but follows instructions better
+- **`/ai think <mode>`** — Turn the model's thinking on or off. On answers slower, but follows instructions better
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
   - `mode`: On, off, left to the model, or as configured
 - **`/ai maintenance <enabled>`** — Turn maintenance mode on or off: only Officers and Developers get answers
@@ -252,7 +249,7 @@ If the slash commands don't show up in a server, register them there with `?regi
 - **`/ai reset <user>`** — Give a member their whole allowance of questions back
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
   - `user`: The member whose limit to reset
-- **`/ai check`** — Check the registered roles, the API key and the model
+- **`/ai check`** — Check the registered roles, the model server and the model
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
 - **`/tldr`** — Sum up this channel's recent chat
   - **Who:** Raider role, moderator role, administrators and the developer role (the AI assistant's access) · slash only
@@ -265,12 +262,4 @@ If the slash commands don't show up in a server, register them there with `?regi
 | A message with the words **"Bot please"** or **"hey bot"** (any case, any punctuation between them) | The AI assistant answers it in the channel. If the message is a reply, the message replied to goes along with the question | The AI assistant's access, like `/ask` |
 | A reply to one of the assistant's answers | Carries the conversation on | The AI assistant's access, like `/ask` |
 | A reply to someone's message with the words **"bot get them"** | Deletes the message replied to and barks. The bot needs Manage Messages in the channel | Moderator role, administrators and the developer role |
-| A message from **Tritonian** after 8 hours without one in the server | A message in the same channel: one of 18 responses, at random. Not held back by, and doesn't count towards, the 10-minute limit below | Tritonian (username, global name or nickname) |
-| A message with **"Onlydam"** in it (any case) | A message in the same channel: "I miss him :(" or "I miss the jaguar warrior", at random. At most once every 24 hours per server | Everyone |
-| A message with **"Yuki"** in it (any case) | A message in the same channel: "Bring him back!!!!". At most once every 24 hours per server | Everyone |
-| A message with **"Nartana"** in it (any case) | A message in the same channel: "*Giggles*". At most once every 24 hours per server | Everyone |
-| A message with **"Sono"** in it (any case) | A reply: "the goat". At most once every 24 hours per server | Everyone |
-| A message with **"Getcha"** in it (any case) | A 25% chance of a reply: "Did you mean Bitcha?" | Everyone |
-| A message from **Kailanton** | A 2% chance of a message in the same channel: "thats right horsefly" | Kailanton (Discord username only) |
-| Any of the reactions above | At most one reaction to a message (the first in this table wins), and at most one every 10 minutes per server (except those that say otherwise). Chat with the AI assistant ("Bot please", "hey bot" and replies to its answers) and messages in clips channels set nothing off and count towards no cooldown. Nobody is pinged, not even by a reply. Kept in memory only: after the bot restarts, the first match is answered | As the reaction |
 | `@bot <command>` | The same as `?<command>` | As the command |

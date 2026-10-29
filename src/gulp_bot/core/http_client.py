@@ -1,4 +1,4 @@
-"""HTTP requests to the outside APIs (Anthropic, Ollama, Warcraft Logs, WowUtils).
+"""HTTP requests to the outside APIs (Ollama, Warcraft Logs, WowUtils).
 
 Callers get the status and the body back, or one of two errors: `RequestTimeout` if the server took
 too long, `RequestFailed` if it couldn't be reached at all. `Http` is the one real client; tests hand

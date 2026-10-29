@@ -1,4 +1,4 @@
-"""`/ai`: control the AI assistant: switch it off, change its model, see what it costs. Developers only."""
+"""`/ai`: control the AI assistant: switch it off, change its model, see what it has used. Developers only."""
 
 from __future__ import annotations
 
@@ -14,26 +14,16 @@ from discord import app_commands
 from ..core.discord_context import GulpContext, slash_context
 from ..core.permission_checks import check_is_developer, interaction_is_developer, is_developer, slash_check
 from ..exception.ai_exception import ModelNameProblem
-from ..mapper.ai_usage_mapper import describe_effort, describe_think, format_price, usage_lines
-from ..schema.ai_schema import CheckOk, KeyRejected, Unreachable
+from ..mapper.ai_usage_mapper import describe_think, usage_lines
+from ..schema.ai_schema import CheckOk, Unreachable
 from ..schema.guild_settings_schema import AiSettings, ThinkSetting
 from ..service.ai_assistant_service import AiAssistantService
-from ..service.ai_model_catalog_service import KNOWN_MODELS, normalize_model_name, price_per_million
+from ..service.ai_model_catalog_service import normalize_model_name
 from .resource_support import filter_choices, meta, reply_in_chunks
 
 log = logging.getLogger(__name__)
 
-# How much effort the model puts into an answer. "configured" is stored as nothing (the configured effort),
-# "off" as none sent at all.
-EFFORT_CHOICES = [
-    app_commands.Choice(name="As configured", value="configured"),
-    app_commands.Choice(name="Off (send none)", value="off"),
-    app_commands.Choice(name="Low", value="low"),
-    app_commands.Choice(name="Medium", value="medium"),
-    app_commands.Choice(name="High", value="high"),
-]
-
-# Whether a local model thinks before it answers. "configured" is stored as nothing (`LOCAL_MODEL_THINK`).
+# Whether the model thinks before it answers. "configured" is stored as nothing (`LOCAL_MODEL_THINK`).
 THINK_CHOICES = [
     app_commands.Choice(name="As configured", value="configured"),
     app_commands.Choice(name="On", value=ThinkSetting.ON.value),
@@ -51,9 +41,9 @@ class Finding(enum.Enum):
 
 
 # Every subcommand carries the check, and checks the role again for itself in `start_developer_command`,
-# since these are the commands that can silence the assistant and change what it costs.
+# since these are the commands that can silence the assistant and change the model it runs.
 ai_group = app_commands.Group(
-    name="ai", description="Control the AI assistant: switch it off, change its model, see what it costs. Developers only.", guild_only=True
+    name="ai", description="Control the AI assistant: switch it off, change its model, see what it has used. Developers only.", guild_only=True
 )
 meta(
     ai_group,
@@ -87,11 +77,7 @@ async def start_developer_command(interaction: discord.Interaction, action: str)
         return None
 
     log.info("audit: %s (%s) used /ai %s in guild %s", ctx.author.id, ctx.author.name, action, guild_id)
-    ai = ctx.services.ai
-    if ai is None:
-        await reply_in_chunks(ctx, "The AI assistant isn't set up for this bot: there is no `ANTHROPIC_API_KEY`, and `AI_BACKEND` isn't `local`.")
-        return None
-    return DeveloperCommand(ctx, guild_id, ai)
+    return DeveloperCommand(ctx, guild_id, ctx.services.ai)
 
 
 async def change_ai_settings(command: DeveloperCommand, what: str, edit: Callable[[AiSettings], object]) -> AiSettings:
@@ -111,7 +97,7 @@ def model_names(names: list[str]) -> str:
     return ", ".join(f"`{name}`" for name in names) if names else "none"
 
 
-@ai_group.command(name="status", description="Show the assistant's state, model, effort or thinking, today's use and latest API failures")
+@ai_group.command(name="status", description="Show the assistant's state, model, thinking, today's use and latest failures")
 @slash_check(check_is_developer)
 async def ai_status(interaction: discord.Interaction) -> None:
     command = await start_developer_command(interaction, "status")
@@ -119,7 +105,7 @@ async def ai_status(interaction: discord.Interaction) -> None:
         return
     ai = command.ai
     settings = command.ctx.services.guild_settings.get(command.guild_id).ai
-    model, effort = ai.resolve(settings)
+    model = ai.resolve_model(settings)
 
     if settings.disabled:
         state = "**off**: it answers nobody"
@@ -128,26 +114,19 @@ async def ai_status(interaction: discord.Interaction) -> None:
     else:
         state = "**on**"
     model_note = f"set with `/ai model`; the bot was configured with `{ai.configured_model}`" if settings.model is not None else "as configured"
-    if ai.is_local:
-        think_note = (
-            f"set with `/ai think`; the bot was configured with {describe_think(ai.configured_think)}" if settings.think is not None else "as configured"
-        )
-        effort_line = f"not used by a local model\nThinking: {describe_think(ai.resolve_think(settings))} ({think_note})"
-    else:
-        note = f"set with `/ai effort`; the bot was configured with {describe_effort(ai.configured_effort)}" if settings.effort is not None else "as configured"
-        effort_line = f"{describe_effort(effort)} ({note})"
-    served = "runs locally, through Ollama" if ai.is_local else "through the Anthropic API"
+    think_note = f"set with `/ai think`; the bot was configured with {describe_think(ai.configured_think)}" if settings.think is not None else "as configured"
     answered, limit = ai.daily_usage()
     failure_total, failures = ai.failure_report()
 
     text = (
-        f"**AI assistant**\nState: {state}\nModel: `{model}`, {served} ({model_note})\nEffort: {effort_line}\n"
+        f"**AI assistant**\nState: {state}\nModel: `{model}`, runs locally, through Ollama ({model_note})\n"
+        f"Thinking: {describe_think(ai.resolve_think(settings))} ({think_note})\n"
         f"Questions answered in the last 24 hours: {answered} of {limit}\n"
     )
     if not failures:
-        text += "No API failures since the bot started."
+        text += "No failures since the bot started."
     else:
-        text += f"API failures since the bot started: {failure_total}. The latest:"
+        text += f"Failures since the bot started: {failure_total}. The latest:"
         for failure in failures:
             text += f"\n• <t:{failure.at_unix}:R>: {failure.detail}"
     await reply_in_chunks(command.ctx, text)
@@ -174,7 +153,7 @@ async def ai_off(interaction: discord.Interaction) -> None:
     await reply_in_chunks(command.ctx, "The AI assistant is **off**: it answers nobody, whatever their role. `/ai on` turns it back on.")
 
 
-@ai_group.command(name="usage", description="Show the tokens used and what they cost, roughly")
+@ai_group.command(name="usage", description="Show the tokens used")
 @slash_check(check_is_developer)
 async def ai_usage(interaction: discord.Interaction) -> None:
     command = await start_developer_command(interaction, "usage")
@@ -184,18 +163,17 @@ async def ai_usage(interaction: discord.Interaction) -> None:
     await reply_in_chunks(
         command.ctx,
         f"**Last 24 hours**\n{usage_lines(report.last_24h)}\n\n**Since the bot started**\n{usage_lines(report.since_start)}\n\n"
-        "The cost is an estimate from the tokens the API reported, at Anthropic's list prices. "
-        "The counts start again from zero when the bot restarts; the Anthropic Console has the real bill.",
+        "The counts start again from zero when the bot restarts.",
     )
 
 
 async def autocomplete_model(interaction: discord.Interaction, partial: str) -> list[app_commands.Choice[str]]:
-    """The models offered while a developer types one: those with a known price, or for a local model the
-    ones installed on its server. Autocomplete runs no checks, so developers are checked here."""
-    ai: AiAssistantService | None = interaction.client.services.ai  # type: ignore[attr-defined]
+    """The models offered while a developer types one: the ones installed on the server. Autocomplete runs
+    no checks, so developers are checked here."""
+    ai: AiAssistantService = interaction.client.services.ai  # type: ignore[attr-defined]
     models: list[str] = []
-    if ai is not None and interaction_is_developer(interaction):
-        models = await ai.installed_models() if ai.is_local else list(KNOWN_MODELS)
+    if interaction_is_developer(interaction):
+        models = await ai.installed_models()
     return filter_choices(models, partial)
 
 
@@ -219,70 +197,27 @@ async def ai_model(interaction: discord.Interaction, name: str) -> None:
         await reply_in_chunks(ctx, f"The model is back to the configured `{ai.configured_model}`.")
         return
 
-    # The API (or the local server) has to know the model, or every answer would fail until somebody noticed.
+    # The server has to have the model, or every answer would fail until somebody noticed.
     await ctx.defer(ephemeral=True)
     check = await ai.check_model(model)
     if isinstance(check, CheckOk) and not check.model_listed:
-        if ai.is_local:
-            installed = model_names(await ai.installed_models())
-            await reply_in_chunks(
-                ctx,
-                f"The local model server doesn't have `{model}`, so nothing was changed. Install it there with `ollama pull {model}`. Installed: {installed}.",
-            )
-        else:
-            await reply_in_chunks(
-                ctx, f"The API doesn't list a model called `{model}`, so nothing was changed. Models with a known price: {model_names(KNOWN_MODELS)}."
-            )
-        return
-    if isinstance(check, KeyRejected):
-        await reply_in_chunks(ctx, f"The API refused the key ({check.reason}), so the model couldn't be checked and nothing was changed.")
+        installed = model_names(await ai.installed_models())
+        await reply_in_chunks(
+            ctx,
+            f"The local model server doesn't have `{model}`, so nothing was changed. Install it there with `ollama pull {model}`. Installed: {installed}.",
+        )
         return
     if isinstance(check, Unreachable):
-        server = "The local model server" if ai.is_local else "The API"
-        await reply_in_chunks(ctx, f"{server} couldn't be reached to check the model ({check.problem}), so nothing was changed. Try again in a moment.")
+        await reply_in_chunks(
+            ctx, f"The local model server couldn't be reached to check the model ({check.problem}), so nothing was changed. Try again in a moment."
+        )
         return
 
     await change_ai_settings(command, f"model set to `{model}`", lambda settings: setattr(settings, "model", model))
-    price = price_per_million(model)
-    if ai.is_local:
-        price_note = "It runs locally, so it costs nothing per token."
-    elif price is not None:
-        price_note = f"Its list price is ${format_price(price[0])} per million tokens in and ${format_price(price[1])} out."
-    else:
-        price_note = "The bot doesn't know its price, so `/ai usage` can't estimate what it costs."
-    await reply_in_chunks(ctx, f"The model is now `{model}`, from the next question on. {price_note}")
+    await reply_in_chunks(ctx, f"The model is now `{model}`, from the next question on.")
 
 
-@ai_group.command(name="effort", description="Change how much effort the model puts into an answer. Lower is quicker and cheaper")
-@slash_check(check_is_developer)
-@app_commands.describe(level="The effort, or as configured")
-@app_commands.choices(level=EFFORT_CHOICES)
-async def ai_effort(interaction: discord.Interaction, level: str) -> None:
-    command = await start_developer_command(interaction, "effort")
-    if command is None:
-        return
-    ctx, ai = command.ctx, command.ai
-    if ai.is_local:
-        await reply_in_chunks(ctx, "A local model has no effort setting, so nothing was changed.")
-        return
-
-    stored = None if level == "configured" else level
-    shown = "None" if stored is None else f'Some("{stored}")'
-    await change_ai_settings(command, f"effort set to {shown}", lambda settings: setattr(settings, "effort", stored))
-
-    if stored is None:
-        message = f"The effort is back to the configured one: {describe_effort(ai.configured_effort)}."
-    elif stored == "off":
-        message = "No effort is sent now."
-    else:
-        message = f"The effort is now `{stored}`."
-    await reply_in_chunks(
-        ctx,
-        f"{message} It applies from the next question on. If the API rejects it, answers fail until you choose another; `/ai status` shows the latest failure.",
-    )
-
-
-@ai_group.command(name="think", description="Turn a local model's thinking on or off. On answers slower, but follows instructions better")
+@ai_group.command(name="think", description="Turn the model's thinking on or off. On answers slower, but follows instructions better")
 @slash_check(check_is_developer)
 @app_commands.describe(mode="On, off, left to the model, or as configured")
 @app_commands.choices(mode=THINK_CHOICES)
@@ -291,10 +226,6 @@ async def ai_think(interaction: discord.Interaction, mode: str) -> None:
     if command is None:
         return
     ctx, ai = command.ctx, command.ai
-    if not ai.is_local:
-        await reply_in_chunks(ctx, "Only a local model is told whether to think; the Anthropic API uses `/ai effort`. Nothing was changed.")
-        return
-
     stored = None if mode == "configured" else ThinkSetting(mode)
     settings = await change_ai_settings(
         command, f"thinking set to {'configured' if stored is None else stored.value}", lambda settings: setattr(settings, "think", stored)
@@ -359,7 +290,7 @@ async def ai_reset(interaction: discord.Interaction, user: discord.User) -> None
     )
 
 
-@ai_group.command(name="check", description="Check the registered roles, the API key and the model")
+@ai_group.command(name="check", description="Check the registered roles, the model server and the model")
 @slash_check(check_is_developer)
 async def ai_check(interaction: discord.Interaction) -> None:
     command = await start_developer_command(interaction, "check")
@@ -369,7 +300,7 @@ async def ai_check(interaction: discord.Interaction) -> None:
     await ctx.defer(ephemeral=True)
 
     settings = ctx.services.guild_settings.get(guild_id)
-    model, _ = ai.resolve(settings.ai)
+    model = ai.resolve_model(settings.ai)
     findings: list[tuple[Finding, str]] = []
 
     # The registered roles have to exist in this server, or they grant nobody anything.
@@ -392,29 +323,18 @@ async def ai_check(interaction: discord.Interaction) -> None:
     if settings.dev_role_id is not None and settings.dev_role_id in (settings.mod_role_id, settings.raider_role_id, settings.trial_role_id):
         findings.append((Finding.BAD, "The developer role is also registered as another role, so its holders are not only developers"))
 
-    local = ai.is_local
     check = await ai.check_model(model)
     if isinstance(check, CheckOk) and check.model_listed:
-        if local:
-            findings.append((Finding.GOOD, f"The local model server answers and has `{model}` installed; nothing leaves it"))
-        else:
-            findings.append((Finding.GOOD, f"The API key works and the API lists `{model}`"))
+        findings.append((Finding.GOOD, f"The local model server answers and has `{model}` installed; nothing leaves it"))
     elif isinstance(check, CheckOk):
-        if local:
-            findings.append(
-                (
-                    Finding.BAD,
-                    f"The local model server answers, but doesn't have `{model}`: answers will fail. Install it there with `ollama pull {model}`, or change it with `/ai model`",
-                )
+        findings.append(
+            (
+                Finding.BAD,
+                f"The local model server answers, but doesn't have `{model}`: answers will fail. Install it there with `ollama pull {model}`, or change it with `/ai model`",
             )
-        else:
-            findings.append((Finding.BAD, f"The API key works, but the API doesn't list `{model}`: answers will fail. Change it with `/ai model`"))
-    elif isinstance(check, KeyRejected):
-        findings.append((Finding.BAD, f"The API refused the key: {check.reason}"))
-    elif local:
-        findings.append((Finding.BAD, f"The local model server couldn't be reached: {check.problem}. Is the Ollama container up, and on the bot's network?"))
+        )
     else:
-        findings.append((Finding.WARNING, f"The key couldn't be checked: {check.problem}"))
+        findings.append((Finding.BAD, f"The local model server couldn't be reached: {check.problem}. Is the Ollama container up, and on the bot's network?"))
 
     if settings.ai.disabled:
         findings.append((Finding.WARNING, "The assistant is off (`/ai on`)"))
@@ -428,7 +348,7 @@ async def ai_check(interaction: discord.Interaction) -> None:
     failure_total, failures = ai.failure_report()
     if failures:
         latest = failures[0]
-        findings.append((Finding.WARNING, f"{failure_total} API failure(s) since the bot started; the latest <t:{latest.at_unix}:R>: {latest.detail}"))
+        findings.append((Finding.WARNING, f"{failure_total} failure(s) since the bot started; the latest <t:{latest.at_unix}:R>: {latest.detail}"))
 
     problems = sum(1 for finding, _ in findings if finding is not Finding.GOOD)
     lines = "\n".join(f"{finding.value} {text}" for finding, text in findings)

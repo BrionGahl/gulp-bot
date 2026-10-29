@@ -39,7 +39,6 @@ from .service.officer_channel_service import OfficerChannelService
 from .service.raid_attendance_service import RaidAttendanceService
 from .service.raid_notes_service import RaidNotesService
 from .service.raid_report_service import RaidReportService
-from .service.reactions_service import ReactionsService
 from .service.warcraft_logs_service import WarcraftLogsService
 from .service.wcl_consumable_service import ConsumableService
 from .service.wcl_ignored_player_service import IgnoredPlayerService
@@ -71,11 +70,8 @@ class Services:
     consumables: ConsumableService
     warcraft_logs: WarcraftLogsService
     droptimizer: DroptimizerService
-    # The spontaneous reactions to messages: in-jokes of the guild.
-    reactions: ReactionsService
-    # The AI assistant behind `/ask`, `/tldr` and "Bot please"; `None` without `ANTHROPIC_API_KEY`, unless it
-    # runs on a local model (`AI_BACKEND=local`), which needs no key.
-    ai: AiAssistantService | None
+    # The AI assistant behind `/ask`, `/tldr` and "Bot please", on the Ollama server at `LOCAL_MODEL_URL`.
+    ai: AiAssistantService
 
 
 def build_services(
@@ -111,7 +107,6 @@ def build_services(
         consumables=ConsumableService(ConsumableAbilityRepository(pool)),
         warcraft_logs=warcraft_logs,
         droptimizer=DroptimizerService(WowUtilsClient(http)),
-        reactions=ReactionsService(),
         ai=AiAssistantService.from_config(http, config),
     )
 

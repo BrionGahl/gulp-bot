@@ -1,4 +1,4 @@
-"""The assistant itself, with a stand-in for the APIs."""
+"""The assistant itself, with a stand-in for the model server."""
 
 import asyncio
 import json
@@ -8,14 +8,13 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from gulp_bot.client.anthropic_client import AnthropicClient
 from gulp_bot.client.ollama_client import OllamaClient, is_installed
 from gulp_bot.core.config import ConfigError
 from gulp_bot.core.http_client import RequestTimeout, Response
 from gulp_bot.core.paths import DEFAULT_SYSTEM_PROMPT_PATH
 from gulp_bot.exception.ai_exception import DailyLimit, Disabled, Maintenance, NotAllowed, RateLimited, Unavailable
-from gulp_bot.mapper.ai_model_mapper import anthropic_reply, anthropic_request, api_error_message, ollama_reply, ollama_request
-from gulp_bot.schema.ai_schema import Access, ApiFailure, CheckOk, KeyRejected, MemberUsage, Question, TldrBusy, TldrReady, TldrWait, Tokens, Turn
+from gulp_bot.mapper.ai_model_mapper import api_error_message, ollama_reply, ollama_request
+from gulp_bot.schema.ai_schema import Access, ApiFailure, CheckOk, MemberUsage, Question, TldrBusy, TldrReady, TldrWait, Tokens, Turn, Unreachable
 from gulp_bot.schema.guild_settings_schema import AiSettings, GuildSettings, ThinkSetting
 from gulp_bot.service.ai_access_service import access_for_member, ensure_switches_allow
 from gulp_bot.service.ai_assistant_service import EVERYBODY, MAX_REQUESTS_PER_USER, RATE_LIMIT_WINDOW, AiAssistantService
@@ -49,12 +48,8 @@ class FakeHttp:
         return response
 
 
-def anthropic_ai(http=None, model="model", effort=None, daily_limit=100):
-    return AiAssistantService(AnthropicClient(http or FakeHttp(), "test-key"), model, effort, "system", daily_limit)
-
-
-def local_ai(http=None, model="qwen3.5:9b", think: bool | None = False):
-    return AiAssistantService(OllamaClient(http or FakeHttp(), "http://ollama:11434"), model, None, "system", 100, think=think)
+def local_ai(http=None, model="qwen3.5:9b", think: bool | None = False, daily_limit=100):
+    return AiAssistantService(OllamaClient(http or FakeHttp(), "http://ollama:11434"), model, "system", daily_limit, think=think)
 
 
 def run(coroutine):
@@ -116,11 +111,11 @@ def test_access_comes_from_the_roles_the_server_registered():
     assert access_for_member(GuildSettings(), [40], False) is Access.DENIED
 
 
-def test_a_local_model_has_no_effort_whatever_was_chosen():
+def test_the_model_is_what_the_developers_chose_else_what_the_bot_was_configured_with():
     ai = local_ai()
-    assert ai.is_local and not anthropic_ai().is_local
-    assert ai.resolve(AiSettings(effort="high")) == ("qwen3.5:9b", None)
-    assert ai.resolve(AiSettings(model="gemma4:12b")) == ("gemma4:12b", None)
+    assert ai.configured_model == "qwen3.5:9b"
+    assert ai.resolve_model(AiSettings()) == "qwen3.5:9b"
+    assert ai.resolve_model(AiSettings(model="gemma4:12b")) == "gemma4:12b"
 
 
 def test_thinking_is_what_the_developers_chose_else_what_the_bot_was_configured_with():
@@ -145,30 +140,7 @@ def test_a_local_model_is_told_to_think_as_the_developers_chose():
     assert "think" not in sent[2] and sent[2]["options"]["num_predict"] == 4096
 
 
-def test_what_the_developers_chose_wins_over_what_the_bot_was_configured_with():
-    ai = anthropic_ai(model="configured", effort="low")
-    assert ai.resolve(AiSettings()) == ("configured", "low")
-    assert ai.configured_model == "configured" and ai.configured_effort == "low"
-    assert ai.resolve(AiSettings(model="cheaper")) == ("cheaper", "low")
-    assert ai.resolve(AiSettings(effort="high")) == ("configured", "high")
-    assert ai.resolve(AiSettings(effort="OFF")) == ("configured", None)
-    ai = anthropic_ai(model="configured")
-    assert ai.resolve(AiSettings()) == ("configured", None)
-    assert ai.resolve(AiSettings(effort="high")) == ("configured", "high")
-
-
-def test_requests_are_serialised_as_the_apis_expect():
-    turns = [Turn.user("Kail: hi"), Turn.assistant("hello"), Turn.user("Kail: and now?")]
-    request = anthropic_request("claude-sonnet-5-5", "be brief", turns, "low", max_tokens=100)
-    assert request == {
-        "model": "claude-sonnet-5-5",
-        "max_tokens": 100,
-        "system": "be brief",
-        "messages": [{"role": "user", "content": "Kail: hi"}, {"role": "assistant", "content": "hello"}, {"role": "user", "content": "Kail: and now?"}],
-        "output_config": {"effort": "low"},
-    }
-    assert "output_config" not in anthropic_request("m", "s", turns, None)
-
+def test_requests_are_serialised_as_ollama_expects():
     local = ollama_request("qwen3.5:9b", "be brief", [Turn.user("Kail: hi")], False)
     assert local["messages"][0] == {"role": "system", "content": "be brief"}
     assert local["messages"][1]["content"] == "Kail: hi"
@@ -182,15 +154,6 @@ def test_requests_are_serialised_as_the_apis_expect():
 
 
 def test_answers_are_read():
-    body = {
-        "content": [{"type": "thinking", "thinking": "hmm"}, {"type": "text", "text": "  Hello "}, {"type": "text", "text": "there!  "}],
-        "stop_reason": "end_turn",
-        "usage": {"input_tokens": 12, "output_tokens": 5},
-    }
-    reply = anthropic_reply(body)
-    assert reply.text == "Hello there!" and reply.tokens == (12, 5) and not reply.cut_short
-    assert anthropic_reply({"content": [], "stop_reason": "max_tokens"}).text == ""
-
     reply = ollama_reply({"message": {"role": "assistant", "content": "  Hello there!  "}, "done_reason": "stop", "prompt_eval_count": 120, "eval_count": 15})
     assert (reply.text, reply.cut_short, reply.stop_reason, reply.tokens) == ("Hello there!", False, "stop", (120, 15))
     reply = ollama_reply({"message": {"content": "<think>hmm</think>First, the"}, "done_reason": "length", "eval_count": 1024})
@@ -210,7 +173,6 @@ def test_a_model_is_installed_with_or_without_its_tag():
 
 
 def test_an_api_error_is_reduced_to_its_message():
-    assert api_error_message('{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: too large"}}') == "max_tokens: too large"
     assert api_error_message("<html>Bad gateway</html>") == "<html>Bad gateway</html>"
     assert api_error_message('{"error":"model \'qwen3.5:9b\' not found"}') == "model 'qwen3.5:9b' not found"
 
@@ -220,7 +182,7 @@ def test_members_are_told_what_went_wrong_without_details():
     assert "API" not in str(Unavailable(""))
     assert "401" not in str(Unavailable("the API returned 401"))
     assert str(NotAllowed()) == "I only talk to raiders."
-    assert "ANTHROPIC" not in str(DailyLimit())
+    assert "AI_DAILY_LIMIT" not in str(DailyLimit())
     assert str(Disabled()) == "The AI assistant is turned off right now."
     assert "maintenance" in str(Maintenance())
 
@@ -238,14 +200,14 @@ def test_the_switches_decide_who_gets_through():
 
 
 def test_a_member_who_is_not_a_raider_is_refused_before_anything_else():
-    ai = anthropic_ai()
+    ai = local_ai()
     with pytest.raises(NotAllowed):
         run(ai.ask(1, 2, Access.DENIED, AiSettings(), HELLO))
     assert ai.member_usage(2).asked == 0
 
 
 def test_nobody_is_answered_while_the_assistant_is_off():
-    ai = anthropic_ai()
+    ai = local_ai()
     for access in (Access.RAIDER, Access.OFFICER, Access.DEVELOPER):
         with pytest.raises(Disabled):
             run(ai.ask(1, 2, access, AiSettings(disabled=True), HELLO))
@@ -253,87 +215,88 @@ def test_nobody_is_answered_while_the_assistant_is_off():
 
 
 def test_in_maintenance_a_raider_is_refused_before_anything_else():
-    ai = anthropic_ai()
+    ai = local_ai()
     with pytest.raises(Maintenance):
         run(ai.ask(1, 2, Access.RAIDER, AiSettings(maintenance=True), HELLO))
     assert ai.member_usage(2).asked == 0 and ai.daily_usage()[0] == 0
 
 
-def answer(text, stop_reason="end_turn"):
+def answer(text, done_reason="stop"):
     return Response(
-        200, json.dumps({"content": [{"type": "text", "text": text}], "stop_reason": stop_reason, "usage": {"input_tokens": 100, "output_tokens": 20}})
+        200, json.dumps({"message": {"role": "assistant", "content": text}, "done_reason": done_reason, "prompt_eval_count": 100, "eval_count": 20})
     )
 
 
 def test_a_question_is_answered_remembered_and_counted():
     http = FakeHttp(answer("a soak is standing in the circle"), answer("yes, you"))
-    ai = anthropic_ai(http, model="claude-sonnet-5-5", effort="low")
+    ai = local_ai(http)
 
     reply = run(ai.ask(7, 2, Access.OFFICER, AiSettings(), Question("Kail", "what is a soak?")))
     assert reply == "a soak is standing in the circle"
     sent = http.requests[0]
-    assert sent["url"] == "https://api.anthropic.com/v1/messages"
-    assert sent["headers"] == {"x-api-key": "test-key", "anthropic-version": "2023-06-01"}
-    assert sent["json"]["messages"] == [{"role": "user", "content": "Kail: what is a soak?"}]
-    assert sent["json"]["output_config"] == {"effort": "low"}
-    assert sent["json"]["system"].startswith("system\n\nCurrent date and time: ")
-    assert sent["json"]["system"].endswith("The member talking to you right now is an Officer.")
+    assert sent["url"] == "http://ollama:11434/api/chat"
+    assert sent["json"]["model"] == "qwen3.5:9b"
+    system, *messages = sent["json"]["messages"]
+    assert messages == [{"role": "user", "content": "Kail: what is a soak?"}]
+    assert system["role"] == "system" and system["content"].startswith("system\n\nCurrent date and time: ")
+    assert system["content"].endswith("The member talking to you right now is an Officer.")
 
     # The next question in the channel carries the exchange; a raider is told nothing an Officer was.
     run(ai.ask(7, 2, Access.OFFICER, AiSettings(), Question("Kail", "me?")))
-    assert [message["content"] for message in http.requests[1]["json"]["messages"]] == [
+    assert [message["content"] for message in http.requests[1]["json"]["messages"][1:]] == [
         "Kail: what is a soak?",
         "a soak is standing in the circle",
         "Kail: me?",
     ]
 
     assert ai.member_usage(2).asked == 2 and ai.daily_usage() == (2, 100)
-    assert ai.usage_report().since_start == [("claude-sonnet-5-5", Tokens(2, 200, 40))]
+    assert ai.usage_report().since_start == [("qwen3.5:9b", Tokens(2, 200, 40))]
 
 
 def test_a_raider_does_not_see_what_an_officer_was_told():
     http = FakeHttp(answer("officer secret"), answer("hi"))
-    ai = anthropic_ai(http)
+    ai = local_ai(http)
     run(ai.ask(7, 2, Access.OFFICER, AiSettings(), HELLO))
     run(ai.ask(7, 3, Access.RAIDER, AiSettings(), HELLO))
-    assert len(http.requests[1]["json"]["messages"]) == 1
-    assert http.requests[1]["json"]["system"].endswith("is not an Officer.")
+    system, *messages = http.requests[1]["json"]["messages"]
+    assert len(messages) == 1
+    assert system["content"].endswith("is not an Officer.")
 
 
 def test_a_failure_costs_nobody_anything_and_is_kept_for_the_developers():
-    ai = anthropic_ai(FakeHttp(Response(500, '{"error":{"message":"overloaded"}}'), RequestTimeout("no answer within 60 seconds")))
+    ai = local_ai(FakeHttp(Response(500, '{"error":"overloaded"}'), RequestTimeout("no answer within 240 seconds")))
     for _ in range(2):
         with pytest.raises(Unavailable):
             run(ai.ask(7, 2, Access.RAIDER, AiSettings(), HELLO))
     assert ai.member_usage(2).asked == 0 and ai.daily_usage()[0] == 0
     total, latest = ai.failure_report()
     assert total == 2
-    assert latest[0].detail == "the request failed: no answer within 60 seconds"
-    assert latest[1].detail == "the API returned 500 Internal Server Error: overloaded"
+    assert latest[0].detail == "the request to the local model failed: no answer within 240 seconds"
+    assert latest[1].detail == "the local model returned 500 Internal Server Error: overloaded"
 
 
 def test_an_answer_without_text_is_a_failure():
-    ai = anthropic_ai(FakeHttp(Response(200, '{"content": [], "stop_reason": "max_tokens"}')))
+    ai = local_ai(FakeHttp(Response(200, '{"message": {"content": "<think>still going"}, "done_reason": "length"}')))
     with pytest.raises(Unavailable):
         run(ai.ask(7, 2, Access.RAIDER, AiSettings(), HELLO))
-    assert 'Some("max_tokens")' in ai.failure_report()[1][0].detail
+    assert 'Some("length")' in ai.failure_report()[1][0].detail
 
 
 def test_a_member_is_limited_and_the_day_for_everybody():
-    ai = anthropic_ai(FakeHttp(*[answer("ok") for _ in range(MAX_REQUESTS_PER_USER)]))
+    ai = local_ai(FakeHttp(*[answer("ok") for _ in range(MAX_REQUESTS_PER_USER)]))
     for _ in range(MAX_REQUESTS_PER_USER):
         run(ai.ask(7, 2, Access.RAIDER, AiSettings(), HELLO))
     with pytest.raises(RateLimited):
         run(ai.ask(7, 2, Access.RAIDER, AiSettings(), HELLO))
 
-    ai = anthropic_ai(daily_limit=0)
+    ai = local_ai(daily_limit=0)
     with pytest.raises(DailyLimit):
         run(ai.ask(7, 2, Access.RAIDER, AiSettings(), HELLO))
     # Not the member's doing: it isn't held against them.
     assert ai.member_usage(2).asked == 0
 
 
-def test_a_local_model_is_asked_through_ollama_and_is_free():
+def test_thinking_written_into_the_answer_is_left_out():
     http = FakeHttp(
         Response(200, json.dumps({"message": {"content": "<think>x</think>sup"}, "done_reason": "length", "prompt_eval_count": 50, "eval_count": 9}))
     )
@@ -342,26 +305,22 @@ def test_a_local_model_is_asked_through_ollama_and_is_free():
     assert reply == f"sup\n\n{CUT_SHORT_NOTE}"
     assert http.requests[0]["url"] == "http://ollama:11434/api/chat"
     assert http.requests[0]["json"]["messages"][0]["role"] == "system"
-    assert ai.usage_report().since_start == [("qwen3.5:9b (local)", Tokens(1, 50, 9))]
+    assert ai.usage_report().since_start == [("qwen3.5:9b", Tokens(1, 50, 9))]
 
 
-def test_the_api_and_the_local_server_are_checked():
-    ok = Response(200, json.dumps({"data": [{"type": "model", "id": "claude-opus-5-5"}, {"type": "model", "id": "claude-haiku-5-5"}]}))
-    ai = anthropic_ai(FakeHttp(ok, ok, Response(401, '{"error":{"message":"invalid x-api-key"}}')))
-    assert run(ai.check_model("claude-haiku-5-5")) == CheckOk(True)
-    assert run(ai.check_model("claude-sonnet-5-5")) == CheckOk(False)
-    assert run(ai.check_model("claude-haiku-5-5")) == KeyRejected("invalid x-api-key")
-
+def test_the_server_is_checked():
     tags = Response(200, '{"models":[{"name":"qwen3.5:9b","model":"qwen3.5:9b","size":6600000000}]}')
-    ai = local_ai(FakeHttp(tags, tags, RequestTimeout("x")))
+    ai = local_ai(FakeHttp(tags, tags, RequestTimeout("x"), tags, RequestTimeout("x")))
     assert run(ai.check_model("qwen3.5:9b")) == CheckOk(True)
+    assert run(ai.check_model("qwen3.5:27b")) == CheckOk(False)
+    assert isinstance(run(ai.check_model("qwen3.5:9b")), Unreachable)
     assert run(ai.installed_models()) == ["qwen3.5:9b"]
     # A server that doesn't answer in time lists nothing.
     assert run(ai.installed_models()) == []
 
 
 def test_a_summary_is_refused_like_a_question_before_anything_is_asked():
-    ai = anthropic_ai()
+    ai = local_ai()
     with pytest.raises(NotAllowed):
         run(ai.summarize(Access.DENIED, AiSettings(), "[20:00] Kail: hi", 0))
     with pytest.raises(Disabled):
@@ -370,15 +329,15 @@ def test_a_summary_is_refused_like_a_question_before_anything_is_asked():
         run(ai.summarize(Access.RAIDER, AiSettings(maintenance=True), "x", 0))
     assert ai.daily_usage()[0] == 0
     with pytest.raises(DailyLimit):
-        run(anthropic_ai(daily_limit=0).summarize(Access.RAIDER, AiSettings(), "x", 0))
+        run(local_ai(daily_limit=0).summarize(Access.RAIDER, AiSettings(), "x", 0))
 
 
 def test_a_summary_is_asked_for_with_the_instructions_and_the_transcript():
     http = FakeHttp(answer("- Kail pulled"))
-    ai = anthropic_ai(http)
+    ai = local_ai(http)
     summary = run(ai.summarize(Access.RAIDER, AiSettings(), "[20:00] Kail: oops", 3))
     assert summary == "- Kail pulled"
-    content = http.requests[0]["json"]["messages"][0]["content"]
+    content = http.requests[0]["json"]["messages"][1]["content"]
     assert content.startswith(TLDR_INSTRUCTIONS)
     assert content.endswith("The conversation, oldest first, times in Central Time, 3 older messages left out:\n[20:00] Kail: oops")
     # Not kept in the channel's memory, and not counted against the member.
@@ -386,7 +345,7 @@ def test_a_summary_is_asked_for_with_the_instructions_and_the_transcript():
 
 
 def test_a_channel_summarized_is_held_for_an_hour():
-    ai = anthropic_ai()
+    ai = local_ai()
     assert ai.start_tldr(1) == TldrReady()
     assert ai.start_tldr(1) == TldrBusy()
     ai.cancel_tldr(1)
@@ -412,14 +371,14 @@ def test_an_answer_that_ran_out_of_tokens_says_so():
 
 
 def test_the_answers_are_remembered_for_replies():
-    ai = anthropic_ai()
+    ai = local_ai()
     assert not ai.is_answer(42)
     ai.remember_answer(42)
     assert ai.is_answer(42) and not ai.is_answer(43)
 
 
 def test_a_user_can_be_looked_up_and_reset():
-    ai = anthropic_ai()
+    ai = local_ai()
     now = time.monotonic()
     ai.member_limiter.check(7, now)
     ai.member_limiter.check(7, now)
@@ -432,7 +391,7 @@ def test_a_user_can_be_looked_up_and_reset():
 
 
 def test_the_day_is_counted_for_everybody_together():
-    ai = anthropic_ai()
+    ai = local_ai()
     assert ai.daily_usage() == (0, 100)
     ai.daily_limiter.check(EVERYBODY, time.monotonic())
     ai.daily_limiter.check(EVERYBODY, time.monotonic())
@@ -440,7 +399,7 @@ def test_the_day_is_counted_for_everybody_together():
 
 
 def test_usage_and_failures_are_reported():
-    ai = anthropic_ai()
+    ai = local_ai()
     assert ai.usage_report().since_start == [] and ai.failure_report() == (0, [])
     ai.token_usage.record("model", 100, 20, time.monotonic())
     ai.failures.record(5, "boom")

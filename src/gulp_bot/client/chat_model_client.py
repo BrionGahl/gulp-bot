@@ -1,4 +1,4 @@
-"""What the AI assistant needs of a model, whichever serves it."""
+"""What the AI assistant needs of the server that runs its model."""
 
 from __future__ import annotations
 
@@ -9,23 +9,17 @@ from ..schema.ai_schema import ModelCheck, ModelReply, Turn
 
 
 class ChatModelClient(Protocol):
-    """A model server: Claude through the Anthropic API, or a model on the guild's own hardware."""
+    """A model server on the guild's own hardware."""
 
-    @property
-    def is_local(self) -> bool:
-        """Whether the model runs on the guild's own hardware rather than the Anthropic API."""
-        ...
-
-    async def complete(self, model: str, system: str, turns: Sequence[Turn], effort: str | None, think: bool | None) -> ModelReply:
-        """One request to `model` with `turns` as the conversation. `effort` is for the Anthropic API and
-        `think` for a local model (`None` sends nothing); each server ignores the other's. Raises
-        `Unavailable` if there is no answer."""
+    async def complete(self, model: str, system: str, turns: Sequence[Turn], think: bool | None) -> ModelReply:
+        """One request to `model` with `turns` as the conversation; `think` says whether it thinks first
+        (`None` sends nothing). Raises `Unavailable` if there is no answer."""
         ...
 
     async def check(self, model: str) -> ModelCheck:
-        """Whether the server can be reached with the bot's credentials, and has `model`. Costs no tokens."""
+        """Whether the server can be reached, and has `model`."""
         ...
 
     async def installed_models(self) -> list[str]:
-        """The models a developer may pick from on a local server; nothing for the Anthropic API."""
+        """The models a developer may pick from."""
         ...

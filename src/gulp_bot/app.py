@@ -58,7 +58,7 @@ async def _run_until_stopped(bot: GulpBot, token: str) -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
             loop.add_signal_handler(sig, stopping.set)
-        except (NotImplementedError, RuntimeError):
+        except NotImplementedError, RuntimeError:
             # No signal handlers outside Unix; Ctrl-C still stops the bot there.
             pass
 

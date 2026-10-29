@@ -14,8 +14,6 @@ from ..service.ai_access_service import access_for_member, ensure_switches_allow
 from ..service.ai_prompt_service import speaker_label
 from .resource_support import meta, refuse, reply_in_chunks
 
-NOT_SET_UP = "The AI assistant isn't set up for this bot yet."
-
 
 @app_commands.command(name="ask", description="Ask the guild's AI assistant anything")
 @app_commands.guild_only()
@@ -26,9 +24,6 @@ async def ask(interaction: discord.Interaction, question: str) -> None:
     if guild_id is None:
         return
     ai = ctx.services.ai
-    if ai is None:
-        await refuse(ctx, NOT_SET_UP)
-        return
 
     # The same roles the other raider-only commands go by, looked up for this server only. Administrators
     # count as Officers, as they do for `/settings` and `/wcl`.

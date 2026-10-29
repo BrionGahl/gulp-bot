@@ -15,8 +15,8 @@ from ..schema.ai_schema import Access
 # The guild's own time zone, which the assistant gives the time in.
 CHICAGO = ZoneInfo("America/Chicago")
 
-# The most characters of a member's question that are sent to the model. Bounds the cost of one request: a
-# long paste would otherwise be billed on every following turn too.
+# The most characters of a member's question that are sent to the model. Bounds the size of one request: a
+# long paste would otherwise be read again on every following turn too.
 MAX_INPUT_CHARS = 1500
 
 # The most characters of the message a member replied to that are sent along with their question.

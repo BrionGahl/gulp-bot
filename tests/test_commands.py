@@ -142,12 +142,10 @@ def test_a_slash_only_command_is_not_a_prefix_one():
     assert "client" not in {command.name for command in settings_wcl.commands}
 
 
-def test_every_service_is_built_and_the_assistant_only_with_a_backend():
+def test_every_service_is_built():
     services = BOT.services
     assert services.guild_settings is not None and services.warcraft_logs is not None and services.announcements is not None
-    assert services.ai is None
-    assert make_bot(AI_BACKEND="local").services.ai is not None
-    assert make_bot(ANTHROPIC_API_KEY="key").services.ai is not None
+    assert services.ai is not None
 
 
 def test_commands_md_lists_the_commands_as_they_are():
@@ -157,4 +155,4 @@ def test_commands_md_lists_the_commands_as_they_are():
     generator = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(generator)
     written = (root / "COMMANDS.md").read_text(encoding="utf-8").replace("\r\n", "\n")
-    assert written == generator.render(BOT), "COMMANDS.md is out of date: run python scripts/generate_commands_md.py"
+    assert written == generator.render(BOT), "COMMANDS.md is out of date: run uv run scripts/generate_commands_md.py"

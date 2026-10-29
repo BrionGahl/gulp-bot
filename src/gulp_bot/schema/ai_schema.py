@@ -74,7 +74,7 @@ class Question:
 
 @dataclass(frozen=True)
 class ModelReply:
-    """What a model answered, whichever served it."""
+    """What the model answered."""
 
     text: str
     # It ran out of tokens before the answer was finished.
@@ -90,27 +90,20 @@ class ModelReply:
 
 @dataclass(frozen=True)
 class CheckOk:
-    """The key works (or the local server answers). `model_listed` says whether the model that was asked
-    about is among the ones it can use."""
+    """The model server answers. `model_listed` says whether the model that was asked about is installed
+    on it."""
 
     model_listed: bool
 
 
 @dataclass(frozen=True)
-class KeyRejected:
-    """The API refused the key; carries the reason it gave."""
-
-    reason: str
-
-
-@dataclass(frozen=True)
 class Unreachable:
-    """The API couldn't be reached, or didn't answer as expected; carries what went wrong."""
+    """The model server couldn't be reached, or didn't answer as expected; carries what went wrong."""
 
     problem: str
 
 
-ModelCheck = CheckOk | KeyRejected | Unreachable
+ModelCheck = CheckOk | Unreachable
 
 
 # --- What it has used ---

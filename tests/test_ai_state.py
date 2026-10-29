@@ -2,7 +2,7 @@ import pytest
 
 from gulp_bot.core.rate_limiter import RateLimiter
 from gulp_bot.exception.ai_exception import ModelNameProblem
-from gulp_bot.mapper.ai_usage_mapper import format_cost, format_count, usage_lines
+from gulp_bot.mapper.ai_usage_mapper import format_count, usage_lines
 from gulp_bot.repository.ai_memory_repository import (
     MAX_FAILURE_DETAIL_CHARS,
     AnswerMessageRepository,
@@ -12,7 +12,7 @@ from gulp_bot.repository.ai_memory_repository import (
 )
 from gulp_bot.schema.ai_schema import Access, ApiFailure, TldrBusy, TldrReady, TldrWait, Tokens, TranscriptLine, Turn, TurnRole
 from gulp_bot.service.ai_access_service import access_from_roles
-from gulp_bot.service.ai_model_catalog_service import KNOWN_MODELS, cost_of, is_local_label, local_label, normalize_model_name, price_per_million
+from gulp_bot.service.ai_model_catalog_service import normalize_model_name
 from gulp_bot.service.tldr_service import MAX_LINE_CHARS, TLDR_COOLDOWN, TldrCooldowns, conversation_to_summarize, describe_span, transcript
 
 RAIDER, OFFICER, TRIAL, DEVELOPER = 10, 20, 30, 40
@@ -228,38 +228,6 @@ def test_the_last_answers_are_remembered():
 DAY = 24 * 3600.0
 
 
-def test_a_model_and_its_dated_versions_have_a_price():
-    assert price_per_million("claude-sonnet-5-5") == (2.0, 10.0)
-    assert price_per_million("claude-sonnet-5-5-20261001") == (2.0, 10.0)
-    assert price_per_million("claude-haiku-5-5") == (0.10, 0.50)
-    assert price_per_million("claude-opus-5-5") == (4.0, 20.0)
-
-
-def test_other_models_have_no_price():
-    assert price_per_million("claude-sonnet-5-50") is None
-    assert price_per_million("claude-sonnet-5") is None
-    assert price_per_million("gpt") is None
-    assert price_per_million("") is None
-    assert all(price_per_million(model) is not None for model in KNOWN_MODELS)
-
-
-def test_a_local_model_is_free():
-    label = local_label("qwen3.5:9b")
-    assert label == "qwen3.5:9b (local)"
-    assert is_local_label(label) and not is_local_label("claude-haiku-5-5")
-    assert price_per_million(label) == (0.0, 0.0)
-    assert usage_lines([(label, Tokens(3, 3_000, 600))]) == "`qwen3.5:9b (local)`: 3 requests, 3,000 in / 600 out tokens, free, it runs locally"
-    text = usage_lines([("claude-haiku-5-5", Tokens(1, 1_000_000, 0)), (local_label("qwen3.5:9b"), Tokens(1, 10, 10))])
-    assert "about $0.1000" in text and "unknown" not in text
-
-
-def test_tokens_cost_their_share_of_a_million():
-    tokens = Tokens(3, 500_000, 100_000)
-    cost = cost_of(tokens, "claude-sonnet-5-5")
-    assert cost is not None and abs(cost - 2.0) < 1e-9
-    assert cost_of(tokens, "unknown") is None
-
-
 def test_usage_is_counted_per_model_since_the_start():
     usage = TokenUsageRepository(DAY)
     usage.record("b", 100, 10, 0.0)
@@ -281,11 +249,10 @@ def test_the_recent_usage_only_counts_the_window():
 
 def test_usage_is_described_per_model_with_a_total():
     assert usage_lines([]) == "No requests."
-    assert usage_lines([("claude-sonnet-5-5", Tokens(2, 1_500, 300))]) == "`claude-sonnet-5-5`: 2 requests, 1,500 in / 300 out tokens, about $0.0060"
-    text = usage_lines([("claude-haiku-5-5", Tokens(1, 1_000_000, 0)), ("mystery", Tokens(1, 10, 10))])
-    assert "`mystery`: 1 request, 10 in / 10 out tokens, price unknown" in text
-    assert "**Total**: 2 requests, 1,000,010 in / 10 out tokens, about $0.1000" in text
-    assert "not counting the models whose price is unknown" in text
+    assert usage_lines([("qwen3.5:9b", Tokens(2, 1_500, 300))]) == "`qwen3.5:9b`: 2 requests, 1,500 in / 300 out tokens"
+    text = usage_lines([("qwen3.5:9b", Tokens(1, 1_000_000, 0)), ("gemma4:12b", Tokens(1, 10, 10))])
+    assert "`gemma4:12b`: 1 request, 10 in / 10 out tokens" in text
+    assert text.endswith("**Total**: 2 requests, 1,000,010 in / 10 out tokens")
 
 
 def test_numbers_are_formatted_for_reading():
@@ -293,12 +260,10 @@ def test_numbers_are_formatted_for_reading():
     assert format_count(999) == "999"
     assert format_count(1_000) == "1,000"
     assert format_count(1_234_567) == "1,234,567"
-    assert format_cost(0.0123456) == "$0.0123"
-    assert format_cost(12.3456) == "$12.35"
 
 
 def test_a_model_name_is_checked_for_its_shape():
-    assert normalize_model_name(" claude-haiku-5-5 ") == "claude-haiku-5-5"
+    assert normalize_model_name(" gemma4:12b ") == "gemma4:12b"
     assert normalize_model_name("qwen3.5:9b") == "qwen3.5:9b"
     assert normalize_model_name("hf.co/org/model:Q4_K_M") == "hf.co/org/model:Q4_K_M"
     assert normalize_model_name("Default") is None

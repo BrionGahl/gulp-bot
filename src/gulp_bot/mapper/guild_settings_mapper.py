@@ -49,9 +49,7 @@ def settings_from_row(row: Row) -> GuildSettings:
         raid_voice=_raid_voice(row, guild_id),
         wcl_source=_wcl_source(row),
         wcl_credentials=_wcl_credentials(row),
-        ai=AiSettings(
-            disabled=row["ai_disabled"], maintenance=row["ai_maintenance"], model=row["ai_model"], effort=row["ai_effort"], think=_think(row["ai_think"])
-        ),
+        ai=AiSettings(disabled=row["ai_disabled"], maintenance=row["ai_maintenance"], model=row["ai_model"], think=_think(row["ai_think"])),
     )
 
 

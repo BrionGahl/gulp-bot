@@ -20,26 +20,17 @@ from ..service.chat_trigger_service import calls_assistant
 log = logging.getLogger(__name__)
 
 
-def talks_to_assistant(services: Services, message: discord.Message) -> bool:
-    """Whether `message` is chat with the AI assistant: it says "Bot please" or "hey bot", or it replies to one of the
-    assistant's answers. Whether the assistant is on, or would answer its author, doesn't matter."""
-    if calls_assistant(message.content):
-        return True
-    replied = replied_message(message)
-    return services.ai is not None and replied is not None and services.ai.is_answer(replied.id)
-
-
 async def answer_if_called(services: Services, message: discord.Message) -> None:
     """Answers `message` in its channel if it says "Bot please" or "hey bot", or if it is a reply to one of the
     assistant's answers (which carries the conversation on). If `message` replies to a message, that message
     goes along with the question, so "Bot please, what does he mean?" has something to go on.
 
-    Does nothing if the assistant isn't set up, for a bot's message (this also keeps the bot from answering
+    Does nothing for a bot's message (this also keeps the bot from answering
     itself), outside a server, or for a member who isn't a raider: they get no answer at all, not even a
     refusal, so that the channel isn't filled with replies to people the assistant doesn't talk to. A raider
     who calls it while the developers have it off, or in maintenance, is told so."""
     ai = services.ai
-    if ai is None or message.guild is None or message.author.bot:
+    if message.guild is None or message.author.bot:
         return
     replied = replied_message(message)
     replies_to_answer = replied is not None and ai.is_answer(replied.id)

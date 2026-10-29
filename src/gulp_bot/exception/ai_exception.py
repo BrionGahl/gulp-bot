@@ -65,7 +65,7 @@ class Unavailable(AskError):
 
 def unavailable(detail: str) -> Unavailable:
     """An `Unavailable` for `detail`, written to the log."""
-    log.error("Claude API: %s", detail)
+    log.error("Local model: %s", detail)
     return Unavailable(detail)
 
 

@@ -109,7 +109,7 @@ def test_settings_round_trip_and_stay_scoped_to_their_guild():
         await store.set_wcl_credentials(GUILD_A, credentials)
         await store.set_wcl_credentials(GUILD_B, credentials)
         await store.set_wcl_credentials(GUILD_B, None)
-        await store.set_ai(GUILD_A, AiSettings(maintenance=True, model="qwen3:14b", effort="high", think=ThinkSetting.ON))
+        await store.set_ai(GUILD_A, AiSettings(maintenance=True, model="qwen3:14b", think=ThinkSetting.ON))
         await store.add_clips_channel(GUILD_A, 5)
         await store.add_clips_channel(GUILD_A, 5)
         await store.add_clips_channel(GUILD_B, 6)
@@ -126,7 +126,7 @@ def test_settings_round_trip_and_stay_scoped_to_their_guild():
             assert a.raid_notes_cron is not None and a.raid_notes_cron.source == tuesdays.source
             assert a.raid_voice is not None and a.raid_voice.channel_id == 77 and a.raid_voice.end.source == "0 0 23 * * Tue,Thu *"
             assert a.wcl_source == source and a.wcl_credentials == credentials
-            assert a.ai == AiSettings(maintenance=True, model="qwen3:14b", effort="high", think=ThinkSetting.ON)
+            assert a.ai == AiSettings(maintenance=True, model="qwen3:14b", think=ThinkSetting.ON)
             b = loaded.get(GUILD_B)
             assert b.mod_role_id is None and not b.clips_channel_ids and b.bart_token == "bart-b"
             assert b.wowutils_token is None and b.raid_notes_cron is None and b.raid_voice is None

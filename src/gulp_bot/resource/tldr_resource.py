@@ -18,7 +18,6 @@ from ..service.ai_access_service import access_for_member, ensure_switches_allow
 from ..service.ai_assistant_service import AiAssistantService
 from ..service.ai_prompt_service import speaker_label
 from ..service.tldr_service import WINDOW_SECS, central_time, conversation_to_summarize, describe_span, transcript
-from .ask_resource import NOT_SET_UP
 from .resource_support import meta, refuse, reply_in_chunks
 
 log = logging.getLogger(__name__)
@@ -39,9 +38,6 @@ async def tldr(interaction: discord.Interaction) -> None:
     if guild_id is None:
         return
     ai = ctx.services.ai
-    if ai is None:
-        await refuse(ctx, NOT_SET_UP)
-        return
 
     # The same access as `/ask`: raiders, Officers and Developers.
     settings = ctx.services.guild_settings.get(guild_id)

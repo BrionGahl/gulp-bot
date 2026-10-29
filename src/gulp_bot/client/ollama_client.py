@@ -11,8 +11,7 @@ from ..exception.ai_exception import ModelServerUnreachable, unavailable
 from ..mapper.ai_model_mapper import api_error_message, ollama_reply, ollama_request
 from ..schema.ai_schema import CheckOk, ModelCheck, ModelReply, Turn, Unreachable
 
-# Gives up on a local model after this long. Longer than for the API: the first question after a while
-# loads the model into the GPU, a question waits for the one before it to finish, and a model that thinks
+# Gives up on the model after this long. Long: the first question after a while loads the model into the GPU, a question waits for the one before it to finish, and a model that thinks
 # may write a few thousand tokens before it answers.
 REQUEST_TIMEOUT = 240.0
 
@@ -38,13 +37,8 @@ class OllamaClient:
         # than all loading the GPU at once.
         self._queue = asyncio.Semaphore(1)
 
-    @property
-    def is_local(self) -> bool:
-        return True
-
-    async def complete(self, model: str, system: str, turns: Sequence[Turn], effort: str | None, think: bool | None) -> ModelReply:
-        """`effort` is ignored: a local model has no such setting. `think` is sent as is: `None` leaves
-        thinking to the model."""
+    async def complete(self, model: str, system: str, turns: Sequence[Turn], think: bool | None) -> ModelReply:
+        """`think` is sent as is: `None` leaves thinking to the model."""
         request = ollama_request(model, system, turns, think)
 
         # Held until the answer is in, so the GPU works on one question at a time.

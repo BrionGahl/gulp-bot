@@ -13,12 +13,11 @@ services:
       # as unset for these two.
       BOT_NAME: ${BOT_NAME:-gulp-bot}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      # The AI assistant (`/ask`, "Bot please", "hey bot"). By default it answers with a model on your own
-      # hardware, through the Ollama server at LOCAL_MODEL_URL, so nothing members write leaves your
-      # machines; docker-compose.ollama.yml runs that server next to the bot (see the README, "Running the
-      # model locally"). Each value below is the default when it isn't set in .env.
+      # The AI assistant (`/ask`, "Bot please", "hey bot"). It answers with a model on your own hardware,
+      # through the Ollama server at LOCAL_MODEL_URL, so nothing members write leaves your machines;
+      # docker-compose.ollama.yml runs that server next to the bot (see the README, "Running the model").
+      # Each value below is the default when it isn't set in .env.
       AI_DAILY_LIMIT: ${AI_DAILY_LIMIT:-100}
-      AI_BACKEND: ${AI_BACKEND:-local}
       LOCAL_MODEL_URL: ${LOCAL_MODEL_URL:-http://ollama:11434}
       LOCAL_MODEL: ${LOCAL_MODEL:-qwen3.5:9b}
       LOCAL_MODEL_THINK: ${LOCAL_MODEL_THINK:-false}

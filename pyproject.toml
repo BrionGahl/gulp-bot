@@ -6,16 +6,19 @@ build-backend = "setuptools.build_meta"
 name = "gulp-bot"
 version = "0.1.0"
 description = "A Discord bot for a World of Warcraft raiding guild"
-requires-python = ">=3.13"
+requires-python = ">=3.14"
+# What the bot needs to run. Pinned, and every package below them is pinned too in `uv.lock`: change one
+# with `uv add <package>==<version>`, which updates both.
 dependencies = [
     "discord.py==2.6.4",
-    "asyncpg==0.30.0",
-    "aiohttp==3.12.15",
-    "tzdata==2025.2",
+    "asyncpg==0.32.0",
+    "aiohttp==3.14.5",
+    "tzdata==2026.5",
 ]
 
-[project.optional-dependencies]
-dev = ["pytest>=8", "ruff"]
+# For the tests, the linter and the type checker; `uv sync` installs them, the image doesn't.
+[dependency-groups]
+dev = ["pytest>=8", "ruff", "pyright"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -23,7 +26,7 @@ pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 160
-target-version = "py313"
+target-version = "py314"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
@@ -32,5 +35,8 @@ ignore = ["E501", "ASYNC109"]
 
 [tool.pyright]
 include = ["src", "tests", "scripts"]
-pythonVersion = "3.13"
+# The local virtualenv (`python -m venv .venv`), so that editors find the dependencies.
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.14"
 typeCheckingMode = "standard"

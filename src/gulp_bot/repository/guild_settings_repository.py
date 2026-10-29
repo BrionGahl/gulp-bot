@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 SETTINGS_COLUMNS = (
     "guild_id, mod_role_id, dev_role_id, raider_role_id, trial_role_id, personal_officer_category_id, "
-    "raid_notes_channel_id, ai_disabled, ai_maintenance, ai_model, ai_effort, ai_think, "
+    "raid_notes_channel_id, ai_disabled, ai_maintenance, ai_model, ai_think, "
     "bart_token, wowutils_token, wowutils_group_id, raid_notes_cron, "
     "raid_voice_channel_id, raid_voice_start_cron, raid_voice_end_cron, "
     "wcl_guild_id, wcl_uploader_id, wcl_client_id, wcl_client_secret"
@@ -57,7 +57,6 @@ class GuildSettingsRepository:
                 "ai_disabled": ai.disabled,
                 "ai_maintenance": ai.maintenance,
                 "ai_model": ai.model,
-                "ai_effort": ai.effort,
                 "ai_think": None if ai.think is None else ai.think.value,
             },
         )

@@ -5,7 +5,7 @@
 The ideas behind the creation of this bot are listed below:
 - consolidate bots in my Discord servers
 
-The bot is written in Python 3.13 with [discord.py](https://github.com/Rapptz/discord.py), `asyncpg` for
+The bot is written in Python 3.14 with [discord.py](https://github.com/Rapptz/discord.py), `asyncpg` for
 Postgres and `aiohttp` for the other APIs. It was first written in Rust with `poise`; that version is in
 the git history, up to commit `351747e`. Both use the same database, so one can replace the other.
 
@@ -14,7 +14,7 @@ the git history, up to commit `351747e`. Both use the same database, so one can 
 - **WoW Guild** — Bart Timeline Reminders addon info, class Discord links, and droptimizer report submission via WowUtils
 - **Clips channels** — deletes any message posted in a configured channel that doesn't contain a video (uploaded video file or an unfurled video link embed)
 - **Warcraft Logs** — officers get an overview of a raid night's report (Mythic pulls, who died the most, who died first, damage taken from tracked abilities, healthstones and health potions used) with `/wcl report`, `/wcl damage_taken` and `/wcl consumables`, posted in that week's raid notes thread; the overview is also posted there by itself after each raid
-- **AI assistant** — raiders ask Claude with `/ask` or by saying "Bot please" or "hey bot" in a message; the guild's context and personality are in `ext_resources/system_prompt.md`. Off until `ANTHROPIC_API_KEY` is set
+- **AI assistant** — raiders ask a model running on your own GPU (through Ollama) with `/ask` or by saying "Bot please" or "hey bot" in a message; the guild's context and personality are in `ext_resources/system_prompt.md`
 - **Personal officer channels** — when a member is given the trial or raider role, creates a private text channel for them under a configured category, visible only to them and the officer (moderator) role
 
 ## Deployment
@@ -29,7 +29,7 @@ Estimates for sizing the host (a VM or a container), not measurements:
 
 | What runs | CPU | Memory | Disk | GPU |
 | --- | --- | --- | --- | --- |
-| The bot and Postgres (`docker-compose.yml`), with the model elsewhere or the assistant on Claude | 1–2 cores | 1 GB | ~2 GB: the images and the database | none |
+| The bot and Postgres (`docker-compose.yml`), with the model on another machine | 1–2 cores | 1 GB | ~2 GB: the images and the database | none |
 | Also Ollama with `qwen3.5:9b` (`docker-compose.ollama.yml`) | 4 cores | 8 GB in all, 16 GB to be comfortable | ~10 GB more: the model (6.6 GB) and the Ollama image | NVIDIA, 8 GB of VRAM at least, 12 GB to be comfortable (an RTX 3060 12 GB answers at about 35 tokens a second) |
 
 On Proxmox, the GPU has to be passed through to the VM that runs Docker (PCI passthrough), with the NVIDIA
@@ -40,8 +40,8 @@ A model that doesn't fit in the GPU's memory spills over to the CPU and slows do
 
 ### Building the image
 
-The `Dockerfile` installs the pinned dependencies (`requirements.txt`) into the official `python:3.13-slim`
-image and copies the bot and its migrations in.
+The `Dockerfile` installs the dependencies exactly as `uv.lock` pins them (with [uv](https://docs.astral.sh/uv/),
+leaving out the dev tools) into the official `python:3.14-slim` image and copies the bot and its migrations in.
 `build-image.sh` builds it with `podman` (or `docker` if podman isn't installed) and saves it to a
 tarball:
 
@@ -104,25 +104,31 @@ Actions.
 
 ## Development
 
-The bot needs Python 3.13. To run the tests and the linter:
+The bot needs Python 3.14 (`.python-version`), and its dependencies are managed with
+[uv](https://docs.astral.sh/uv/): `pyproject.toml` lists them, and `uv.lock` pins every package, the ones
+they depend on included. To set up `.venv` and run the tests, the linter and the type checker:
 
 ```shell
-python -m venv .venv && . .venv/bin/activate   # on Windows: .venv\Scripts\activate
-pip install -r requirements-dev.txt
-pytest
-ruff check . && ruff format --check .
+uv sync                     # creates .venv with the bot, its dependencies and the dev tools
+uv run pytest
+uv run ruff check . && uv run ruff format --check .
+uv run pyright
 ```
 
+To add or upgrade a dependency, use `uv add <package>==<version>` (`uv add --dev <package>` for a dev
+tool): it updates `pyproject.toml` and `uv.lock` together; commit both. `uv lock --upgrade-package
+<package>` moves a package that isn't pinned in `pyproject.toml` to its latest version.
+
 The database tests (`tests/test_database.py`) are skipped unless `TEST_DATABASE_URL` points at a Postgres
-database they may empty, e.g. `TEST_DATABASE_URL=postgres://gulp:<password>@localhost:5432/gulp_test pytest`.
+database they may empty, e.g. `TEST_DATABASE_URL=postgres://gulp:<password>@localhost:5432/gulp_test uv run pytest`.
 
 [COMMANDS.md](COMMANDS.md) lists every command, with its parameters and who may use it. It is generated from
-the commands themselves: after adding or changing one, run `python scripts/generate_commands_md.py`. A test
+the commands themselves: after adding or changing one, run `uv run scripts/generate_commands_md.py`. A test
 fails while the file is out of date.
 
-The code is in `src/gulp_bot`; `pip install -r requirements-dev.txt` also installs it (editable), so that
-`python -m gulp_bot` finds it. To run the bot outside Docker, set the environment variables below (with a
-`DATABASE_URL` your machine can reach) and run `python -m gulp_bot`. Its log is one JSON object per line on standard output.
+The code is in `src/gulp_bot`; `uv sync` also installs it (editable), so that `python -m gulp_bot` finds
+it. To run the bot outside Docker, set the environment variables below (with a `DATABASE_URL` your machine
+can reach) and run `uv run python -m gulp_bot`. Its log is one JSON object per line on standard output.
 
 ### Code layout
 
@@ -138,7 +144,7 @@ src/gulp_bot/
 ├── resource/       the controllers: one module per command group (*_resource.py) and per kind of event
 ├── service/        the guild's rules (*_service.py), independent of how they were asked for
 ├── repository/     the SQL of each table (*_repository.py), and the state kept only in memory
-├── client/         the outside APIs: Warcraft Logs, Anthropic, Ollama, WowUtils
+├── client/         the outside APIs: Warcraft Logs, Ollama, WowUtils
 ├── mapper/         rows and JSON into schemas, schemas into embeds and text
 ├── schema/         the data passed between the layers (DTOs): dataclasses and enums
 ├── exception/      the errors a service raises for a resource to show the member
@@ -168,13 +174,9 @@ BOT_NAME=<display name used in embeds; defaults to gulp-bot>
 # Database
 DATABASE_URL=<Postgres connection URL, e.g. postgres://gulp:<password>@db:5432/gulp>
 
-# AI assistant (optional; without a key `/ask` and "Bot please" are off)
-ANTHROPIC_API_KEY=<API key from console.anthropic.com>
-ANTHROPIC_MODEL=<Claude model; defaults to claude-sonnet-5-5>
-ANTHROPIC_EFFORT=<low, medium, high...; defaults to low; off doesn't send the setting>
+# AI assistant (optional; the defaults work with docker-compose.ollama.yml)
 AI_DAILY_LIMIT=<most questions answered in 24 hours, all members together; defaults to 100>
-AI_BACKEND=<anthropic or local; the bot defaults to anthropic, docker-compose.yml to local. local runs the model with Ollama and needs no key>
-LOCAL_MODEL_URL=<Ollama server for AI_BACKEND=local; defaults to http://ollama:11434>
+LOCAL_MODEL_URL=<Ollama server; defaults to http://ollama:11434>
 LOCAL_MODEL=<model Ollama runs; defaults to qwen3.5:9b>
 LOCAL_MODEL_THINK=<false, true or default; defaults to false (no "thinking", quicker answers); `/ai think` changes it per server>
 SYSTEM_PROMPT_PATH=<file with the AI assistant's guild prompt; defaults to ext_resources/system_prompt.md>
@@ -200,7 +202,7 @@ Only members with the Raider role (the one registered with `/settings`) or are O
 
 When the message calling it replies to another message ("Bot please, what does he mean?"), the assistant also gets that message's author and text (up to 500 characters), as context. If an answer runs out of room, it ends with a note saying it was cut short; replying "continue" to it gets the rest.
 
-It answers with Claude through the Anthropic API, which is billed per use and separately from a Claude subscription. Set a monthly spending limit in the Anthropic Console. It remembers the last 8 turns of each channel (in memory only, forgotten after an hour without questions or when the bot restarts), each member may ask up to 10 times in 10 minutes, and the assistant answers at most `AI_DAILY_LIMIT` questions (100 by default) in any 24 hours, from everybody together; a question that gets no answer because of an error doesn't count. What it was told in a channel is remembered with the access level of whoever asked and is shown only to members of that level or higher, so what an Officer was told isn't repeated to a raider. It never pings anyone.
+It answers with a model on your own hardware, served by Ollama (see [Running the model](#running-the-model)). It remembers the last 8 turns of each channel (in memory only, forgotten after an hour without questions or when the bot restarts), each member may ask up to 10 times in 10 minutes, and the assistant answers at most `AI_DAILY_LIMIT` questions (100 by default) in any 24 hours, from everybody together; a question that gets no answer because of an error doesn't count. What it was told in a channel is remembered with the access level of whoever asked and is shown only to members of that level or higher, so what an Officer was told isn't repeated to a raider. It never pings anyone.
 
 Its rules (in `RULES` in `src/gulp_bot/service/ai_prompt_service.py`, after the guild text so editing that can't remove them): it only speaks English, stays away from politics, doesn't violate human rights or demean people, only an Officer may ask it to do anything involving Warcraft Logs, and only an Officer may ask it to change any file, setting or data. It can't change anything today, so that last rule is only the model's own behaviour; any tool added later that changes something must check `Access.OFFICER` in code, not trust the prompt.
 
@@ -218,24 +220,23 @@ The members with the developer role (registered by an administrator with `/setti
 
 | Command | What it does |
 | --- | --- |
-| `/ai status` | Whether the assistant is on, off or in maintenance, the model and effort (or, for a local model, thinking) in use, the questions answered in the last 24 hours, and the latest API failures |
+| `/ai status` | Whether the assistant is on, off or in maintenance, the model and thinking in use, the questions answered in the last 24 hours, and the latest failures |
 | `/ai on`, `/ai off` | Switch the assistant on or off for everybody (nobody is answered while it is off) |
 | `/ai maintenance <true/false>` | Maintenance mode: only Officers and Developers get answers |
-| `/ai usage` | Tokens used and an estimate of the cost, by model, for the last 24 hours and since the bot started |
-| `/ai model <name>` | Use another model, for example a cheaper one if the spending rises, or `default` for the configured one. The API is asked first whether it knows the model |
-| `/ai effort <level>` | Use another effort (as configured, off, low, medium, high) |
-| `/ai think <mode>` | With a local model: have it think before it answers, or not (as configured, on, off, left to the model). On is slower but follows instructions better |
+| `/ai usage` | Tokens used, by model, for the last 24 hours and since the bot started |
+| `/ai model <name>` | Use another model installed on the Ollama server, or `default` for the configured one. The server is asked first whether it has the model |
+| `/ai think <mode>` | Have the model think before it answers, or not (as configured, on, off, left to the model). On is slower but follows instructions better |
 | `/ai limits <member>` | How many questions a member has asked in the last 10 minutes |
 | `/ai reset <member>` | Give a member their whole allowance of questions back |
-| `/ai check` | Check that the registered roles exist, that the API key works and lists the model, and the state of the assistant. It costs no tokens |
+| `/ai check` | Check that the registered roles exist, that the Ollama server answers and has the model, and the state of the assistant |
 
-The token counts and the failures are kept in memory and start again when the bot restarts; the cost is estimated from Anthropic's list prices, and the Anthropic Console has the real bill.
+The token counts and the failures are kept in memory and start again when the bot restarts.
 
-#### Running the model locally
+#### Running the model
 
-With `AI_BACKEND=local` the assistant asks a model on your own GPU instead of Claude, through [Ollama](https://ollama.com), and nothing it is told leaves the machine. No Anthropic key is needed. Everything else works the same (access, limits, memory, replies, `/ai`), except that `/ai effort` does nothing (`/ai think` is its local counterpart) and `/ai usage` shows the tokens as free. A local model answers one question at a time; the others wait their turn.
+The assistant asks a model on your own GPU, through [Ollama](https://ollama.com), and nothing it is told leaves the machine. The model answers one question at a time; the others wait their turn.
 
-The default model, `qwen3.5:9b`, fits a 12 GB GPU such as an RTX 3060. `docker-compose.ollama.yml` runs it next to the bot: added on top of `docker-compose.yml`, it starts an `ollama` service on a network with no way out (`ai`), and puts the bot on that network too. `docker-compose.yml` already defaults `AI_BACKEND` to `local`; on a host with no Ollama server, the assistant answers that it couldn't get an answer, and `/ai check` says why.
+The default model, `qwen3.5:9b`, fits a 12 GB GPU such as an RTX 3060. `docker-compose.ollama.yml` runs it next to the bot: added on top of `docker-compose.yml`, it starts an `ollama` service on a network with no way out (`ai`), and puts the bot on that network too. On a host with no Ollama server, the assistant answers that it couldn't get an answer, and `/ai check` says why.
 
 The GPU needs the NVIDIA driver and, on Linux, the NVIDIA Container Toolkit (Docker Desktop on Windows passes the GPU through WSL2). Then:
 
@@ -258,7 +259,7 @@ The GPU needs the NVIDIA driver and, on Linux, the NVIDIA Container Toolkit (Doc
 
 If Ollama runs on another computer, set `LOCAL_MODEL_URL` to it (e.g. `http://192.168.1.20:11434`) and only let the bot's host reach that port: Ollama has no password. Qwen thinks before it answers unless told not to; the bot tells it not to (`LOCAL_MODEL_THINK=false`), which makes answers quicker. If a model rejects that, set `LOCAL_MODEL_THINK=default`. `/ai think` switches it per server without a restart. With thinking on, a request may use up to 4096 tokens, the thinking included, instead of 1024.
 
-Privacy: what a member writes to the assistant, and the assistant's recent answers in that channel, are sent to Anthropic's API to get an answer (or to your own Ollama server, with `AI_BACKEND=local`). Tell the guild before turning it on.
+Privacy: what a member writes to the assistant, and the assistant's recent answers in that channel, are sent to your own Ollama server to get an answer, and go no further. Tell the guild before turning it on.
 
 Who the guild is, and how the assistant treats its members, is written in `ext_resources/system_prompt.md`; change it there and rebuild the image. To change it without rebuilding, mount a file of your own into the container (e.g. `./my-prompt.md:/app/my-prompt.md:ro` under the bot's `volumes:`), set `SYSTEM_PROMPT_PATH=/app/my-prompt.md`, and restart the bot after each edit: the file is read when the bot starts. The answers are only as good as that text and the model: the assistant has no access to Warcraft Logs or the guild's settings yet.
 
