@@ -7,16 +7,16 @@ from typing import TYPE_CHECKING
 from ..core.cron import Schedule
 from ..core.database import from_bigint, rows_affected, to_bigint, to_bigint_or_none
 from ..mapper.guild_settings_mapper import guild_id_from_row, settings_from_row
-from ..schema.guild_settings_schema import AiSettings, GuildIdSetting, GuildSettings, RaidVoice, WclCredentials, WclSource, WowUtilsCredentials
+from ..schema.guild_settings_schema import AiSettings, GuildIdSetting, GuildSettings, RaidNights, RaidVoice, WclCredentials, WclSource, WowUtilsCredentials
 
 if TYPE_CHECKING:
     import asyncpg
 
 SETTINGS_COLUMNS = (
     "guild_id, mod_role_id, dev_role_id, raider_role_id, trial_role_id, personal_officer_category_id, "
-    "raid_notes_channel_id, ai_disabled, ai_maintenance, ai_model, ai_effort, ai_think, "
+    "raid_notes_channel_id, ai_disabled, ai_maintenance, ai_model, ai_think, "
     "bart_token, wowutils_token, wowutils_group_id, raid_notes_cron, "
-    "raid_voice_channel_id, raid_voice_start_cron, raid_voice_end_cron, "
+    "raid_voice_channel_id, raid_voice_start_cron, raid_voice_end_cron, raid_days, raid_start, raid_end, "
     "wcl_guild_id, wcl_uploader_id, wcl_client_id, wcl_client_secret"
 )
 
@@ -57,7 +57,6 @@ class GuildSettingsRepository:
                 "ai_disabled": ai.disabled,
                 "ai_maintenance": ai.maintenance,
                 "ai_model": ai.model,
-                "ai_effort": ai.effort,
                 "ai_think": None if ai.think is None else ai.think.value,
             },
         )
@@ -88,6 +87,16 @@ class GuildSettingsRepository:
 
     async def save_raid_notes_schedule(self, guild_id: int, schedule: Schedule | None) -> None:
         await self._upsert(guild_id, {"raid_notes_cron": None if schedule is None else schedule.source})
+
+    async def save_raid_nights(self, guild_id: int, nights: RaidNights | None) -> None:
+        await self._upsert(
+            guild_id,
+            {
+                "raid_days": None if nights is None else sorted(nights.days),
+                "raid_start": None if nights is None else nights.start,
+                "raid_end": None if nights is None else nights.end,
+            },
+        )
 
     async def save_raid_voice(self, guild_id: int, raid_voice: RaidVoice | None) -> None:
         await self._upsert(

@@ -6,26 +6,12 @@ raid notes schedule) are not here: administrators register those per guild, see 
 
 from __future__ import annotations
 
-import enum
 import logging
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
 
-from .paths import DEFAULT_SYSTEM_PROMPT_PATH
-
-
-class AiBackend(enum.Enum):
-    """Which model answers the AI assistant's questions."""
-
-    # Claude, through the Anthropic API. Needs `ANTHROPIC_API_KEY`.
-    ANTHROPIC = "anthropic"
-    # A model on the guild's own hardware, served by Ollama. Nothing leaves the machine.
-    LOCAL = "local"
-
-
-# `LOG_LEVEL` values, as the Rust bot accepted them, and the `logging` level each one means.
-# Python has no TRACE, so it is DEBUG; OFF silences everything.
+# The `LOG_LEVEL` values the bot accepts, and the `logging` level each one means. Python has no TRACE, so
+# it is DEBUG; OFF silences everything.
 LOG_LEVELS = {
     "trace": logging.DEBUG,
     "debug": logging.DEBUG,
@@ -48,31 +34,17 @@ class Config:
     # Postgres connection URL for the database holding per-guild settings. Holds the password.
     database_url: str = field(repr=False)
     log_level: int
-    # Anthropic API key for the AI assistant (`/ask`, "Bot please"). Without it the assistant is off.
-    anthropic_api_key: str | None = field(repr=False)
-    # The Claude model that answers. Default: `claude-sonnet-5-5`.
-    anthropic_model: str
-    # How much effort the model puts into an answer (`output_config.effort`): `low`, `medium`,
-    # `high`... Default `low`; `off` doesn't send the setting at all (`None`).
-    anthropic_effort: str | None
-    # The most questions the assistant answers in 24 hours, from everybody together: what keeps the
-    # bill from running away (or, with a local model, the GPU from being kept busy). Default 100.
+    # The most requests the AI features (`/tldr`) send the model in 24 hours, from everybody together: what
+    # keeps the GPU from being kept busy. Default 100.
     ai_daily_limit: int
-    # Which model answers: Claude through the Anthropic API, or a model on the guild's own hardware
-    # through Ollama (`AI_BACKEND=local`). Default: Anthropic.
-    ai_backend: AiBackend
-    # Where the Ollama server listens, for `AI_BACKEND=local`. Default: `http://ollama:11434`.
+    # Where the Ollama server that runs the model listens. Default: `http://ollama:11434`.
     local_model_url: str
-    # The model Ollama runs, for `AI_BACKEND=local`. Default: `qwen3.5:9b`.
+    # The model Ollama runs. Default: `qwen3.5:9b`.
     local_model: str
     # Whether the local model "thinks" before it answers (`think` in Ollama's API). Default `False`:
-    # thinking makes chat answers slower without making them better. `None` sends nothing and leaves
+    # thinking makes answers slower without making them better. `None` sends nothing and leaves
     # it to the model (`LOCAL_MODEL_THINK=default`), for a model that rejects the setting.
     local_model_think: bool | None
-    # The file with what the AI assistant knows about the guild. Default:
-    # `ext_resources/system_prompt.md` at the root of the repository (`/app/ext_resources/system_prompt.md`
-    # in the image).
-    system_prompt_path: Path = DEFAULT_SYSTEM_PROMPT_PATH
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Config:
@@ -93,14 +65,6 @@ class Config:
         if log_level_name.strip().lower() not in LOG_LEVELS:
             raise ConfigError("Failed to parse `LOG_LEVEL` env variable. Valid values: TRACE, DEBUG, INFO, WARN, ERROR")
 
-        effort = optional("ANTHROPIC_EFFORT")
-        if effort is None:
-            anthropic_effort: str | None = "low"
-        elif effort.lower() == "off":
-            anthropic_effort = None
-        else:
-            anthropic_effort = effort.lower()
-
         daily_limit = optional("AI_DAILY_LIMIT")
         if daily_limit is None:
             ai_daily_limit = 100
@@ -114,27 +78,11 @@ class Config:
             bot_name=env.get("BOT_NAME", "gulp-bot"),
             database_url=required("DATABASE_URL"),
             log_level=LOG_LEVELS[log_level_name.strip().lower()],
-            anthropic_api_key=optional("ANTHROPIC_API_KEY"),
-            anthropic_model=optional("ANTHROPIC_MODEL") or "claude-sonnet-5-5",
-            anthropic_effort=anthropic_effort,
             ai_daily_limit=ai_daily_limit,
-            ai_backend=parse_backend(optional("AI_BACKEND")),
             local_model_url=optional("LOCAL_MODEL_URL") or "http://ollama:11434",
             local_model=optional("LOCAL_MODEL") or "qwen3.5:9b",
             local_model_think=parse_think(optional("LOCAL_MODEL_THINK")),
-            system_prompt_path=Path(optional("SYSTEM_PROMPT_PATH") or DEFAULT_SYSTEM_PROMPT_PATH),
         )
-
-
-def parse_backend(value: str | None) -> AiBackend:
-    """`AI_BACKEND`: `anthropic` (or unset) or `local` (`ollama` works too), in any case."""
-    match None if value is None else value.lower():
-        case None | "anthropic":
-            return AiBackend.ANTHROPIC
-        case "local" | "ollama":
-            return AiBackend.LOCAL
-        case other:
-            raise ConfigError(f"Failed to parse `AI_BACKEND` env variable `{other}`. Valid values: anthropic, local")
 
 
 def parse_think(value: str | None) -> bool | None:

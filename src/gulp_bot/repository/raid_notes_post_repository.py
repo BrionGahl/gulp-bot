@@ -1,4 +1,4 @@
-"""The `raid_notes_posts` table: which forum thread is each week's."""
+"""The `raid_notes_posts` table: which forum thread is each week's, and its officer digest message."""
 
 from __future__ import annotations
 
@@ -26,4 +26,20 @@ class RaidNotesPostRepository:
             to_bigint(guild_id),
             week_start,
             to_bigint(thread_id),
+        )
+
+    async def find_digest(self, guild_id: int, week_start: date) -> int | None:
+        """The officer digest message posted in the week's thread, if any."""
+        message_id = await self._pool.fetchval(
+            "SELECT digest_message_id FROM raid_notes_posts WHERE guild_id = $1 AND week_start = $2", to_bigint(guild_id), week_start
+        )
+        return None if message_id is None else from_bigint(message_id)
+
+    async def save_digest(self, guild_id: int, week_start: date, message_id: int) -> None:
+        """Records the officer digest of the week, whose thread must be recorded already."""
+        await self._pool.execute(
+            "UPDATE raid_notes_posts SET digest_message_id = $3 WHERE guild_id = $1 AND week_start = $2",
+            to_bigint(guild_id),
+            week_start,
+            to_bigint(message_id),
         )

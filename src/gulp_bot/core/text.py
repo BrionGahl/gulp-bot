@@ -7,8 +7,8 @@ DISCORD_MAX_CHARS = 2000
 
 
 def utf8_length(text: str) -> int:
-    """The length of `text` in UTF-8 bytes: the measure the Rust bot used for its size budgets, which is
-    never less than the characters Discord counts."""
+    """The length of `text` in UTF-8 bytes: the measure used for size budgets, which is never less than the
+    characters Discord counts."""
     return len(text.encode("utf-8"))
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..core.database import from_bigint, from_bigint_or_none, rows_affected, to_bigint
+from ..schema.absence_schema import OfficerChannelOwner
 from ..schema.officer_channel_schema import RegisteredOfficerChannel
 
 if TYPE_CHECKING:
@@ -48,6 +49,11 @@ class OfficerChannelRepository:
             "DELETE FROM personal_officer_channels WHERE guild_id = $1 AND channel_id = $2", to_bigint(guild_id), to_bigint(channel_id)
         )
         return rows_affected(status) > 0
+
+    async def owners(self) -> dict[int, OfficerChannelOwner]:
+        """Every recorded channel, by its ID, with whose it is."""
+        rows = await self._pool.fetch("SELECT guild_id, user_id, channel_id FROM personal_officer_channels WHERE channel_id IS NOT NULL")
+        return {from_bigint(row["channel_id"]): OfficerChannelOwner(from_bigint(row["guild_id"]), from_bigint(row["user_id"])) for row in rows}
 
     async def list_for_guild(self, guild_id: int) -> list[RegisteredOfficerChannel]:
         """Every member of `guild_id` with a row, oldest first."""

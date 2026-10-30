@@ -21,7 +21,7 @@ async def _answer(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) ->
         await asyncio.wait_for(reader.read(1024), timeout=5)
         writer.write(RESPONSE)
         await writer.drain()
-    except (TimeoutError, OSError):
+    except TimeoutError, OSError:
         pass
     finally:
         writer.close()

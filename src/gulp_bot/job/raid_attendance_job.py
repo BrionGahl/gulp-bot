@@ -1,5 +1,5 @@
-"""Records who is in each guild's raid voice channel whenever that guild's raid start or raid end schedule
-fires (`/settings raid_voice`), and posts the list to that week's raid notes thread.
+"""Records who is in each guild's raid voice channel (`/settings raid_voice`) at the start and end of each raid
+night (`/settings raid_nights`), and posts the list to that week's raid notes thread.
 
 The raid end is also when the Warcraft Logs overview of the night is set off: it is posted to the same
 thread a little later, once the log has uploaded (see `raid_report_service.py`).
@@ -15,6 +15,7 @@ from ..core.background_tasks import BackgroundTasks
 from ..schema.raid_attendance_schema import AttendanceMoment
 from ..service.guild_settings_service import GuildSettingsService
 from ..service.raid_attendance_service import RaidAttendanceService
+from ..service.raid_nights_service import attendance_schedules
 from ..service.raid_report_service import RaidReportService
 from .schedule_loop import ScheduledWork, run_schedule_loop
 
@@ -34,9 +35,10 @@ class RaidAttendanceJob:
     async def _scheduled_work(self) -> list[ScheduledWork]:
         work = []
         for guild_id, settings in self._guild_settings.all():
-            if settings.raid_voice is None:
+            schedules = attendance_schedules(settings)
+            if schedules is None:
                 continue
-            for moment, schedule in ((AttendanceMoment.START, settings.raid_voice.start), (AttendanceMoment.END, settings.raid_voice.end)):
+            for moment, schedule in zip((AttendanceMoment.START, AttendanceMoment.END), schedules, strict=True):
                 work.append(
                     ScheduledWork(schedule, self._snapshot_taker(guild_id, moment), f"Failed to record raid {moment.value} attendance for guild {guild_id}")
                 )

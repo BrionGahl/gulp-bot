@@ -4,10 +4,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from gulp_bot.core.config import AiBackend, Config, ConfigError, parse_backend, parse_think
+from gulp_bot.core.config import Config, ConfigError, parse_think
 from gulp_bot.core.cron import CronError, Schedule
-from gulp_bot.core.paths import DEFAULT_SYSTEM_PROMPT_PATH, MIGRATIONS_DIR
-from gulp_bot.core.schedule_parsing import EXAMPLE_CRON, parse_user_schedule
+from gulp_bot.core.paths import MIGRATIONS_DIR
+from gulp_bot.core.schedule_parsing import describe_schedule, parse_weekly_schedule
 from gulp_bot.exception.schedule_exception import ScheduleProblem
 
 NEW_YORK = ZoneInfo("America/New_York")
@@ -18,42 +18,32 @@ def env(**extra):
 
 
 def test_repr_never_holds_a_secret():
-    config = Config.from_env(env(ANTHROPIC_API_KEY="anthropic-secret-key", AI_BACKEND="local"))
+    config = Config.from_env(env())
     shown = repr(config)
-    assert "gulp-bot" in shown and "claude-sonnet-5-5" in shown and "qwen3.5:9b" in shown
-    for secret in ["discord-secret-token", "db-secret-password", "anthropic-secret-key"]:
+    assert "gulp-bot" in shown and "qwen3.5:9b" in shown
+    for secret in ["discord-secret-token", "db-secret-password"]:
         assert secret not in shown
 
 
-def test_the_defaults_are_the_rust_bots():
+def test_the_defaults():
     config = Config.from_env(env())
     assert config.bot_name == "gulp-bot"
-    assert config.anthropic_model == "claude-sonnet-5-5"
-    assert config.anthropic_effort == "low"
     assert config.ai_daily_limit == 100
-    assert config.ai_backend is AiBackend.ANTHROPIC
     assert config.local_model_url == "http://ollama:11434"
     assert config.local_model == "qwen3.5:9b"
     assert config.local_model_think is False
-    assert config.anthropic_api_key is None
-    assert config.system_prompt_path == DEFAULT_SYSTEM_PROMPT_PATH
 
 
-def test_the_prompt_and_the_migrations_are_at_the_root_of_the_repository():
+def test_the_migrations_are_at_the_root_of_the_repository():
     root = Path(__file__).resolve().parent.parent
-    assert DEFAULT_SYSTEM_PROMPT_PATH == root / "ext_resources" / "system_prompt.md" and DEFAULT_SYSTEM_PROMPT_PATH.is_file()
     assert MIGRATIONS_DIR == root / "migrations" and MIGRATIONS_DIR.is_dir()
-    assert Config.from_env(env(SYSTEM_PROMPT_PATH="/etc/gulp/prompt.md")).system_prompt_path == Path("/etc/gulp/prompt.md")
-    assert Config.from_env(env(SYSTEM_PROMPT_PATH="")).system_prompt_path == DEFAULT_SYSTEM_PROMPT_PATH
 
 
-def test_empty_variables_mean_unset_and_off_sends_no_effort():
-    config = Config.from_env(env(ANTHROPIC_API_KEY="", ANTHROPIC_MODEL=" ", ANTHROPIC_EFFORT="OFF", AI_DAILY_LIMIT="7"))
-    assert config.anthropic_api_key is None
-    assert config.anthropic_model == "claude-sonnet-5-5"
-    assert config.anthropic_effort is None
+def test_empty_variables_mean_unset():
+    config = Config.from_env(env(LOCAL_MODEL=" ", LOCAL_MODEL_URL="", AI_DAILY_LIMIT="7"))
+    assert config.local_model == "qwen3.5:9b"
+    assert config.local_model_url == "http://ollama:11434"
     assert config.ai_daily_limit == 7
-    assert Config.from_env(env(ANTHROPIC_EFFORT="High")).anthropic_effort == "high"
 
 
 def test_bad_variables_are_refused():
@@ -65,15 +55,6 @@ def test_bad_variables_are_refused():
         Config.from_env(env(AI_DAILY_LIMIT="lots"))
 
 
-def test_the_backend_is_anthropic_unless_set_to_local():
-    assert parse_backend(None) is AiBackend.ANTHROPIC
-    assert parse_backend("anthropic") is AiBackend.ANTHROPIC
-    assert parse_backend("Local") is AiBackend.LOCAL
-    assert parse_backend("ollama") is AiBackend.LOCAL
-    with pytest.raises(ConfigError):
-        parse_backend("openai")
-
-
 def test_the_local_model_does_not_think_unless_asked_to():
     assert parse_think(None) is False
     assert parse_think("off") is False
@@ -83,20 +64,20 @@ def test_the_local_model_does_not_think_unless_asked_to():
         parse_think("maybe")
 
 
-def test_parse_schedule_accepts_weekly_and_rejects_unusable_expressions():
-    parse_user_schedule(EXAMPLE_CRON)
-    parse_user_schedule("0 30 17 * * Tue,Fri *")
-    # Hourly is exactly at the floor, so allowed.
-    parse_user_schedule("0 0 * * * * *")
-
-    for expression, problem in [
-        ("every friday", "cron expression"),
-        ("* * * * * * *", "too often"),
-        ("0 0,30 9 * * Fri *", "too often"),
-        ("0 0 9 * * Fri 2020", "never fires"),
-    ]:
+def test_a_schedule_is_typed_as_days_and_a_time():
+    assert parse_weekly_schedule("Tue, Fri", "5:30pm").source == "0 30 17 * * Tue,Fri *"
+    assert parse_weekly_schedule("friday", "09:00").after(at(2026, 10, 14)) == at(2026, 10, 16, 9)
+    for days, time, problem in [("someday", "9am", "day of the week"), ("Fri", "noonish", "isn't a time"), ("", "9am", "at least one day")]:
         with pytest.raises(ScheduleProblem, match=problem):
-            parse_user_schedule(expression)
+            parse_weekly_schedule(days, time)
+
+
+def test_a_schedule_is_described_as_days_and_a_time_when_it_is_one():
+    assert describe_schedule(parse_weekly_schedule("Fri, Tue", "9am")) == "Tue, Fri, 9:00 AM Eastern"
+    assert describe_schedule(parse_weekly_schedule("mon tue wed thu fri sat sun", "12am")) == "Every day, 12:00 AM Eastern"
+    # A cron expression stored before days and times were asked for is shown as it is.
+    for expression in ["0 0 9 1 * * *", "0 0,30 9 * * Fri *", "0 0 9 * * Fri 2030"]:
+        assert describe_schedule(Schedule.parse(expression)) == f"`{expression}`"
 
 
 def at(*parts):
@@ -116,7 +97,7 @@ def test_fire_times_are_on_the_wall_clock_of_new_york():
     assert str(after_switch.utcoffset()) == "-1 day, 19:00:00"
 
 
-def test_the_cron_syntax_of_the_rust_bot_is_read():
+def test_the_stored_cron_syntax_is_read():
     # Days of the week count Sunday as 1.
     assert Schedule.parse("0 0 12 * * 1 *").after(at(2026, 10, 14)) == at(2026, 10, 18, 12)
     # Names, in any case, short or full, ranges and lists.

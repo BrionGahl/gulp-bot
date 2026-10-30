@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import asyncpg
 
-# Discord IDs are unsigned 64-bit, Postgres BIGINT is signed. The Rust bot stored an ID above the
-# signed maximum as the negative number with the same bits (`id as i64`), so these do the same.
+# Discord IDs are unsigned 64-bit, Postgres BIGINT is signed. An ID above the signed maximum is stored as
+# the negative number with the same bits (two's complement), and read back from it.
 _U64 = 1 << 64
 _I64_MAX = (1 << 63) - 1
 

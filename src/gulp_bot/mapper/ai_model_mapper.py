@@ -1,4 +1,4 @@
-"""The conversation into the requests the model APIs take, and their answers into `ModelReply`."""
+"""The conversation into the request Ollama takes, and its answer into `ModelReply`."""
 
 from __future__ import annotations
 
@@ -13,11 +13,11 @@ from ..schema.ai_schema import ModelReply, Turn
 # the model spends part of it thinking.
 MAX_TOKENS = 1024
 
-# The context window asked of a local model, in tokens. The prompt, 8 turns of memory and a question fit
+# The context window asked of the model, in tokens. The prompt, 8 turns of memory and a question fit
 # in it comfortably; a bigger one takes more GPU memory and makes answers slower.
 LOCAL_CONTEXT_TOKENS = 8192
 
-# What a local model that thinks may write: Ollama counts the thinking in `num_predict` too, and a model
+# What a model that thinks may write: Ollama counts the thinking in `num_predict` too, and a model
 # like Qwen easily thinks for more than `MAX_TOKENS` about a one-line question. With only `MAX_TOKENS`
 # it runs out while still thinking and answers nothing. The context window grows by as much, so the
 # prompt and the memory still fit next to it.
@@ -26,23 +26,19 @@ LOCAL_THINKING_CONTEXT_TOKENS = LOCAL_CONTEXT_TOKENS + LOCAL_THINKING_TOKENS - M
 
 
 def wire_messages(turns: Sequence[Turn]) -> list[dict[str, str]]:
-    """The conversation as both APIs take it."""
+    """The conversation as Ollama takes it."""
     return [{"role": turn.role.value, "content": turn.content} for turn in turns]
 
 
-def anthropic_request(model: str, system: str, turns: Sequence[Turn], effort: str | None, max_tokens: int = MAX_TOKENS) -> dict[str, Any]:
-    """A request to the Anthropic Messages API."""
-    request: dict[str, Any] = {"model": model, "max_tokens": max_tokens, "system": system, "messages": wire_messages(turns)}
-    if effort is not None:
-        request["output_config"] = {"effort": effort}
-    return request
-
-
-def ollama_request(model: str, system: str, turns: Sequence[Turn], think: bool | None) -> dict[str, Any]:
+def ollama_request(
+    model: str, system: str, turns: Sequence[Turn], think: bool | None, temperature: float | None = None, schema: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """A request to Ollama's `/api/chat`: the system prompt first, as a message of its own, the whole
     answer in one response (`stream: false`), with the context window (`num_ctx`) and the most tokens to
     answer with (`num_predict`). Unless thinking is off (`think` false), the model may think first, so it
-    gets room for that too."""
+    gets room for that too. `temperature` is how much the model varies its wording, from 0 (always the
+    likeliest) up; `None` leaves the model's own. With a JSON `schema`, the answer is JSON in that shape
+    (Ollama's `format`)."""
     may_think = think is not False
     request: dict[str, Any] = {
         "model": model,
@@ -53,19 +49,13 @@ def ollama_request(model: str, system: str, turns: Sequence[Turn], think: bool |
             "num_predict": LOCAL_THINKING_TOKENS if may_think else MAX_TOKENS,
         },
     }
+    if temperature is not None:
+        request["options"]["temperature"] = temperature
+    if schema is not None:
+        request["format"] = schema
     if think is not None:
         request["think"] = think
     return request
-
-
-def anthropic_reply(body: Any) -> ModelReply:
-    """An Anthropic API answer: the text of its text blocks, joined."""
-    body = body if isinstance(body, dict) else {}
-    text = "".join(block.get("text") or "" for block in body.get("content") or [] if isinstance(block, dict) and block.get("type") == "text").strip()
-    stop_reason = body.get("stop_reason")
-    usage = body.get("usage")
-    tokens = (int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0)) if isinstance(usage, dict) else None
-    return ModelReply(text=text, cut_short=stop_reason == "max_tokens", stop_reason=stop_reason, tokens=tokens)
 
 
 def ollama_reply(body: Any) -> ModelReply:
@@ -98,16 +88,14 @@ def strip_thinking(text: str) -> str:
 
 
 def api_error_message(body: str) -> str:
-    """The message an API gave for an error, or the start of the body if it isn't the usual JSON. The
-    Anthropic API says `{"error": {"message": "..."}}`; Ollama says `{"error": "..."}`."""
+    """The message Ollama gave for an error (`{"error": "..."}`), or the start of the body if it isn't
+    that JSON."""
     try:
         parsed = json.loads(body)
     except ValueError:
         parsed = None
     if isinstance(parsed, dict):
         error = parsed.get("error")
-        if isinstance(error, dict) and isinstance(error.get("message"), str):
-            return error["message"]
         if isinstance(error, str):
             return error
     return truncate_chars(body, 300)

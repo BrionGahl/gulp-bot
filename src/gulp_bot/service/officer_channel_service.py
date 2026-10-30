@@ -3,11 +3,13 @@ officers."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import discord
 
 from ..repository.officer_channel_repository import OfficerChannelRepository
+from ..schema.absence_schema import OfficerChannelOwner
 from ..schema.guild_settings_schema import GuildSettings
 from ..schema.officer_channel_schema import RegisteredOfficerChannel
 from .guild_settings_service import GuildSettingsService
@@ -35,6 +37,28 @@ class OfficerChannelService:
     def __init__(self, repository: OfficerChannelRepository, guild_settings: GuildSettingsService):
         self._repository = repository
         self._guild_settings = guild_settings
+        # Whose each recorded channel is, by channel ID: read on every message the bot sees, so kept in
+        # memory, loaded on the first lookup and kept up to date by every change below. Only correct because
+        # a single bot process owns the database.
+        self._owners: dict[int, OfficerChannelOwner] | None = None
+        self._loading = asyncio.Lock()
+
+    async def owner_of(self, channel_id: int) -> OfficerChannelOwner | None:
+        """Whose personal officer channel `channel_id` is, if it is one."""
+        if self._owners is None:
+            async with self._loading:
+                if self._owners is None:
+                    self._owners = await self._repository.owners()
+        return self._owners.get(channel_id)
+
+    def _remember(self, guild_id: int, user_id: int, channel_id: int | None) -> None:
+        """Keeps the cache in step with a change to the member's row: `channel_id` is their channel now, or
+        `None` if they have none."""
+        if self._owners is None:
+            return
+        self._owners = {channel: owner for channel, owner in self._owners.items() if owner != OfficerChannelOwner(guild_id, user_id)}
+        if channel_id is not None:
+            self._owners[channel_id] = OfficerChannelOwner(guild_id, user_id)
 
     async def create_for_member_if_needed(self, member: discord.Member, member_roles: list[int]) -> None:
         """If `member` has the trial or raider role (and isn't themselves an officer), creates a private text
@@ -77,6 +101,7 @@ class OfficerChannelService:
         log.info("Created personal officer channel #%s for %s", channel.name, member.name)
         try:
             await self._repository.save_channel(guild.id, member.id, channel.id)
+            self._remember(guild.id, member.id, channel.id)
         except Exception as e:
             # The claim row is still there, so this can't lead to a duplicate channel; the row just doesn't say
             # which channel it is.
@@ -102,11 +127,14 @@ class OfficerChannelService:
     async def register_existing(self, guild_id: int, user_id: int, channel_id: int) -> None:
         """Records an existing channel as this member's, so the bot won't create one for them."""
         await self._repository.save_channel(guild_id, user_id, channel_id)
+        self._remember(guild_id, user_id, channel_id)
 
     async def forget(self, guild_id: int, user_id: int) -> bool:
         """Forgets this member's channel, so the bot will create one for them again. Returns whether they had
         one on record."""
-        return await self._repository.delete(guild_id, user_id)
+        forgotten = await self._repository.delete(guild_id, user_id)
+        self._remember(guild_id, user_id, None)
+        return forgotten
 
     async def forget_deleted_channel(self, guild_id: int, channel_id: int, channel_name: str) -> None:
         """When a recorded personal officer channel is deleted (e.g. by an officer cleaning up after a member
@@ -114,6 +142,8 @@ class OfficerChannelService:
         trial or raider role again. Any other channel is no concern of this."""
         try:
             if await self._repository.delete_channel(guild_id, channel_id):
+                if self._owners is not None:
+                    self._owners.pop(channel_id, None)
                 log.info("Personal officer channel #%s was deleted; forgot its registration", channel_name)
         except Exception as e:
             log.error("Failed to forget deleted personal officer channel #%s: %s", channel_name, e)

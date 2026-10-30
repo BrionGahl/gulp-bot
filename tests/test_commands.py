@@ -36,8 +36,8 @@ TOP_LEVEL_ORDER = [
     "test_replay",
     "settings",
     "announcement",
+    "absence",
     "wcl",
-    "ask",
     "ai",
     "tldr",
 ]
@@ -70,13 +70,16 @@ def test_every_command_is_registered_in_the_order_help_lists_them():
     assert {command.name for command in BOT.commands} == set(TOP_LEVEL_ORDER[:10])
 
 
-def test_the_commands_are_the_rust_bots():
+def test_every_expected_command_is_registered():
     names = {path for path, _ in with_paths(entries())}
     for expected in [
         "settings show",
         "settings mod_role",
         "settings dev_role",
         "settings bart_token",
+        "settings raid_notes_schedule",
+        "settings raid_nights",
+        "settings raid_voice",
         "settings wcl client",
         "settings wcl source",
         "settings wcl consumable_list",
@@ -90,13 +93,12 @@ def test_the_commands_are_the_rust_bots():
         "wcl damage_window",
         "ai status",
         "ai check",
-        "ask",
         "tldr",
         "help",
         "register",
     ]:
         assert expected in names
-    assert len(settings.app_command.commands) == 20
+    assert len(settings.app_command.commands) == 21
     assert len(settings_wcl.app_command.commands) == 14
     assert settings_wcl.app_command.qualified_name == "settings wcl"
 
@@ -132,7 +134,8 @@ def test_commands_that_answer_privately_are_marked_so_on_both_halves():
         command = BOT.get_command(name)
         assert command is not None and command.extras["ephemeral"], name
         assert command.app_command.extras["ephemeral"], name  # type: ignore[union-attr]
-    assert not BOT.tree.get_command("ask").extras.get("ephemeral", False)  # type: ignore[union-attr]
+    # A summary is for the whole channel.
+    assert not BOT.tree.get_command("tldr").extras.get("ephemeral", False)  # type: ignore[union-attr]
 
 
 def test_a_slash_only_command_is_not_a_prefix_one():
@@ -142,12 +145,10 @@ def test_a_slash_only_command_is_not_a_prefix_one():
     assert "client" not in {command.name for command in settings_wcl.commands}
 
 
-def test_every_service_is_built_and_the_assistant_only_with_a_backend():
+def test_every_service_is_built():
     services = BOT.services
     assert services.guild_settings is not None and services.warcraft_logs is not None and services.announcements is not None
-    assert services.ai is None
-    assert make_bot(AI_BACKEND="local").services.ai is not None
-    assert make_bot(ANTHROPIC_API_KEY="key").services.ai is not None
+    assert services.ai is not None
 
 
 def test_commands_md_lists_the_commands_as_they_are():
@@ -157,4 +158,4 @@ def test_commands_md_lists_the_commands_as_they_are():
     generator = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(generator)
     written = (root / "COMMANDS.md").read_text(encoding="utf-8").replace("\r\n", "\n")
-    assert written == generator.render(BOT), "COMMANDS.md is out of date: run python scripts/generate_commands_md.py"
+    assert written == generator.render(BOT), "COMMANDS.md is out of date: run uv run scripts/generate_commands_md.py"

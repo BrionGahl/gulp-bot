@@ -17,6 +17,7 @@ from .core.discord_context import GulpContext, slash_context
 from .core.discord_helpers import NO_MENTIONS
 from .core.http_client import Http
 from .resource import member_event_resource, message_event_resource
+from .resource.absence_resource import UndoAbsenceButton
 from .resource.registry import register_all_resources
 from .service.guild_settings_service import GuildSettingsService
 
@@ -80,6 +81,8 @@ class GulpBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         register_all_resources(self)
+        # Buttons the bot posted before a restart still answer.
+        self.add_dynamic_items(UndoAbsenceButton)
         self.tasks.spawn(health_server.serve())
         for job in scheduled_jobs(self.services):
             self.tasks.spawn(job.run_forever())
@@ -102,6 +105,9 @@ class GulpBot(commands.Bot):
     async def on_message(self, message: discord.Message) -> None:
         await message_event_resource.on_message(self.services, message)
         await self.process_commands(message)
+
+    async def on_raw_message_edit(self, payload: discord.RawMessageUpdateEvent) -> None:
+        message_event_resource.on_message_edited(self.services, payload)
 
     async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
         await message_event_resource.on_message_deleted(self.services, payload)

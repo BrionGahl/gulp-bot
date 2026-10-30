@@ -8,6 +8,7 @@ from __future__ import annotations
 import dataclasses
 import enum
 from dataclasses import dataclass, field
+from datetime import datetime, time
 
 from ..core.cron import Schedule
 
@@ -29,19 +30,17 @@ class ThinkSetting(enum.Enum):
 
 @dataclass
 class AiSettings:
-    """How the AI assistant has been switched, in a guild, by its developers with the `/ai` commands. The
-    default is the assistant on, in no special mode, with the model, effort and thinking the bot was
-    configured with."""
+    """How the AI features have been switched, in a guild, by its developers with the `/ai` commands. The
+    default is them on, in no special mode, with the model and thinking the bot was configured
+    with."""
 
-    # Off: the assistant answers nobody, whatever their role.
+    # Off: nobody can use them, whatever their role.
     disabled: bool = False
-    # Maintenance mode: the assistant answers only Officers and Developers.
+    # Maintenance mode: only Officers and Developers can use them.
     maintenance: bool = False
     # The model to use instead of the configured one.
     model: str | None = None
-    # The effort to use instead of the configured one; `off` means none is sent.
-    effort: str | None = None
-    # Whether a local model thinks, instead of the configured `LOCAL_MODEL_THINK`.
+    # Whether the model thinks, instead of the configured `LOCAL_MODEL_THINK`.
     think: ThinkSetting | None = None
 
 
@@ -72,8 +71,28 @@ class WowUtilsCredentials:
 
 
 @dataclass(frozen=True)
+class RaidNights:
+    """The nights a guild raids, every one starting and ending at the same Eastern times."""
+
+    # Days of the week, Monday 0 to Sunday 6, as `date.weekday()` counts them. Never empty.
+    days: frozenset[int]
+    start: time
+    # Earlier than `start` when the raid runs past midnight; never equal to it.
+    end: time
+
+
+@dataclass(frozen=True)
+class RaidNight:
+    """One raid night of a particular week, in Eastern Time."""
+
+    start: datetime
+    end: datetime
+
+
+@dataclass(frozen=True)
 class RaidVoice:
-    """A guild's raid voice channel and when to record who is in it."""
+    """A guild's raid voice channel and when to record who is in it. Once raid nights are registered, the
+    schedules are worked out from them (`raid_nights_service.attendance_schedules`)."""
 
     channel_id: int
     # Fires at the start of each raid.
@@ -85,7 +104,7 @@ class RaidVoice:
 @dataclass
 class GuildSettings:
     mod_role_id: int | None = None
-    # The role that makes a member a Developer: above Officer for the AI assistant, and the only one who
+    # The role that makes a member a Developer: above Officer for the AI features, and the only one who
     # may run the `/ai` commands. Only administrators can register it.
     dev_role_id: int | None = None
     raider_role_id: int | None = None
@@ -101,15 +120,17 @@ class GuildSettings:
     # together, so in practice both are set or neither is.
     wowutils_token: str | None = field(default=None, repr=False)
     wowutils_group_id: str | None = None
-    # When the raid notes post is created; `None` means `raid_notes_service.DEFAULT_RAID_NOTES_CRON`.
+    # When the raid notes post is created; `None` means `raid_notes_service.DEFAULT_RAID_NOTES_SCHEDULE`.
     raid_notes_cron: Schedule | None = None
+    # The nights the guild raids; `None` means not registered.
+    raid_nights: RaidNights | None = None
     # Raid attendance tracking; `None` means it's off for this guild.
     raid_voice: RaidVoice | None = None
     # Where this guild's Warcraft Logs reports are found.
     wcl_source: WclSource | None = None
     # This guild's Warcraft Logs API client; `None` means `/wcl` is off for it.
     wcl_credentials: WclCredentials | None = None
-    # What the guild's developers have changed about the AI assistant at run time (`/ai`).
+    # What the guild's developers have changed about the AI features at run time (`/ai`).
     ai: AiSettings = field(default_factory=AiSettings)
 
     @property
@@ -161,7 +182,8 @@ class ClearableSetting(enum.Enum):
     TRIAL_ROLE = "trial_role"
     PERSONAL_OFFICER_CATEGORY = "personal_officer_category"
     RAID_NOTES_CHANNEL = "raid_notes_channel"
-    RAID_NOTES_CRON = "raid_notes_cron"
+    RAID_NOTES_SCHEDULE = "raid_notes_schedule"
+    RAID_NIGHTS = "raid_nights"
     RAID_VOICE = "raid_voice"
     BART_TOKEN = "bart_token"
     WOWUTILS = "wowutils"
@@ -174,7 +196,8 @@ class ClearableSetting(enum.Enum):
         if id_setting is not None:
             return id_setting.value
         return {
-            ClearableSetting.RAID_NOTES_CRON: "Raid notes schedule",
+            ClearableSetting.RAID_NOTES_SCHEDULE: "Raid notes schedule",
+            ClearableSetting.RAID_NIGHTS: "Raid nights",
             ClearableSetting.RAID_VOICE: "Raid attendance",
             ClearableSetting.BART_TOKEN: "Bart token",
             ClearableSetting.WOWUTILS: "WowUtils credentials",

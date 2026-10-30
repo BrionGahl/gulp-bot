@@ -1,4 +1,4 @@
-"""Why the AI assistant gave no answer."""
+"""Why an AI feature gave no answer."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import logging
 log = logging.getLogger(__name__)
 
 
-class AskError(Exception):
-    """Why a question got no answer. `str()` of it is what the member is told."""
+class AiError(Exception):
+    """Why a request got no answer. `str()` of it is what the member is told."""
 
     message = ""
 
@@ -16,45 +16,34 @@ class AskError(Exception):
         return self.message
 
 
-class NotAllowed(AskError):
+class NotAllowed(AiError):
     """The member isn't a raider. Callers check access first and say so themselves; this is the last line
     of defence."""
 
-    message = "I only talk to raiders."
+    message = "This is only available to raiders."
 
 
-class RateLimited(AskError):
-    """This member has asked too much; carries how many seconds until they may ask again."""
+class DailyLimit(AiError):
+    """The model has answered as many requests as it may in 24 hours, from everybody together."""
 
-    def __init__(self, wait: float):
-        super().__init__()
-        self.wait = wait
-
-    def __str__(self) -> str:
-        return f"You're asking a lot, give me about {int(self.wait) + 1} seconds."
+    message = "I've done as much as I can for now. Try again later."
 
 
-class DailyLimit(AskError):
-    """The assistant has answered as many questions as it may in 24 hours, from everybody together."""
+class Disabled(AiError):
+    """A developer has switched the AI features off."""
 
-    message = "I've answered as much as I can for now. Try again later."
-
-
-class Disabled(AskError):
-    """A developer has switched the assistant off."""
-
-    message = "The AI assistant is turned off right now."
+    message = "The AI features are turned off right now."
 
 
-class Maintenance(AskError):
-    """A developer has put the assistant in maintenance mode, and this member isn't an Officer."""
+class Maintenance(AiError):
+    """A developer has put the AI features in maintenance mode, and this member isn't an Officer."""
 
-    message = "I'm in maintenance mode right now, and only talk to Officers until it's over."
+    message = "The AI features are in maintenance mode right now, and only available to Officers until it's over."
 
 
-class Unavailable(AskError):
+class Unavailable(AiError):
     """The model couldn't be reached or answered with an error. The details are in the log and, for the
-    developers, in `/ai status`; the member who asked is not told them."""
+    developers, in `/ai status`; the member is not told them."""
 
     message = "I couldn't get an answer right now. Try again in a bit."
 
@@ -65,7 +54,7 @@ class Unavailable(AskError):
 
 def unavailable(detail: str) -> Unavailable:
     """An `Unavailable` for `detail`, written to the log."""
-    log.error("Claude API: %s", detail)
+    log.error("Local model: %s", detail)
     return Unavailable(detail)
 
 

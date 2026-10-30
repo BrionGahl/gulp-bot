@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from . import (
+    absence_resource,
     ai_admin_resource,
     announcement_resource,
-    ask_resource,
     debug_resource,
     settings_resource,
     tldr_resource,
@@ -30,8 +30,8 @@ PREFIX_AND_SLASH_COMMANDS = [
 # Commands that exist only as slash commands.
 SLASH_COMMANDS = [
     *announcement_resource.COMMANDS,
+    *absence_resource.COMMANDS,
     *warcraft_logs_resource.COMMANDS,
-    *ask_resource.COMMANDS,
     *ai_admin_resource.COMMANDS,
     *tldr_resource.COMMANDS,
 ]

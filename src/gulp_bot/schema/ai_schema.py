@@ -1,4 +1,4 @@
-"""The AI assistant's data: who may talk to it, what is said, what the model answers, and what it has
+"""The AI features' data: who may use them, what is sent to the model, what it answers, and what it has
 used."""
 
 from __future__ import annotations
@@ -6,20 +6,20 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass
 
-# --- Who may talk to it ---
+# --- Who may use them ---
 
 
 class Access(enum.Enum):
-    """What a member may do with the assistant."""
+    """What a member may do with the AI features."""
 
-    # Not a raider: the assistant doesn't answer.
+    # Not a raider: may not use them.
     DENIED = 0
-    # A raider: may talk to the assistant.
+    # A raider: may use them.
     RAIDER = 1
-    # An Officer: may talk to it too, and may ask it to change things.
+    # An Officer: may use them too, also while they are in maintenance mode.
     OFFICER = 2
     # A Developer: everything an Officer may, and the only one who may run the `/ai` commands that switch
-    # the assistant off, change its model, reset limits and so on.
+    # them off, change the model and so on.
     DEVELOPER = 3
 
     def is_allowed(self) -> bool:
@@ -29,20 +29,14 @@ class Access(enum.Enum):
         """Whether the member has the standing of an Officer, which a Developer has too."""
         return self in (Access.OFFICER, Access.DEVELOPER)
 
-    def level(self) -> int:
-        """Higher is more trusted: what is said to a member is shown only to members of this level or
-        higher (see `ConversationHistoryRepository`)."""
-        return self.value
 
-
-# --- What is said ---
+# --- What is sent ---
 
 
 class TurnRole(enum.Enum):
-    """Who said a turn, named as the APIs name them."""
+    """Who said a turn, named as Ollama names them."""
 
     USER = "user"
-    ASSISTANT = "assistant"
 
 
 @dataclass(frozen=True)
@@ -54,27 +48,10 @@ class Turn:
     def user(cls, content: str) -> Turn:
         return cls(TurnRole.USER, content)
 
-    @classmethod
-    def assistant(cls, content: str) -> Turn:
-        return cls(TurnRole.ASSISTANT, content)
-
-
-@dataclass(frozen=True)
-class Question:
-    """What a member asked the assistant."""
-
-    # The member, as the model should name them (`speaker_label`).
-    speaker: str
-    # What they wrote.
-    text: str
-    # The message they replied to, if they did: its author as the model should name them (`"you"` for one
-    # of the assistant's own answers), and its text.
-    replying_to: tuple[str, str] | None = None
-
 
 @dataclass(frozen=True)
 class ModelReply:
-    """What a model answered, whichever served it."""
+    """What the model answered."""
 
     text: str
     # It ran out of tokens before the answer was finished.
@@ -90,27 +67,20 @@ class ModelReply:
 
 @dataclass(frozen=True)
 class CheckOk:
-    """The key works (or the local server answers). `model_listed` says whether the model that was asked
-    about is among the ones it can use."""
+    """The model server answers. `model_listed` says whether the model that was asked about is installed
+    on it."""
 
     model_listed: bool
 
 
 @dataclass(frozen=True)
-class KeyRejected:
-    """The API refused the key; carries the reason it gave."""
-
-    reason: str
-
-
-@dataclass(frozen=True)
 class Unreachable:
-    """The API couldn't be reached, or didn't answer as expected; carries what went wrong."""
+    """The model server couldn't be reached, or didn't answer as expected; carries what went wrong."""
 
     problem: str
 
 
-ModelCheck = CheckOk | KeyRejected | Unreachable
+ModelCheck = CheckOk | Unreachable
 
 
 # --- What it has used ---
@@ -132,7 +102,7 @@ class Tokens:
 
 @dataclass(frozen=True)
 class UsageReport:
-    """What the assistant has used, from the tokens the API reported."""
+    """What the model has used, from the tokens the server reported."""
 
     # By model, within the last 24 hours.
     last_24h: list[tuple[str, Tokens]]
@@ -148,16 +118,6 @@ class ApiFailure:
     at_unix: int
     # What went wrong, on one line.
     detail: str
-
-
-@dataclass(frozen=True)
-class MemberUsage:
-    """How many questions a member has asked within the window, how many they may, and how long the window
-    is, in seconds."""
-
-    asked: int
-    allowed: int
-    window_secs: float
 
 
 # --- /tldr ---

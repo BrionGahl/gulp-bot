@@ -12,24 +12,22 @@ from ..core.cron import Schedule
 from ..repository.raid_notes_post_repository import RaidNotesPostRepository
 from ..schema.guild_settings_schema import GuildSettings
 from ..schema.raid_notes_schema import WeekThread
+from .raid_nights_service import week_start as raid_week_start
 
 log = logging.getLogger(__name__)
 
-# Cron expression used for a guild that hasn't registered its own with `/settings raid_notes_cron`.
-# Quartz-style 7-field format (`sec min hour day-of-month month day-of-week year`): Fridays at 9:00 AM.
-DEFAULT_RAID_NOTES_CRON = "0 0 9 * * Fri *"
-DEFAULT_RAID_NOTES_SCHEDULE = Schedule.parse(DEFAULT_RAID_NOTES_CRON)
+# When the post is created for a guild that hasn't registered its own with `/settings raid_notes_schedule`:
+# Fridays at 9:00 AM.
+DEFAULT_RAID_NOTES_SCHEDULE = Schedule.parse("0 0 9 * * Fri *")
 
 # The first message of a week's thread.
 STARTER_MESSAGE = "Raid notes for this week go here."
 
 
-def week_start(day: date) -> date:
-    """The Tuesday on or before `day`, which is what identifies a week's thread. Raid weeks run Tuesday (the
-    game's weekly reset) to Monday, so a Tuesday always starts a new week and a Monday belongs to the week
-    that began six days earlier."""
-    days_since_tuesday = (day.weekday() + 6) % 7
-    return day - timedelta(days=days_since_tuesday)
+# The Tuesday on or before a day, which is what identifies a week's thread. Raid weeks run Tuesday (the
+# game's weekly reset) to Monday, so a Tuesday always starts a new week and a Monday belongs to the week
+# that began six days earlier.
+week_start = raid_week_start
 
 
 def week_title(day: date) -> str:
@@ -73,6 +71,17 @@ class RaidNotesService:
 
             await self._repository.save_thread(guild_id, tuesday, thread.id)
             return WeekThread(thread.id, title, created=True)
+
+    async def find_week_thread(self, guild_id: int, day: date) -> int | None:
+        """The thread of the week containing `day`, if the bot has made one; never creates it."""
+        return await self._repository.find_thread(guild_id, week_start(day))
+
+    async def find_digest(self, guild_id: int, day: date) -> int | None:
+        """The officer digest message of the week containing `day`, if one has been posted."""
+        return await self._repository.find_digest(guild_id, week_start(day))
+
+    async def save_digest(self, guild_id: int, day: date, message_id: int) -> None:
+        await self._repository.save_digest(guild_id, week_start(day), message_id)
 
     def thread_messageable(self, guild_id: int, thread_id: int) -> discord.PartialMessageable:
         """Somewhere to post in a week's thread, without fetching it."""

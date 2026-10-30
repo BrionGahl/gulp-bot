@@ -175,16 +175,16 @@ def test_a_channel_is_named_after_the_member():
 # --- the database ---
 
 
-def test_ids_above_the_signed_maximum_round_trip_as_the_rust_bot_stored_them():
+def test_ids_above_the_signed_maximum_round_trip_through_bigint():
     big = 2**64 - 6
     assert to_bigint(big) == -6 and from_bigint(-6) == big
     assert to_bigint(42) == 42 and from_bigint(42) == 42
     assert rows_affected("DELETE 1") == 1 and rows_affected("INSERT 0 1") == 1 and rows_affected("UPDATE 0") == 0
 
 
-def test_migrations_are_read_as_sqlx_reads_them():
+def test_migrations_are_read_with_their_version_description_and_checksum():
     migrations = load_migrations()
-    assert [migration.version for migration in migrations] == list(range(1, 17))
+    assert [migration.version for migration in migrations] == list(range(1, 19))
     first = migrations[0]
     assert first.description == "guild settings"
     raw = (Path(__file__).resolve().parent.parent / "migrations" / "0001_guild_settings.sql").read_bytes()
