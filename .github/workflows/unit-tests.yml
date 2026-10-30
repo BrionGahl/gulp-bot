@@ -1,8 +1,8 @@
-name: Tests
+name: Unit Tests
 
 # Runs the linter and every test, the database tests included, on each pull request into master and each
 # push to it. Required to pass before a pull request can be merged (set in the repository's branch rules,
-# on the "Tests" check).
+# on the "Unit Tests" check).
 on:
   pull_request:
     branches: [master]
@@ -15,12 +15,12 @@ permissions:
 
 # A newer push to the same pull request makes the older run pointless.
 concurrency:
-  group: tests-${{ github.ref }}
+  group: unit-tests-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  tests:
-    name: Tests
+  unit-tests:
+    name: Unit Tests
     runs-on: ubuntu-latest
 
     # A throwaway database for tests/test_database.py, which is skipped without TEST_DATABASE_URL.
