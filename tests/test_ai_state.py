@@ -3,14 +3,8 @@ import pytest
 from gulp_bot.core.rate_limiter import RateLimiter
 from gulp_bot.exception.ai_exception import ModelNameProblem
 from gulp_bot.mapper.ai_usage_mapper import format_count, usage_lines
-from gulp_bot.repository.ai_memory_repository import (
-    MAX_FAILURE_DETAIL_CHARS,
-    AnswerMessageRepository,
-    ApiFailureRepository,
-    ConversationHistoryRepository,
-    TokenUsageRepository,
-)
-from gulp_bot.schema.ai_schema import Access, ApiFailure, TldrBusy, TldrReady, TldrWait, Tokens, TranscriptLine, Turn, TurnRole
+from gulp_bot.repository.ai_memory_repository import MAX_FAILURE_DETAIL_CHARS, ApiFailureRepository, TokenUsageRepository
+from gulp_bot.schema.ai_schema import Access, ApiFailure, TldrBusy, TldrReady, TldrWait, Tokens, TranscriptLine
 from gulp_bot.service.ai_access_service import access_from_roles
 from gulp_bot.service.ai_model_catalog_service import normalize_model_name
 from gulp_bot.service.tldr_service import MAX_LINE_CHARS, TLDR_COOLDOWN, TldrCooldowns, conversation_to_summarize, describe_span, transcript
@@ -30,10 +24,6 @@ def test_an_administrator_is_an_officer_whatever_roles_they_hold():
     assert access_from_roles([RAIDER], RAIDER, OFFICER, None, True) is Access.OFFICER
     assert access_from_roles([], None, None, None, True) is Access.OFFICER
     assert access_from_roles([], None, None, None, True).is_officer()
-
-
-def test_the_more_trusted_have_the_higher_level():
-    assert Access.DENIED.level() < Access.RAIDER.level() < Access.OFFICER.level() < Access.DEVELOPER.level()
 
 
 def test_a_raider_is_allowed_but_is_not_an_officer():
@@ -82,71 +72,7 @@ def test_an_unregistered_developer_role_makes_nobody_a_developer():
     assert access_from_roles([DEVELOPER, RAIDER], RAIDER, OFFICER, None, False) is Access.RAIDER
 
 
-# --- history ---
-
-HOUR = 3600.0
-LEVEL_RAIDER, LEVEL_OFFICER, LEVEL_DEVELOPER = 1, 2, 3
-
-
-def test_a_new_channel_remembers_nothing():
-    assert ConversationHistoryRepository(6, HOUR).turns_visible_to(1, LEVEL_OFFICER, 0.0) == []
-
-
-def test_exchanges_are_remembered_in_order_per_channel():
-    history = ConversationHistoryRepository(6, HOUR)
-    history.record_exchange(1, "q1", "a1", LEVEL_RAIDER, 0.0)
-    history.record_exchange(1, "q2", "a2", LEVEL_RAIDER, 0.0)
-    history.record_exchange(2, "other", "chat", LEVEL_RAIDER, 0.0)
-    assert history.turns_visible_to(1, LEVEL_RAIDER, 0.0) == [Turn.user("q1"), Turn.assistant("a1"), Turn.user("q2"), Turn.assistant("a2")]
-    assert history.turns_visible_to(2, LEVEL_RAIDER, 0.0) == [Turn.user("other"), Turn.assistant("chat")]
-
-
-def test_what_an_officer_was_told_is_not_shown_to_a_raider():
-    history = ConversationHistoryRepository(10, HOUR)
-    history.record_exchange(1, "raider q", "raider a", LEVEL_RAIDER, 0.0)
-    history.record_exchange(1, "officer q", "secret a", LEVEL_OFFICER, 0.0)
-    history.record_exchange(1, "raider q2", "raider a2", LEVEL_RAIDER, 0.0)
-    seen = history.turns_visible_to(1, LEVEL_RAIDER, 0.0)
-    assert seen == [Turn.user("raider q"), Turn.assistant("raider a"), Turn.user("raider q2"), Turn.assistant("raider a2")]
-    assert all("secret" not in turn.content for turn in seen)
-    assert len(history.turns_visible_to(1, LEVEL_OFFICER, 0.0)) == 6
-
-
-def test_what_a_developer_was_told_is_shown_to_nobody_below():
-    history = ConversationHistoryRepository(10, HOUR)
-    history.record_exchange(1, "dev q", "dev secret", LEVEL_DEVELOPER, 0.0)
-    history.record_exchange(1, "officer q", "officer a", LEVEL_OFFICER, 0.0)
-    assert history.turns_visible_to(1, LEVEL_RAIDER, 0.0) == []
-    assert history.turns_visible_to(1, LEVEL_OFFICER, 0.0) == [Turn.user("officer q"), Turn.assistant("officer a")]
-    assert len(history.turns_visible_to(1, LEVEL_DEVELOPER, 0.0)) == 4
-
-
-def test_the_oldest_turns_are_dropped_and_the_user_still_speaks_first():
-    history = ConversationHistoryRepository(4, HOUR)
-    for n in range(1, 6):
-        history.record_exchange(1, f"q{n}", f"a{n}", LEVEL_RAIDER, 0.0)
-    assert history.turns_visible_to(1, LEVEL_RAIDER, 0.0) == [Turn.user("q4"), Turn.assistant("a4"), Turn.user("q5"), Turn.assistant("a5")]
-
-    # An odd limit would cut an answer loose from its question; the orphan is dropped.
-    history = ConversationHistoryRepository(3, HOUR)
-    for n in range(1, 4):
-        history.record_exchange(1, f"q{n}", f"a{n}", LEVEL_RAIDER, 0.0)
-    turns = history.turns_visible_to(1, LEVEL_RAIDER, 0.0)
-    assert turns[0].role is TurnRole.USER
-    assert turns == [Turn.user("q3"), Turn.assistant("a3")]
-
-
-def test_a_quiet_channel_is_forgotten():
-    history = ConversationHistoryRepository(6, 60.0)
-    history.record_exchange(1, "q", "a", LEVEL_RAIDER, 0.0)
-    assert len(history.turns_visible_to(1, LEVEL_RAIDER, 59.0)) == 2
-    assert history.turns_visible_to(1, LEVEL_RAIDER, 60.0) == []
-    history.record_exchange(1, "new", "chat", LEVEL_RAIDER, 61.0)
-    assert history.turns_visible_to(1, LEVEL_RAIDER, 61.0) == [Turn.user("new"), Turn.assistant("chat")]
-
-
-def test_roles_are_named_as_the_api_names_them():
-    assert TurnRole.USER.value == "user" and TurnRole.ASSISTANT.value == "assistant"
+# --- rate limiting ---
 
 
 def test_a_user_is_limited_within_the_window_only():
@@ -210,17 +136,6 @@ def test_a_user_who_was_cleared_may_ask_again_at_once():
     assert limiter.check(1, 0.0) is not None
     limiter.clear(1, 0.0)
     assert limiter.check(1, 0.0) is None
-
-
-def test_the_last_answers_are_remembered():
-    answers = AnswerMessageRepository(2)
-    assert not answers.contains(1)
-    answers.remember(1)
-    answers.remember(2)
-    answers.remember(2)
-    assert answers.contains(1) and answers.contains(2)
-    answers.remember(3)
-    assert not answers.contains(1) and answers.contains(2) and answers.contains(3)
 
 
 # --- usage ---

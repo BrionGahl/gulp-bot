@@ -1,4 +1,4 @@
-# The AI assistant's model, served by Ollama on this host's NVIDIA GPU.
+# The model for the bot's AI features, served by Ollama on this host's NVIDIA GPU.
 # Added on top of docker-compose.yml, which stays as it is for a host without a GPU:
 #
 #   docker compose -f docker-compose.yml -f docker-compose.ollama.yml up -d
@@ -22,7 +22,7 @@ services:
     container_name: gulp-bot-ollama
     restart: unless-stopped
     environment:
-      # Keep the model loaded on the GPU between questions.
+      # Keep the model loaded on the GPU between requests.
       OLLAMA_KEEP_ALIVE: 24h
     volumes:
       - ollama-data:/root/.ollama

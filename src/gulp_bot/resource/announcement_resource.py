@@ -13,7 +13,7 @@ from ..core.discord_context import slash_context
 from ..core.discord_helpers import NO_MENTIONS
 from ..core.embed import command_embed, to_discord_embed
 from ..core.permission_checks import check_is_moderator, slash_check
-from ..core.schedule_parsing import next_fire_discord_timestamp, parse_user_schedule
+from ..core.schedule_parsing import describe_schedule, next_fire_discord_timestamp, parse_weekly_schedule
 from ..exception.schedule_exception import ScheduleProblem
 from ..mapper.announcement_mapper import announcement_list_description
 from ..schema.announcement_schema import NewAnnouncement
@@ -50,16 +50,17 @@ class AnnouncementMessageModal(discord.ui.Modal, title="New announcement"):
 announcement = app_commands.Group(
     name="announcement", description="Schedule, list and delete this server's recurring announcements. Officers only.", guild_only=True
 )
-meta(announcement, category="Announcements", help_text="Slash commands only. Schedules are cron expressions evaluated in Eastern time.")
+meta(announcement, category="Announcements", help_text="Slash commands only. Announcements are posted on days of the week at a time of day, Eastern time.")
 
 
 @announcement.command(name="add", description="Schedule a recurring announcement; you'll be asked for the message next")
 @slash_check(check_is_moderator)
 @app_commands.describe(
     channel="Channel to post in",
-    cron="When to post (Eastern): sec min hour day-of-month month day-of-week [year], e.g. 0 0 12 * * Tue *",
+    days="Day(s) of the week to post on, e.g. Tue, Thu",
+    time="Time of day to post at (Eastern), e.g. 12pm or 12:00",
 )
-async def add(interaction: discord.Interaction, channel: discord.TextChannel, cron: str) -> None:
+async def add(interaction: discord.Interaction, channel: discord.TextChannel, days: str, time: str) -> None:
     ctx = await slash_context(interaction)
     guild_id = ctx.guild_id
     if guild_id is None:
@@ -69,7 +70,7 @@ async def add(interaction: discord.Interaction, channel: discord.TextChannel, cr
     # Everything that can be rejected is checked before the modal opens, so nobody writes out a message only
     # to be told the schedule was wrong.
     try:
-        schedule = parse_user_schedule(cron.strip())
+        schedule = parse_weekly_schedule(days, time)
     except ScheduleProblem as problem:
         await reply(ctx, str(problem))
         return
@@ -88,9 +89,8 @@ async def add(interaction: discord.Interaction, channel: discord.TextChannel, cr
         return
 
     announcement_id = await announcements.schedule(NewAnnouncement(guild_id, channel.id, schedule, modal.message.value, ctx.author.id))
-    # `parse_user_schedule` only accepts schedules with an upcoming fire time.
     await modal.submitted.response.send_message(
-        f"Announcement **#{announcement_id}** scheduled for <#{channel.id}> on `{schedule.source}`. Next post: {next_fire_discord_timestamp(schedule)}.",
+        f"Announcement **#{announcement_id}** scheduled for <#{channel.id}>, {describe_schedule(schedule)}. Next post: {next_fire_discord_timestamp(schedule)}.",
         ephemeral=True,
         allowed_mentions=NO_MENTIONS,
     )

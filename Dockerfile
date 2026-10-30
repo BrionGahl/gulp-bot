@@ -22,7 +22,6 @@ COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY migrations ./migrations
-COPY ext_resources ./ext_resources
 COPY src ./src
 ENV PATH=/app/.venv/bin:$PATH \
     PYTHONPATH=/app/src

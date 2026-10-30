@@ -5,7 +5,7 @@ Use a throwaway database: the tests empty the tables they touch.
 
 import asyncio
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 
@@ -16,18 +16,22 @@ pytestmark = pytest.mark.skipif(URL is None, reason="needs TEST_DATABASE_URL poi
 from gulp_bot.core import database  # noqa: E402
 from gulp_bot.core.cron import Schedule  # noqa: E402
 from gulp_bot.core.migrations import run_migrations  # noqa: E402
+from gulp_bot.repository.absence_repository import AbsenceRepository  # noqa: E402
 from gulp_bot.repository.announcement_repository import AnnouncementRepository  # noqa: E402
 from gulp_bot.repository.guild_settings_repository import GuildSettingsRepository  # noqa: E402
 from gulp_bot.repository.officer_channel_repository import OfficerChannelRepository  # noqa: E402
 from gulp_bot.repository.raid_attendance_repository import RaidAttendanceRepository  # noqa: E402
+from gulp_bot.repository.raid_notes_post_repository import RaidNotesPostRepository  # noqa: E402
 from gulp_bot.repository.wcl_consumable_ability_repository import ConsumableAbilityRepository  # noqa: E402
 from gulp_bot.repository.wcl_ignored_player_repository import IgnoredPlayerRepository  # noqa: E402
 from gulp_bot.repository.wcl_tracked_ability_repository import TrackedAbilityRepository  # noqa: E402
 from gulp_bot.repository.wcl_tracked_enemy_repository import TrackedEnemyRepository  # noqa: E402
+from gulp_bot.schema.absence_schema import AbsenceKind, NewAbsence, NewChannelNote, NoteCategory, OfficerChannelOwner  # noqa: E402
 from gulp_bot.schema.announcement_schema import NewAnnouncement  # noqa: E402
 from gulp_bot.schema.guild_settings_schema import (  # noqa: E402
     AiSettings,
     GuildIdSetting,
+    RaidNights,
     RaidVoice,
     ThinkSetting,
     WclCredentials,
@@ -68,7 +72,7 @@ def test_migrating_twice_changes_nothing():
     async def test(pool):
         await run_migrations(pool)
         rows = await pool.fetch("SELECT version, success FROM _sqlx_migrations ORDER BY version")
-        assert [row["version"] for row in rows] == list(range(1, 17)) and all(row["success"] for row in rows)
+        assert [row["version"] for row in rows] == list(range(1, 19)) and all(row["success"] for row in rows)
 
     with_pool(test)
 
@@ -96,6 +100,11 @@ def test_settings_round_trip_and_stay_scoped_to_their_guild():
         await store.set_raid_voice(GUILD_A, raid_voice)
         await store.set_raid_voice(GUILD_B, raid_voice)
         await store.set_raid_voice(GUILD_B, None)
+        # Raid attendance follows the raid nights: its stored schedules are rewritten to match.
+        nights = RaidNights(frozenset({1, 3}), time(20, 0), time(23, 0))
+        await store.set_raid_nights(GUILD_A, nights)
+        await store.set_raid_nights(GUILD_B, nights)
+        await store.set_raid_nights(GUILD_B, None)
         await store.set_bart_token(GUILD_A, "bart-a")
         await store.set_wowutils(GUILD_A, WowUtilsCredentials("wow-a", "group-a"))
         await store.set_bart_token(GUILD_B, "bart-b")
@@ -125,6 +134,7 @@ def test_settings_round_trip_and_stay_scoped_to_their_guild():
             assert (a.bart_token, a.wowutils_token, a.wowutils_group_id) == ("bart-a", "wow-a", "group-a")
             assert a.raid_notes_cron is not None and a.raid_notes_cron.source == tuesdays.source
             assert a.raid_voice is not None and a.raid_voice.channel_id == 77 and a.raid_voice.end.source == "0 0 23 * * Tue,Thu *"
+            assert a.raid_nights == nights and loaded.get(GUILD_B).raid_nights is None
             assert a.wcl_source == source and a.wcl_credentials == credentials
             assert a.ai == AiSettings(maintenance=True, model="qwen3:14b", think=ThinkSetting.ON)
             b = loaded.get(GUILD_B)
@@ -286,5 +296,62 @@ def test_consumable_abilities_are_scoped_to_their_guild_and_limited():
             assert (await consumables.register(GUILD_A, ConsumableKind.HEALTHSTONE, ability_id)).outcome is added
         assert (await consumables.register(GUILD_A, ConsumableKind.HEALTHSTONE, 999)).outcome is RegisterConsumableOutcome.FULL
         assert (await consumables.register(GUILD_A, ConsumableKind.HEALTH_POTION, 999)).outcome is added
+
+    with_pool(test)
+
+
+def test_absences_are_scoped_found_by_week_and_cleaned_up():
+    async def test(pool):
+        await pool.execute("TRUNCATE raid_absences, officer_channel_notes")
+        absences = AbsenceRepository(pool)
+        tue, thu, next_tue = date(2026, 11, 3), date(2026, 11, 5), date(2026, 11, 10)
+        out = await absences.insert(NewAbsence(GUILD_A, 1, thu, thu, AbsenceKind.ABSENT, "wedding", 1))
+        trip = await absences.insert(NewAbsence(GUILD_A, 2, date(2026, 10, 30), tue, AbsenceKind.TENTATIVE, None, 9, source_message_id=500))
+        later = await absences.insert(NewAbsence(GUILD_A, 1, next_tue, next_tue, AbsenceKind.ABSENT, None, 1))
+        other = await absences.insert(NewAbsence(GUILD_B, 1, thu, thu, AbsenceKind.ABSENT, None, 1))
+        assert out.note == "wedding" and trip.kind is AbsenceKind.TENTATIVE and trip.source_message_id == 500 and trip.created_by == 9
+
+        assert [entry.id for entry in await absences.overlapping(GUILD_A, tue, date(2026, 11, 9))] == [trip.id, out.id]
+        assert [entry.id for entry in await absences.upcoming_for_member(GUILD_A, 1, thu)] == [out.id, later.id]
+        assert await absences.find(GUILD_A, other.id) is None and await absences.delete(GUILD_A, other.id) is None
+        assert (await absences.delete(GUILD_A, out.id)) == out
+        assert [entry.id for entry in await absences.delete_for_message(500)] == [trip.id]
+        await absences.insert(NewAbsence(GUILD_A, 3, date(2026, 10, 27), date(2026, 11, 2), AbsenceKind.ABSENT, None, 3))
+        assert await absences.delete_ended_before(GUILD_A, tue) == 1
+        assert [entry.id for entry in await absences.overlapping(GUILD_A, date(2026, 10, 1), date(2026, 12, 1))] == [later.id]
+
+        await absences.insert_note(NewChannelNote(GUILD_A, 1, 50, 600, NoteCategory.FEEDBACK, "Thinks pulls run long."))
+        await absences.insert_note(NewChannelNote(GUILD_B, 1, 51, 601, NoteCategory.ROLE_CHANGE, "Other guild."))
+        now = datetime.now(UTC)
+        notes = await absences.notes_between(GUILD_A, now - timedelta(minutes=1), now + timedelta(minutes=1))
+        assert [(note.category, note.summary, note.channel_id) for note in notes] == [(NoteCategory.FEEDBACK, "Thinks pulls run long.", 50)]
+        assert await absences.notes_between(GUILD_A, now + timedelta(hours=1), now + timedelta(hours=2)) == []
+        assert await absences.delete_notes_before(GUILD_A, now + timedelta(minutes=1)) == 1
+        assert await absences.delete_notes_for_message(601) == 1
+
+    with_pool(test)
+
+
+def test_the_digest_of_a_week_is_recorded_with_its_thread():
+    async def test(pool):
+        await pool.execute("TRUNCATE raid_notes_posts")
+        posts = RaidNotesPostRepository(pool)
+        tue = date(2026, 11, 3)
+        await posts.save_thread(GUILD_A, tue, 70)
+        assert await posts.find_digest(GUILD_A, tue) is None
+        await posts.save_digest(GUILD_A, tue, 2**64 - 6)
+        assert await posts.find_digest(GUILD_A, tue) == 2**64 - 6 and await posts.find_digest(GUILD_B, tue) is None
+
+    with_pool(test)
+
+
+def test_the_owner_of_each_personal_officer_channel_is_known():
+    async def test(pool):
+        await pool.execute("TRUNCATE personal_officer_channels")
+        channels = OfficerChannelRepository(pool)
+        await channels.save_channel(GUILD_A, 1, 100)
+        await channels.claim(GUILD_A, 2)
+        await channels.save_channel(GUILD_B, 1, 200)
+        assert await channels.owners() == {100: OfficerChannelOwner(GUILD_A, 1), 200: OfficerChannelOwner(GUILD_B, 1)}
 
     with_pool(test)

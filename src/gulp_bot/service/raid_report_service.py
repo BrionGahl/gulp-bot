@@ -1,4 +1,5 @@
-"""The Warcraft Logs overview posted by itself to the raid notes thread after each raid."""
+"""The Warcraft Logs overview posted by itself to the raid notes thread after each raid, with the model's
+written recap of it underneath (`raid_recap_service`)."""
 
 from __future__ import annotations
 
@@ -7,12 +8,17 @@ import logging
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
+from ..core.discord_helpers import NO_MENTIONS
 from ..core.embed import to_discord_embed
+from ..exception.ai_exception import AiError
 from ..mapper.warcraft_logs_embed_mapper import overview_embed
 from ..schema.guild_settings_schema import GuildSettings
 from ..schema.raid_attendance_schema import MAX_RAID_HOURS
+from ..schema.wcl_report_schema import ReportOverview
+from .ai_service import AiService
 from .guild_settings_service import GuildSettingsService
 from .raid_notes_service import RaidNotesService
+from .raid_recap_service import SYSTEM_PROMPT, TEMPERATURE, recap_facts, recap_message, recap_request
 from .warcraft_logs_service import WarcraftLogsService
 
 if TYPE_CHECKING:
@@ -35,10 +41,11 @@ def is_set_up(settings: GuildSettings) -> bool:
 
 
 class RaidReportService:
-    def __init__(self, guild_settings: GuildSettingsService, warcraft_logs: WarcraftLogsService, raid_notes: RaidNotesService):
+    def __init__(self, guild_settings: GuildSettingsService, warcraft_logs: WarcraftLogsService, raid_notes: RaidNotesService, ai: AiService):
         self._guild_settings = guild_settings
         self._warcraft_logs = warcraft_logs
         self._raid_notes = raid_notes
+        self._ai = ai
 
     async def post_after_raid(self, guild_id: int, raid_end: datetime) -> None:
         """Posts the Warcraft Logs overview of the raid that ended at `raid_end` to that week's raid notes
@@ -67,6 +74,7 @@ class RaidReportService:
         # hasn't been uploaded yet would get the previous raid's overview.
         code = await self._warcraft_logs.newest_report_code(client, source, started_since=raid_end - timedelta(hours=MAX_RAID_HOURS))
         message: dict[str, str | discord.Embed]
+        overview: ReportOverview | None = None
         if code is not None:
             overview = await self._warcraft_logs.overview_for_guild(guild_id, client, code)
             log.info("Posting the Warcraft Logs overview of report %s after the raid for guild %s", code, guild_id)
@@ -76,4 +84,24 @@ class RaidReportService:
             message = {"content": NO_REPORT}
 
         week = await self._raid_notes.week_thread(guild_id, raid_notes_channel_id, raid_end.date())
-        await self._raid_notes.thread_messageable(guild_id, week.thread_id).send(**message)  # type: ignore[arg-type]
+        thread = self._raid_notes.thread_messageable(guild_id, week.thread_id)
+        await thread.send(**message)  # type: ignore[arg-type]
+
+        if overview is not None:
+            recap = await self.recap(guild_id, overview)
+            if recap is not None:
+                await thread.send(recap, allowed_mentions=NO_MENTIONS)
+
+    async def recap(self, guild_id: int, overview: ReportOverview) -> str | None:
+        """The model's written recap of `overview`, ready to post, or `None` if there is none: a report with
+        no boss pulls, the AI features switched off, or no answer from the model. The overview is posted
+        either way, so a recap that can't be written is only logged."""
+        facts = recap_facts(overview)
+        if facts is None:
+            return None
+        try:
+            recap, cut_short = await self._ai.generate(self._guild_settings.get(guild_id).ai, SYSTEM_PROMPT, recap_request(facts), TEMPERATURE)
+        except AiError as e:
+            log.info("No raid recap for report %s of guild %s: %s", overview.code, guild_id, getattr(e, "detail", str(e)))
+            return None
+        return recap_message(f"{recap} …" if cut_short else recap)

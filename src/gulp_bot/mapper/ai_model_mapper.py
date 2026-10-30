@@ -30,11 +30,15 @@ def wire_messages(turns: Sequence[Turn]) -> list[dict[str, str]]:
     return [{"role": turn.role.value, "content": turn.content} for turn in turns]
 
 
-def ollama_request(model: str, system: str, turns: Sequence[Turn], think: bool | None) -> dict[str, Any]:
+def ollama_request(
+    model: str, system: str, turns: Sequence[Turn], think: bool | None, temperature: float | None = None, schema: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """A request to Ollama's `/api/chat`: the system prompt first, as a message of its own, the whole
     answer in one response (`stream: false`), with the context window (`num_ctx`) and the most tokens to
     answer with (`num_predict`). Unless thinking is off (`think` false), the model may think first, so it
-    gets room for that too."""
+    gets room for that too. `temperature` is how much the model varies its wording, from 0 (always the
+    likeliest) up; `None` leaves the model's own. With a JSON `schema`, the answer is JSON in that shape
+    (Ollama's `format`)."""
     may_think = think is not False
     request: dict[str, Any] = {
         "model": model,
@@ -45,6 +49,10 @@ def ollama_request(model: str, system: str, turns: Sequence[Turn], think: bool |
             "num_predict": LOCAL_THINKING_TOKENS if may_think else MAX_TOKENS,
         },
     }
+    if temperature is not None:
+        request["options"]["temperature"] = temperature
+    if schema is not None:
+        request["format"] = schema
     if think is not None:
         request["think"] = think
     return request

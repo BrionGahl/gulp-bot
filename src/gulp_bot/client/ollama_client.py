@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Sequence
+from typing import Any
 
 from ..core.http_client import HttpClient, RequestFailed, RequestTimeout, status_text
 from ..exception.ai_exception import ModelServerUnreachable, unavailable
@@ -37,9 +38,11 @@ class OllamaClient:
         # than all loading the GPU at once.
         self._queue = asyncio.Semaphore(1)
 
-    async def complete(self, model: str, system: str, turns: Sequence[Turn], think: bool | None) -> ModelReply:
-        """`think` is sent as is: `None` leaves thinking to the model."""
-        request = ollama_request(model, system, turns, think)
+    async def complete(
+        self, model: str, system: str, turns: Sequence[Turn], think: bool | None, temperature: float | None = None, schema: dict[str, Any] | None = None
+    ) -> ModelReply:
+        """`think` and `temperature` are sent as they are: `None` leaves them to the model."""
+        request = ollama_request(model, system, turns, think, temperature, schema)
 
         # Held until the answer is in, so the GPU works on one question at a time.
         async with self._queue:

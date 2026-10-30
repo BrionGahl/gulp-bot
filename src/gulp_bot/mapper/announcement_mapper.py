@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..core.database import from_bigint
-from ..core.schedule_parsing import next_fire_discord_timestamp, parse_stored_schedule
+from ..core.schedule_parsing import describe_schedule, next_fire_discord_timestamp, parse_stored_schedule
 from ..core.text import limited_lines
 from ..schema.announcement_schema import Announcement
 from ..schema.guild_settings_schema import GuildSettings
@@ -65,7 +65,7 @@ def announcement_preview(message: str) -> str:
 def announcement_list_description(announcements: list[Announcement]) -> str:
     """The `/announcement list` embed's description: one entry per announcement, cut short to fit."""
     entries = [
-        f"**#{entry.id}** — <#{entry.channel_id}> — `{entry.schedule.source}` — next {next_fire_discord_timestamp(entry.schedule, 'R', never='never')}\n"
+        f"**#{entry.id}** — <#{entry.channel_id}> — {describe_schedule(entry.schedule)} — next {next_fire_discord_timestamp(entry.schedule, 'R', never='never')}\n"
         f"by <@{entry.created_by}>: {announcement_preview(entry.message)}\n\n"
         for entry in announcements
     ]

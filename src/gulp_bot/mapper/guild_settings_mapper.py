@@ -9,18 +9,20 @@ from typing import Any
 from ..core.cron import Schedule
 from ..core.database import from_bigint, from_bigint_or_none
 from ..core.embed import Embed, add_field, command_embed
-from ..core.schedule_parsing import parse_stored_schedule
+from ..core.schedule_parsing import describe_schedule, parse_stored_schedule
 from ..schema.guild_settings_schema import (
     AiSettings,
     ClearableSetting,
     GuildIdSetting,
     GuildSettings,
+    RaidNights,
     RaidVoice,
     ThinkSetting,
     WclCredentials,
     WclSource,
 )
 from ..schema.wcl_settings_schema import ALL_CONSUMABLE_KINDS, ConsumableAbility, TrackedAbility
+from ..service.raid_nights_service import describe_raid_nights
 
 log = logging.getLogger(__name__)
 
@@ -46,6 +48,7 @@ def settings_from_row(row: Row) -> GuildSettings:
         wowutils_token=row["wowutils_token"],
         wowutils_group_id=row["wowutils_group_id"],
         raid_notes_cron=_raid_notes_schedule(row, guild_id),
+        raid_nights=_raid_nights(row, guild_id),
         raid_voice=_raid_voice(row, guild_id),
         wcl_source=_wcl_source(row),
         wcl_credentials=_wcl_credentials(row),
@@ -71,6 +74,17 @@ def _raid_notes_schedule(row: Row, guild_id: int) -> Schedule | None:
         # Falls back to the default schedule.
         log.warning("Ignoring unreadable raid notes cron `%s` for guild %s", expression, guild_id)
     return schedule
+
+
+def _raid_nights(row: Row, guild_id: int) -> RaidNights | None:
+    days, start, end = row["raid_days"], row["raid_start"], row["raid_end"]
+    if days is None or start is None or end is None:
+        return None
+    # Only possible if the row was edited by hand: raid nights are checked before they are stored.
+    if not days or any(not 0 <= day <= 6 for day in days) or start == end:
+        log.warning("Ignoring unreadable raid nights (%s, %s - %s) for guild %s", days, start, end, guild_id)
+        return None
+    return RaidNights(frozenset(days), start, end)
 
 
 def _raid_voice(row: Row, guild_id: int) -> RaidVoice | None:
@@ -105,7 +119,7 @@ def _wcl_credentials(row: Row) -> WclCredentials | None:
 def settings_overview_embed(
     bot_name: str,
     settings: GuildSettings,
-    default_raid_notes_cron: str,
+    default_raid_notes_schedule: Schedule,
     tracked_abilities: list[TrackedAbility],
     ignored_players: int,
     consumables: list[ConsumableAbility],
@@ -128,7 +142,10 @@ def settings_overview_embed(
     add_field(embed, GuildIdSetting.TRIAL_ROLE.value, role(settings.trial_role_id), inline=True)
     add_field(embed, GuildIdSetting.PERSONAL_OFFICER_CATEGORY.value, channel(settings.personal_officer_category_id), inline=True)
     add_field(embed, GuildIdSetting.RAID_NOTES_CHANNEL.value, channel(settings.raid_notes_channel_id), inline=True)
-    add_field(embed, ClearableSetting.RAID_NOTES_CRON.label, _raid_notes_schedule_text(settings, default_raid_notes_cron), inline=True)
+    add_field(embed, ClearableSetting.RAID_NOTES_SCHEDULE.label, _raid_notes_schedule_text(settings, default_raid_notes_schedule), inline=True)
+    add_field(
+        embed, ClearableSetting.RAID_NIGHTS.label, "Not set" if settings.raid_nights is None else describe_raid_nights(settings.raid_nights), inline=False
+    )
     add_field(embed, ClearableSetting.RAID_VOICE.label, _raid_voice_text(settings), inline=False)
     add_field(embed, "Clips channels", ", ".join(f"<#{channel_id}>" for channel_id in sorted(settings.clips_channel_ids)) or "None", inline=False)
     add_field(embed, "Replay users", ", ".join(f"<@{user_id}>" for user_id in sorted(settings.replay_user_ids)) or "None", inline=False)
@@ -144,17 +161,19 @@ def settings_overview_embed(
     return embed
 
 
-def _raid_notes_schedule_text(settings: GuildSettings, default_raid_notes_cron: str) -> str:
+def _raid_notes_schedule_text(settings: GuildSettings, default_raid_notes_schedule: Schedule) -> str:
     if settings.raid_notes_cron is not None:
-        return f"`{settings.raid_notes_cron.source}`"
-    return f"Default (`{default_raid_notes_cron}`)"
+        return describe_schedule(settings.raid_notes_cron)
+    return f"Default ({describe_schedule(default_raid_notes_schedule)})"
 
 
 def _raid_voice_text(settings: GuildSettings) -> str:
     voice = settings.raid_voice
     if voice is None:
         return "Not set"
-    return f"<#{voice.channel_id}> — start `{voice.start.source}`, end `{voice.end.source}`"
+    if settings.raid_nights is not None:
+        return f"<#{voice.channel_id}> — at the start and end of each raid night"
+    return f"<#{voice.channel_id}> — start {describe_schedule(voice.start)}, end {describe_schedule(voice.end)} (set the raid nights to follow them instead)"
 
 
 def _wcl_source_text(settings: GuildSettings) -> str:

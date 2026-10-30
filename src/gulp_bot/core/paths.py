@@ -9,6 +9,3 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 # The database migrations, applied at startup.
 MIGRATIONS_DIR = PROJECT_ROOT / "migrations"
-
-# What the AI assistant knows about the guild, unless `SYSTEM_PROMPT_PATH` points somewhere else.
-DEFAULT_SYSTEM_PROMPT_PATH = PROJECT_ROOT / "ext_resources" / "system_prompt.md"

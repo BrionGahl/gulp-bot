@@ -184,7 +184,7 @@ def test_ids_above_the_signed_maximum_round_trip_through_bigint():
 
 def test_migrations_are_read_with_their_version_description_and_checksum():
     migrations = load_migrations()
-    assert [migration.version for migration in migrations] == list(range(1, 17))
+    assert [migration.version for migration in migrations] == list(range(1, 19))
     first = migrations[0]
     assert first.description == "guild settings"
     raw = (Path(__file__).resolve().parent.parent / "migrations" / "0001_guild_settings.sql").read_bytes()

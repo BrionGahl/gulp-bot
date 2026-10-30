@@ -14,13 +14,14 @@ from discord.ext import commands
 from ..core.discord_context import GulpContext, slash_context
 from ..core.embed import command_embed, to_discord_embed
 from ..core.permission_checks import check_is_admin_or_moderator, check_is_administrator, prefix_check, slash_check
-from ..core.schedule_parsing import next_fire_discord_timestamp, parse_user_schedule
+from ..core.schedule_parsing import describe_schedule, next_fire_discord_timestamp, parse_weekly_schedule
 from ..exception.schedule_exception import ScheduleProblem
 from ..mapper.guild_settings_mapper import settings_overview_embed
 from ..mapper.officer_channel_mapper import officer_channel_list_description
 from ..schema.guild_settings_schema import ClearableSetting, GuildIdSetting, RaidVoice, WowUtilsCredentials
 from ..service.guild_validation_service import TEXT_CHANNEL_TYPES, VOICE_CHANNEL_TYPES
-from ..service.raid_notes_service import DEFAULT_RAID_NOTES_CRON
+from ..service.raid_nights_service import describe_raid_nights, end_schedule, parse_raid_nights, start_schedule
+from ..service.raid_notes_service import DEFAULT_RAID_NOTES_SCHEDULE
 from .resource_support import choice_value, meta, reply, require_guild, subcommand_required
 from .settings_wcl_resource import settings_wcl
 
@@ -86,7 +87,7 @@ async def show(ctx: GulpContext) -> None:
     embed = settings_overview_embed(
         services.config.bot_name,
         services.guild_settings.get(guild_id),
-        DEFAULT_RAID_NOTES_CRON,
+        DEFAULT_RAID_NOTES_SCHEDULE,
         tracked_abilities=await services.tracked_abilities.list_tracked(guild_id),
         ignored_players=len(await services.ignored_players.list_ignored(guild_id)),
         consumables=await services.consumables.list_registered(guild_id),
@@ -127,7 +128,7 @@ async def dev_role(ctx: GulpContext, role: discord.Role) -> None:
 
 _sub(
     dev_role,
-    "Developers run the `/ai` commands and rank above moderators for the AI assistant. Pick a role that only developers hold: it can't be the moderator, raider or trial role.",
+    "Developers run the `/ai` commands and rank above moderators for the AI features. Pick a role that only developers hold: it can't be the moderator, raider or trial role.",
 )
 
 
@@ -233,64 +234,82 @@ async def raid_notes_channel(ctx: GulpContext, channel: discord.ForumChannel) ->
 _sub(raid_notes_channel)
 
 
-@settings.command(name="raid_notes_cron", description="Set when the raid notes post is created, as a quartz-style cron expression (Eastern time)")
+@settings.command(name="raid_notes_schedule", description="Set when the weekly raid notes post is created (Eastern time)")
 @prefix_check(check_is_admin_or_moderator)
-@app_commands.describe(expression="sec min hour day-of-month month day-of-week [year], e.g. 0 0 9 * * Fri *")
-async def raid_notes_cron(ctx: GulpContext, *, expression: str) -> None:
+@app_commands.describe(days="Day(s) of the week, e.g. Tue", time="Time of day, e.g. 9am or 09:00")
+async def raid_notes_schedule(ctx: GulpContext, days: str, time: str) -> None:
     guild_id = require_guild(ctx)
     try:
-        schedule = parse_user_schedule(expression.strip())
+        schedule = parse_weekly_schedule(days, time)
     except ScheduleProblem as problem:
         await reply(ctx, str(problem))
         return
 
     await ctx.services.guild_settings.set_raid_notes_schedule(guild_id, schedule)
-    # `parse_user_schedule` only accepts schedules with an upcoming fire time.
-    await reply(ctx, f"{ClearableSetting.RAID_NOTES_CRON.label} set to `{schedule.source}`. Next post: {next_fire_discord_timestamp(schedule)}.")
+    await reply(ctx, f"{ClearableSetting.RAID_NOTES_SCHEDULE.label} set to {describe_schedule(schedule)}. Next post: {next_fire_discord_timestamp(schedule)}.")
 
 
-_sub(raid_notes_cron)
+_sub(raid_notes_schedule, "Each post covers the raid week (Tuesday to Monday) it is created in; a week never gets a second one.")
 
 
-@settings.command(name="raid_voice", description="Record who is in the raid voice channel at the start and end of each raid (Eastern time)")
+@settings.command(name="raid_nights", description="Set the nights the guild raids and when raids start and end (Eastern time)")
 @prefix_check(check_is_admin_or_moderator)
 @app_commands.describe(
-    channel="Voice channel the raid happens in",
-    start="Raid start: sec min hour day-of-month month day-of-week [year], e.g. 0 0 20 * * Tue,Thu *",
-    end="Raid end, same format, e.g. 0 0 23 * * Tue,Thu *",
+    days="Raid days, e.g. Tue, Thu",
+    start="When each raid starts, e.g. 8pm or 20:00",
+    end="When each raid ends, e.g. 11pm or 23:00",
 )
-async def raid_voice(ctx: GulpContext, channel: discord.VoiceChannel | discord.StageChannel, start: str, end: str) -> None:
+async def raid_nights(ctx: GulpContext, days: str, start: str, end: str) -> None:
     guild_id = require_guild(ctx)
+    try:
+        nights = parse_raid_nights(days, start, end)
+    except ScheduleProblem as problem:
+        await reply(ctx, str(problem))
+        return
+
+    await ctx.services.guild_settings.set_raid_nights(guild_id, nights)
+    message = f"{ClearableSetting.RAID_NIGHTS.label} set to {describe_raid_nights(nights)}. Next raid: {next_fire_discord_timestamp(start_schedule(nights))}."
+    if ctx.services.guild_settings.get(guild_id).raid_voice is not None:
+        message += " Raid attendance is recorded at the start and end of each of them."
+    await reply(ctx, message)
+
+
+_sub(
+    raid_nights,
+    "Every raid night starts and ends at the same times. An end earlier than the start means the raid runs past midnight. "
+    "Raid attendance and the absences list follow these nights. Through the prefix form, wrap the days in quotes if they contain spaces.",
+)
+
+
+@settings.command(name="raid_voice", description="Record who is in the raid voice channel at the start and end of each raid night")
+@prefix_check(check_is_admin_or_moderator)
+@app_commands.describe(channel="Voice channel the raid happens in")
+async def raid_voice(ctx: GulpContext, channel: discord.VoiceChannel | discord.StageChannel) -> None:
+    guild_id = require_guild(ctx)
+    nights = ctx.services.guild_settings.get(guild_id).raid_nights
+    if nights is None:
+        await reply(ctx, "Set the raid nights first with `/settings raid_nights`: attendance is recorded at the start and end of each of them.")
+        return
     problem = await ctx.services.guild_validation.channel_problem(guild_id, channel.id, VOICE_CHANNEL_TYPES, "a voice channel")
     if problem is not None:
         await reply(ctx, problem)
         return
-    try:
-        start_schedule = parse_user_schedule(start.strip())
-    except ScheduleProblem as e:
-        await reply(ctx, f"Start: {e}")
-        return
-    try:
-        end_schedule = parse_user_schedule(end.strip())
-    except ScheduleProblem as e:
-        await reply(ctx, f"End: {e}")
-        return
 
-    # `parse_user_schedule` only accepts schedules with an upcoming fire time.
+    starts, ends = start_schedule(nights), end_schedule(nights)
     message = (
         f"{ClearableSetting.RAID_VOICE.label} set to <#{channel.id}>. "
-        f"Next start: {next_fire_discord_timestamp(start_schedule)}. Next end: {next_fire_discord_timestamp(end_schedule)}."
+        f"Next start: {next_fire_discord_timestamp(starts)}. Next end: {next_fire_discord_timestamp(ends)}."
     )
     if ctx.services.guild_settings.get(guild_id).raid_notes_channel_id is None:
         message += (
             "\nAttendance is posted in the week's raid notes thread, and no raid notes channel is registered yet; set one with `/settings raid_notes_channel`."
         )
 
-    await ctx.services.guild_settings.set_raid_voice(guild_id, RaidVoice(channel.id, start_schedule, end_schedule))
+    await ctx.services.guild_settings.set_raid_voice(guild_id, RaidVoice(channel.id, starts, ends))
     await reply(ctx, message)
 
 
-_sub(raid_voice, "Both schedules are quartz-style cron expressions. Through the prefix form, each one has to be wrapped in quotes, since they contain spaces.")
+_sub(raid_voice, "Recorded at the start and end of each raid night (`/settings raid_nights`), which have to be set first.")
 
 
 # --- Delete-and-replay and clips channels ---

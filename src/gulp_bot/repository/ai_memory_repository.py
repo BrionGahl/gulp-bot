@@ -1,6 +1,5 @@
-"""What the AI assistant remembers. All of it lives in memory: a restart forgets it. No Discord in here;
-channels, users and messages are their numeric IDs, and times are `time.monotonic()` seconds unless they
-say otherwise."""
+"""What the AI features keep track of: the tokens used and the latest failures. All of it lives in memory: a
+restart forgets it. Times are `time.monotonic()` seconds unless they say otherwise."""
 
 from __future__ import annotations
 
@@ -8,87 +7,10 @@ from collections import deque
 from dataclasses import dataclass
 
 from ..core.text import single_line, truncate_chars
-from ..schema.ai_schema import ApiFailure, Tokens, Turn, TurnRole
+from ..schema.ai_schema import ApiFailure, Tokens
 
 # The longest explanation of a failure that is kept.
 MAX_FAILURE_DETAIL_CHARS = 200
-
-
-@dataclass
-class _StoredTurn:
-    """A turn, and the access level of the member whose exchange it belongs to."""
-
-    turn: Turn
-    level: int
-
-
-@dataclass
-class _Conversation:
-    turns: deque[_StoredTurn]
-    last_used: float
-
-
-class ConversationHistoryRepository:
-    """The recent conversation of each channel. Only complete exchanges (a question and its answer) are
-    stored, so what is sent to the model always alternates user, assistant, user, ... and starts with the
-    user.
-
-    A channel is shared by members of different access levels, so each exchange is remembered with the
-    level of whoever asked, and is shown only to members of that level or higher. Otherwise something an
-    Officer was told could be repeated to a raider who asks "what did you just say?".
-    """
-
-    def __init__(self, max_turns: int, forget_after: float):
-        """Keeps the last `max_turns` turns of a channel, and forgets a channel that has been quiet for
-        `forget_after` seconds: an hours-old chat is no use as context, but is read again on every request."""
-        self._channels: dict[int, _Conversation] = {}
-        self._max_turns = max_turns
-        self._forget_after = forget_after
-
-    def turns_visible_to(self, channel: int, level: int, now: float) -> list[Turn]:
-        """The channel's remembered turns that a member of access `level` may see, oldest first."""
-        self._forget_stale(now)
-        conversation = self._channels.get(channel)
-        if conversation is None:
-            return []
-        return [stored.turn for stored in conversation.turns if stored.level <= level]
-
-    def record_exchange(self, channel: int, question: str, answer: str, level: int, now: float) -> None:
-        """Remembers a question, asked by a member of access `level`, and the answer it got."""
-        self._forget_stale(now)
-        conversation = self._channels.setdefault(channel, _Conversation(deque(), now))
-
-        conversation.turns.append(_StoredTurn(Turn.user(question), level))
-        conversation.turns.append(_StoredTurn(Turn.assistant(answer), level))
-        conversation.last_used = now
-
-        while len(conversation.turns) > self._max_turns:
-            conversation.turns.popleft()
-        # The cut may have left an answer first; the API wants the user to speak first.
-        while conversation.turns and conversation.turns[0].turn.role is TurnRole.ASSISTANT:
-            conversation.turns.popleft()
-
-    def _forget_stale(self, now: float) -> None:
-        self._channels = {channel: conversation for channel, conversation in self._channels.items() if now - conversation.last_used < self._forget_after}
-
-
-class AnswerMessageRepository:
-    """The IDs of the last messages the assistant answered with, so that a member who replies to one of
-    them is taken to be talking to it. Bounded: the oldest are forgotten first."""
-
-    def __init__(self, max_kept: int):
-        self._max = max_kept
-        self._ids: deque[int] = deque()
-
-    def remember(self, message_id: int) -> None:
-        if message_id in self._ids:
-            return
-        self._ids.append(message_id)
-        while len(self._ids) > self._max:
-            self._ids.popleft()
-
-    def contains(self, message_id: int) -> bool:
-        return message_id in self._ids
 
 
 @dataclass

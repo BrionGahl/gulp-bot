@@ -18,6 +18,7 @@ from .core.http_client import HttpClient
 from .job.announcement_job import AnnouncementJob
 from .job.raid_attendance_job import RaidAttendanceJob
 from .job.raid_notes_job import RaidNotesJob
+from .repository.absence_repository import AbsenceRepository
 from .repository.announcement_repository import AnnouncementRepository
 from .repository.officer_channel_repository import OfficerChannelRepository
 from .repository.raid_attendance_repository import RaidAttendanceRepository
@@ -27,7 +28,8 @@ from .repository.wcl_consumable_ability_repository import ConsumableAbilityRepos
 from .repository.wcl_ignored_player_repository import IgnoredPlayerRepository
 from .repository.wcl_tracked_ability_repository import TrackedAbilityRepository
 from .repository.wcl_tracked_enemy_repository import TrackedEnemyRepository
-from .service.ai_assistant_service import AiAssistantService
+from .service.absence_service import AbsenceService
+from .service.ai_service import AiService
 from .service.announcement_service import AnnouncementService
 from .service.bot_get_them_service import BotGetThemService
 from .service.clips_channel_service import ClipsChannelService
@@ -60,6 +62,9 @@ class Services:
     raid_notes: RaidNotesService
     raid_attendance: RaidAttendanceService
     raid_report: RaidReportService
+    # Absences from raid nights and what members raise in their personal officer channels, and the weekly
+    # officer digest of both.
+    absences: AbsenceService
     officer_channels: OfficerChannelService
     clips_channels: ClipsChannelService
     message_replay: MessageReplayService
@@ -70,8 +75,8 @@ class Services:
     consumables: ConsumableService
     warcraft_logs: WarcraftLogsService
     droptimizer: DroptimizerService
-    # The AI assistant behind `/ask`, `/tldr` and "Bot please", on the Ollama server at `LOCAL_MODEL_URL`.
-    ai: AiAssistantService
+    # The AI features (`/tldr`, the raid recap), on the Ollama server at `LOCAL_MODEL_URL`.
+    ai: AiService
 
 
 def build_services(
@@ -87,6 +92,7 @@ def build_services(
     ignored_players = IgnoredPlayerService(IgnoredPlayerRepository(pool))
     warcraft_logs = WarcraftLogsService(WarcraftLogsClientPool(http), tracked_abilities, ignored_players)
     message_replay = MessageReplayService(guild_settings, ReplayMessageMemoryRepository(), discord_client)
+    ai = AiService.from_config(http, config)
 
     return Services(
         config=config,
@@ -96,7 +102,8 @@ def build_services(
         announcements=AnnouncementService(AnnouncementRepository(pool), guild_settings, discord_client),
         raid_notes=raid_notes,
         raid_attendance=RaidAttendanceService(RaidAttendanceRepository(pool), raid_notes, discord_client),
-        raid_report=RaidReportService(guild_settings, warcraft_logs, raid_notes),
+        raid_report=RaidReportService(guild_settings, warcraft_logs, raid_notes, ai),
+        absences=AbsenceService(AbsenceRepository(pool), guild_settings, raid_notes),
         officer_channels=OfficerChannelService(OfficerChannelRepository(pool), guild_settings),
         clips_channels=ClipsChannelService(guild_settings, tasks),
         message_replay=message_replay,
@@ -107,14 +114,14 @@ def build_services(
         consumables=ConsumableService(ConsumableAbilityRepository(pool)),
         warcraft_logs=warcraft_logs,
         droptimizer=DroptimizerService(WowUtilsClient(http)),
-        ai=AiAssistantService.from_config(http, config),
+        ai=ai,
     )
 
 
 def scheduled_jobs(services: Services) -> list[AnnouncementJob | RaidNotesJob | RaidAttendanceJob]:
     """The jobs that run on a schedule for as long as the bot does."""
     return [
-        RaidNotesJob(services.guild_settings, services.raid_notes),
+        RaidNotesJob(services.guild_settings, services.raid_notes, services.absences),
         RaidAttendanceJob(services.guild_settings, services.raid_attendance, services.raid_report, services.tasks),
         AnnouncementJob(services.announcements),
     ]

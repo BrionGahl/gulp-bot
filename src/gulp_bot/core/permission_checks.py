@@ -60,6 +60,14 @@ async def check_is_raider(ctx: GulpContext) -> bool:
     return True
 
 
+async def check_is_raider_or_administrator(ctx: GulpContext) -> bool:
+    """`check_is_raider`, and server administrators too, whatever roles they hold: they count as Officers
+    everywhere else, and an Officer may manage anyone's absences."""
+    if ctx.guild_id is not None and is_administrator(ctx):
+        return True
+    return await check_is_raider(ctx)
+
+
 async def check_is_admin_or_moderator(ctx: GulpContext) -> bool:
     """Gate for the `/settings` and `/wcl` commands: server administrators, plus holders of the registered
     moderator role. Administrators are always allowed so that a server with no moderator role registered

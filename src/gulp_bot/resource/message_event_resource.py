@@ -1,30 +1,30 @@
-"""What the bot does with the messages it sees: clips channels, delete-and-replay, "bot get them" and the AI
-assistant."""
+"""What the bot does with the messages it sees: clips channels, delete-and-replay, "bot get them", and reading
+personal officer channels (`officer_channel_resource`)."""
 
 from __future__ import annotations
 
 import discord
 
 from ..container import Services
-from .assistant_chat_resource import answer_if_called
+from . import officer_channel_resource
 
 
 async def on_message(services: Services, message: discord.Message) -> None:
     services.clips_channels.enforce(message)
     services.message_replay.remember(message)
-    # On a task of its own: the assistant takes seconds to answer, and a command in the same message
-    # shouldn't wait for it.
-    services.tasks.spawn(_converse(services, message))
+    # On a task of its own: deleting a message waits on Discord, and a command in the same message shouldn't.
+    services.tasks.spawn(services.bot_get_them.handle(message))
+    # The model takes seconds; nothing else waits for it.
+    services.tasks.spawn(officer_channel_resource.on_message(services, message))
 
 
-async def _converse(services: Services, message: discord.Message) -> None:
-    # "bot get them" is a command, not a question for the assistant.
-    if not await services.bot_get_them.handle(message):
-        await answer_if_called(services, message)
+def on_message_edited(services: Services, payload: discord.RawMessageUpdateEvent) -> None:
+    services.tasks.spawn(officer_channel_resource.on_message_edited(services, payload))
 
 
 async def on_message_deleted(services: Services, payload: discord.RawMessageDeleteEvent) -> None:
     await services.message_replay.replay_if_self_deleted(payload.message_id, payload.guild_id)
+    await officer_channel_resource.on_message_deleted(services, payload)
 
 
 def on_messages_bulk_deleted(services: Services, payload: discord.RawBulkMessageDeleteEvent) -> None:

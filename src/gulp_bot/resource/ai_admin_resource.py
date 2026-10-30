@@ -1,4 +1,4 @@
-"""`/ai`: control the AI assistant: switch it off, change its model, see what it has used. Developers only."""
+"""`/ai`: control the AI features: switch them off, change their model, see what they have used. Developers only."""
 
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ from ..exception.ai_exception import ModelNameProblem
 from ..mapper.ai_usage_mapper import describe_think, usage_lines
 from ..schema.ai_schema import CheckOk, Unreachable
 from ..schema.guild_settings_schema import AiSettings, ThinkSetting
-from ..service.ai_assistant_service import AiAssistantService
 from ..service.ai_model_catalog_service import normalize_model_name
+from ..service.ai_service import AiService
 from .resource_support import filter_choices, meta, reply_in_chunks
 
 log = logging.getLogger(__name__)
@@ -41,9 +41,9 @@ class Finding(enum.Enum):
 
 
 # Every subcommand carries the check, and checks the role again for itself in `start_developer_command`,
-# since these are the commands that can silence the assistant and change the model it runs.
+# since these are the commands that can switch the AI features off and change the model they run.
 ai_group = app_commands.Group(
-    name="ai", description="Control the AI assistant: switch it off, change its model, see what it has used. Developers only.", guild_only=True
+    name="ai", description="Control the AI features: switch them off, change the model, see their usage. Developers only.", guild_only=True
 )
 meta(
     ai_group,
@@ -57,11 +57,11 @@ meta(
 
 @dataclass(frozen=True)
 class DeveloperCommand:
-    """A `/ai` subcommand that may go ahead: who ran it, where, and the assistant it is about."""
+    """A `/ai` subcommand that may go ahead: who ran it, where, and the AI features it is about."""
 
     ctx: GulpContext
     guild_id: int
-    ai: AiAssistantService
+    ai: AiService
 
 
 async def start_developer_command(interaction: discord.Interaction, action: str) -> DeveloperCommand | None:
@@ -81,14 +81,14 @@ async def start_developer_command(interaction: discord.Interaction, action: str)
 
 
 async def change_ai_settings(command: DeveloperCommand, what: str, edit: Callable[[AiSettings], object]) -> AiSettings:
-    """Changes how the assistant is switched in the guild, keeping the rest as it was, and writes what
+    """Changes how the AI features are switched in the guild, keeping the rest as it was, and writes what
     changed to the log. Returns the settings as they are now."""
     guild_settings = command.ctx.services.guild_settings
     settings = dataclasses.replace(guild_settings.get(command.guild_id).ai)
     edit(settings)
     await guild_settings.set_ai(command.guild_id, settings)
     author = command.ctx.author
-    log.info("audit: %s (%s) changed the AI assistant in guild %s: %s", author.id, author.name, command.guild_id, what)
+    log.info("audit: %s (%s) changed the AI features in guild %s: %s", author.id, author.name, command.guild_id, what)
     return settings
 
 
@@ -97,7 +97,7 @@ def model_names(names: list[str]) -> str:
     return ", ".join(f"`{name}`" for name in names) if names else "none"
 
 
-@ai_group.command(name="status", description="Show the assistant's state, model, thinking, today's use and latest failures")
+@ai_group.command(name="status", description="Show the AI features' state, model, thinking, today's use and latest failures")
 @slash_check(check_is_developer)
 async def ai_status(interaction: discord.Interaction) -> None:
     command = await start_developer_command(interaction, "status")
@@ -108,9 +108,9 @@ async def ai_status(interaction: discord.Interaction) -> None:
     model = ai.resolve_model(settings)
 
     if settings.disabled:
-        state = "**off**: it answers nobody"
+        state = "**off**: nobody can use them"
     elif settings.maintenance:
-        state = "**on, in maintenance mode**: it answers only Officers and Developers"
+        state = "**on, in maintenance mode**: only Officers and Developers can use them"
     else:
         state = "**on**"
     model_note = f"set with `/ai model`; the bot was configured with `{ai.configured_model}`" if settings.model is not None else "as configured"
@@ -119,9 +119,9 @@ async def ai_status(interaction: discord.Interaction) -> None:
     failure_total, failures = ai.failure_report()
 
     text = (
-        f"**AI assistant**\nState: {state}\nModel: `{model}`, runs locally, through Ollama ({model_note})\n"
+        f"**AI features**\nState: {state}\nModel: `{model}`, runs locally, through Ollama ({model_note})\n"
         f"Thinking: {describe_think(ai.resolve_think(settings))} ({think_note})\n"
-        f"Questions answered in the last 24 hours: {answered} of {limit}\n"
+        f"Requests answered in the last 24 hours: {answered} of {limit}\n"
     )
     if not failures:
         text += "No failures since the bot started."
@@ -132,25 +132,25 @@ async def ai_status(interaction: discord.Interaction) -> None:
     await reply_in_chunks(command.ctx, text)
 
 
-@ai_group.command(name="on", description="Turn the AI assistant on")
+@ai_group.command(name="on", description="Turn the AI features on")
 @slash_check(check_is_developer)
 async def ai_on(interaction: discord.Interaction) -> None:
     command = await start_developer_command(interaction, "on")
     if command is None:
         return
     settings = await change_ai_settings(command, "switched on", lambda ai: setattr(ai, "disabled", False))
-    note = " It is still in maintenance mode, so it answers only Officers and Developers (`/ai maintenance`)." if settings.maintenance else ""
-    await reply_in_chunks(command.ctx, f"The AI assistant is **on**.{note}")
+    note = " They are still in maintenance mode, so only Officers and Developers can use them (`/ai maintenance`)." if settings.maintenance else ""
+    await reply_in_chunks(command.ctx, f"The AI features are **on**.{note}")
 
 
-@ai_group.command(name="off", description="Turn the AI assistant off for everybody")
+@ai_group.command(name="off", description="Turn the AI features off for everybody")
 @slash_check(check_is_developer)
 async def ai_off(interaction: discord.Interaction) -> None:
     command = await start_developer_command(interaction, "off")
     if command is None:
         return
     await change_ai_settings(command, "switched off", lambda ai: setattr(ai, "disabled", True))
-    await reply_in_chunks(command.ctx, "The AI assistant is **off**: it answers nobody, whatever their role. `/ai on` turns it back on.")
+    await reply_in_chunks(command.ctx, "The AI features are **off**: nobody can use them, whatever their role. `/ai on` turns them back on.")
 
 
 @ai_group.command(name="usage", description="Show the tokens used")
@@ -170,14 +170,14 @@ async def ai_usage(interaction: discord.Interaction) -> None:
 async def autocomplete_model(interaction: discord.Interaction, partial: str) -> list[app_commands.Choice[str]]:
     """The models offered while a developer types one: the ones installed on the server. Autocomplete runs
     no checks, so developers are checked here."""
-    ai: AiAssistantService = interaction.client.services.ai  # type: ignore[attr-defined]
+    ai: AiService = interaction.client.services.ai  # type: ignore[attr-defined]
     models: list[str] = []
     if interaction_is_developer(interaction):
         models = await ai.installed_models()
     return filter_choices(models, partial)
 
 
-@ai_group.command(name="model", description="Change the model the assistant uses, or go back to the configured one")
+@ai_group.command(name="model", description="Change the model the AI features use, or go back to the configured one")
 @slash_check(check_is_developer)
 @app_commands.describe(name="A model name, or `default` for the one the bot was configured with")
 @app_commands.autocomplete(name=autocomplete_model)
@@ -214,7 +214,7 @@ async def ai_model(interaction: discord.Interaction, name: str) -> None:
         return
 
     await change_ai_settings(command, f"model set to `{model}`", lambda settings: setattr(settings, "model", model))
-    await reply_in_chunks(ctx, f"The model is now `{model}`, from the next question on.")
+    await reply_in_chunks(ctx, f"The model is now `{model}`, from the next request on.")
 
 
 @ai_group.command(name="think", description="Turn the model's thinking on or off. On answers slower, but follows instructions better")
@@ -235,11 +235,11 @@ async def ai_think(interaction: discord.Interaction, mode: str) -> None:
     message = f"Thinking is back to the configured setting: {now}." if stored is None else f"Thinking is now {now}."
     await reply_in_chunks(
         ctx,
-        f"{message} It applies from the next question on. With thinking on, answers take longer: the model writes out its reasoning first, which isn't shown.",
+        f"{message} It applies from the next request on. With thinking on, answers take longer: the model writes out its reasoning first, which isn't shown.",
     )
 
 
-@ai_group.command(name="maintenance", description="Turn maintenance mode on or off: only Officers and Developers get answers")
+@ai_group.command(name="maintenance", description="Turn maintenance mode on or off: only Officers and Developers can use the AI features")
 @slash_check(check_is_developer)
 @app_commands.describe(enabled="True to turn maintenance mode on, false to turn it off")
 async def ai_maintenance(interaction: discord.Interaction, enabled: bool) -> None:
@@ -249,45 +249,14 @@ async def ai_maintenance(interaction: discord.Interaction, enabled: bool) -> Non
     settings = await change_ai_settings(command, "maintenance mode on" if enabled else "maintenance mode off", lambda ai: setattr(ai, "maintenance", enabled))
 
     if enabled and not settings.disabled:
-        message = "Maintenance mode is **on**: the assistant answers only Officers and Developers."
+        message = "Maintenance mode is **on**: only Officers and Developers can use the AI features."
     elif enabled:
-        message = "Maintenance mode is **on**, but the assistant is off, so it answers nobody. `/ai on` turns it on."
+        message = "Maintenance mode is **on**, but the AI features are off, so nobody can use them. `/ai on` turns them on."
     elif not settings.disabled:
-        message = "Maintenance mode is **off**: the assistant answers all raiders again."
+        message = "Maintenance mode is **off**: all raiders can use the AI features again."
     else:
-        message = "Maintenance mode is **off**, but the assistant is still off. `/ai on` turns it on."
+        message = "Maintenance mode is **off**, but the AI features are still off. `/ai on` turns them on."
     await reply_in_chunks(command.ctx, message)
-
-
-@ai_group.command(name="limits", description="Show how many questions a member has asked in the last 10 minutes")
-@slash_check(check_is_developer)
-@app_commands.describe(user="The member to look up")
-async def ai_limits(interaction: discord.Interaction, user: discord.User) -> None:
-    command = await start_developer_command(interaction, "limits")
-    if command is None:
-        return
-    usage = command.ai.member_usage(user.id)
-    note = " They have to wait for the oldest to leave the window, or `/ai reset` gives the allowance back." if usage.asked >= usage.allowed else ""
-    await reply_in_chunks(
-        command.ctx, f"<@{user.id}> has asked {usage.asked} of {usage.allowed} questions in the last {int(usage.window_secs) // 60} minutes.{note}"
-    )
-
-
-@ai_group.command(name="reset", description="Give a member their whole allowance of questions back")
-@slash_check(check_is_developer)
-@app_commands.describe(user="The member whose limit to reset")
-async def ai_reset(interaction: discord.Interaction, user: discord.User) -> None:
-    command = await start_developer_command(interaction, "reset")
-    if command is None:
-        return
-    ctx, ai = command.ctx, command.ai
-    cleared = ai.reset_member(user.id)
-    log.info(
-        "audit: %s (%s) reset the AI limit of %s in guild %s, forgetting %d question(s)", ctx.author.id, ctx.author.name, user.id, command.guild_id, cleared
-    )
-    await reply_in_chunks(
-        ctx, f"<@{user.id}>'s limit is reset: {cleared} counted question(s) forgotten, so they may ask {ai.member_usage(user.id).allowed} again."
-    )
 
 
 @ai_group.command(name="check", description="Check the registered roles, the model server and the model")
@@ -337,14 +306,14 @@ async def ai_check(interaction: discord.Interaction) -> None:
         findings.append((Finding.BAD, f"The local model server couldn't be reached: {check.problem}. Is the Ollama container up, and on the bot's network?"))
 
     if settings.ai.disabled:
-        findings.append((Finding.WARNING, "The assistant is off (`/ai on`)"))
+        findings.append((Finding.WARNING, "The AI features are off (`/ai on`)"))
     if settings.ai.maintenance:
-        findings.append((Finding.WARNING, "The assistant is in maintenance mode (`/ai maintenance`)"))
+        findings.append((Finding.WARNING, "The AI features are in maintenance mode (`/ai maintenance`)"))
     answered, limit = ai.daily_usage()
     if answered >= limit:
         findings.append((Finding.BAD, f"The limit for the last 24 hours is reached: {answered} of {limit}"))
     else:
-        findings.append((Finding.GOOD, f"Questions answered in the last 24 hours: {answered} of {limit}"))
+        findings.append((Finding.GOOD, f"Requests answered in the last 24 hours: {answered} of {limit}"))
     failure_total, failures = ai.failure_report()
     if failures:
         latest = failures[0]
@@ -353,7 +322,7 @@ async def ai_check(interaction: discord.Interaction) -> None:
     problems = sum(1 for finding, _ in findings if finding is not Finding.GOOD)
     lines = "\n".join(f"{finding.value} {text}" for finding, text in findings)
     summary = "**Nothing to fix.**" if problems == 0 else f"**{problems} thing(s) to look at.**"
-    await reply_in_chunks(ctx, f"**AI assistant check**\n{lines}\n\n{summary}")
+    await reply_in_chunks(ctx, f"**AI features check**\n{lines}\n\n{summary}")
 
 
 for _command in ai_group.commands:

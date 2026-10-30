@@ -1,9 +1,8 @@
 """ "bot get them": an Officer replies to a message with these words, and the bot deletes the message they
 replied to and barks.
 
-An Officer is who the assistant takes for one: a holder of the moderator role, a server administrator, or a
-Developer (`ai_access_service`). It works whether or not the AI assistant is set up or switched on: it is a
-command, not a question. The bot needs the Manage Messages permission in the channel to delete someone
+An Officer is who the AI features take for one: a holder of the moderator role, a server administrator, or a
+Developer (`ai_access_service`). It works whether or not the AI features are switched on. The bot needs the Manage Messages permission in the channel to delete someone
 else's message.
 """
 
@@ -43,9 +42,8 @@ class BotGetThemService:
 
     async def handle(self, message: discord.Message) -> bool:
         """Handles `message` if it is "bot get them" in reply to another message: deletes that message and
-        barks, if the author is an Officer. Returns whether `message` was the command, whoever sent it, so
-        that it isn't also taken as a question for the assistant. Anyone else gets no answer at all, as with
-        "Bot please" from someone the assistant doesn't talk to."""
+        barks, if the author is an Officer. Returns whether `message` was the command, whoever sent it. Anyone
+        else gets no answer at all."""
         if message.guild is None or message.author.bot or not mentions_bot_get_them(message.content):
             return False
         # Without a reply there is nobody to get.

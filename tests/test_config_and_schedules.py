@@ -6,8 +6,8 @@ import pytest
 
 from gulp_bot.core.config import Config, ConfigError, parse_think
 from gulp_bot.core.cron import CronError, Schedule
-from gulp_bot.core.paths import DEFAULT_SYSTEM_PROMPT_PATH, MIGRATIONS_DIR
-from gulp_bot.core.schedule_parsing import EXAMPLE_CRON, parse_user_schedule
+from gulp_bot.core.paths import MIGRATIONS_DIR
+from gulp_bot.core.schedule_parsing import describe_schedule, parse_weekly_schedule
 from gulp_bot.exception.schedule_exception import ScheduleProblem
 
 NEW_YORK = ZoneInfo("America/New_York")
@@ -32,15 +32,11 @@ def test_the_defaults():
     assert config.local_model_url == "http://ollama:11434"
     assert config.local_model == "qwen3.5:9b"
     assert config.local_model_think is False
-    assert config.system_prompt_path == DEFAULT_SYSTEM_PROMPT_PATH
 
 
-def test_the_prompt_and_the_migrations_are_at_the_root_of_the_repository():
+def test_the_migrations_are_at_the_root_of_the_repository():
     root = Path(__file__).resolve().parent.parent
-    assert DEFAULT_SYSTEM_PROMPT_PATH == root / "ext_resources" / "system_prompt.md" and DEFAULT_SYSTEM_PROMPT_PATH.is_file()
     assert MIGRATIONS_DIR == root / "migrations" and MIGRATIONS_DIR.is_dir()
-    assert Config.from_env(env(SYSTEM_PROMPT_PATH="/etc/gulp/prompt.md")).system_prompt_path == Path("/etc/gulp/prompt.md")
-    assert Config.from_env(env(SYSTEM_PROMPT_PATH="")).system_prompt_path == DEFAULT_SYSTEM_PROMPT_PATH
 
 
 def test_empty_variables_mean_unset():
@@ -68,20 +64,20 @@ def test_the_local_model_does_not_think_unless_asked_to():
         parse_think("maybe")
 
 
-def test_parse_schedule_accepts_weekly_and_rejects_unusable_expressions():
-    parse_user_schedule(EXAMPLE_CRON)
-    parse_user_schedule("0 30 17 * * Tue,Fri *")
-    # Hourly is exactly at the floor, so allowed.
-    parse_user_schedule("0 0 * * * * *")
-
-    for expression, problem in [
-        ("every friday", "cron expression"),
-        ("* * * * * * *", "too often"),
-        ("0 0,30 9 * * Fri *", "too often"),
-        ("0 0 9 * * Fri 2020", "never fires"),
-    ]:
+def test_a_schedule_is_typed_as_days_and_a_time():
+    assert parse_weekly_schedule("Tue, Fri", "5:30pm").source == "0 30 17 * * Tue,Fri *"
+    assert parse_weekly_schedule("friday", "09:00").after(at(2026, 10, 14)) == at(2026, 10, 16, 9)
+    for days, time, problem in [("someday", "9am", "day of the week"), ("Fri", "noonish", "isn't a time"), ("", "9am", "at least one day")]:
         with pytest.raises(ScheduleProblem, match=problem):
-            parse_user_schedule(expression)
+            parse_weekly_schedule(days, time)
+
+
+def test_a_schedule_is_described_as_days_and_a_time_when_it_is_one():
+    assert describe_schedule(parse_weekly_schedule("Fri, Tue", "9am")) == "Tue, Fri, 9:00 AM Eastern"
+    assert describe_schedule(parse_weekly_schedule("mon tue wed thu fri sat sun", "12am")) == "Every day, 12:00 AM Eastern"
+    # A cron expression stored before days and times were asked for is shown as it is.
+    for expression in ["0 0 9 1 * * *", "0 0,30 9 * * Fri *", "0 0 9 * * Fri 2030"]:
+        assert describe_schedule(Schedule.parse(expression)) == f"`{expression}`"
 
 
 def at(*parts):

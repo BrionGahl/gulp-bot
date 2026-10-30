@@ -26,6 +26,22 @@ If the slash commands don't show up in a server, register them there with `?regi
   - `url`: Raidbots simulation report URL
   - `profile_key`: Profile key, e.g. heroic-max
 
+*`/absence`: Absences are listed for the officers in the officer digest of each week's raid notes thread. You can also just say it in your personal officer channel ("can't make it thursday"): the bot reads it and replies with an Undo button. Officers can add or remove an absence for anyone.*
+
+- **`/absence add <start> [end] [tentative] [note] [member]`** — Report an absence from one or more raid nights
+  - **Who:** Raider, trial and moderator roles, and administrators · slash only · answers privately
+  - `start`: First day: tue, tomorrow, 11/4 or 2026-11-04
+  - `end` (optional): Last day, for more than one day (same format)
+  - `tentative` (optional): Late, or not sure yet, rather than out
+  - `note` (optional): Why, or anything officers should know (they can see it)
+  - `member` (optional): Officers: the member to add it for
+- **`/absence remove <id>`** — Take back an absence
+  - **Who:** Raider, trial and moderator roles, and administrators · slash only · answers privately
+  - `id`: The absence, from the list or /absence list
+- **`/absence list [member]`** — List upcoming absences
+  - **Who:** Raider, trial and moderator roles, and administrators · slash only · answers privately
+  - `member` (optional): Officers: the member whose absences to list
+
 ## Utilities
 
 - **`/source`** — Links to the bot GitHub repo
@@ -62,7 +78,7 @@ If the slash commands don't show up in a server, register them there with `?regi
 - **`/settings dev_role <role>`** — Register the developer role for this server. Administrators only.
   - **Who:** Server administrators only · also `?settings dev_role` · answers privately
   - `role`: Role held by the bot's developers
-  - Developers run the `/ai` commands and rank above moderators for the AI assistant. Pick a role that only developers hold: it can't be the moderator, raider or trial role.
+  - Developers run the `/ai` commands and rank above moderators for the AI features. Pick a role that only developers hold: it can't be the moderator, raider or trial role.
 - **`/settings raider_role <role>`** — Register the raider role for this server
   - **Who:** Administrators and the moderator role · also `?settings raider_role` · answers privately
   - `role`: Role held by raiders
@@ -85,15 +101,21 @@ If the slash commands don't show up in a server, register them there with `?regi
 - **`/settings raid_notes_channel <channel>`** — Register the forum channel that weekly raid notes threads are posted in
   - **Who:** Administrators and the moderator role · also `?settings raid_notes_channel` · answers privately
   - `channel`: Forum channel for weekly raid notes
-- **`/settings raid_notes_cron <expression>`** — Set when the raid notes post is created, as a quartz-style cron expression (Eastern time)
-  - **Who:** Administrators and the moderator role · also `?settings raid_notes_cron` · answers privately
-  - `expression`: sec min hour day-of-month month day-of-week [year], e.g. 0 0 9 * * Fri *
-- **`/settings raid_voice <channel> <start> <end>`** — Record who is in the raid voice channel at the start and end of each raid (Eastern time)
+- **`/settings raid_notes_schedule <days> <time>`** — Set when the weekly raid notes post is created (Eastern time)
+  - **Who:** Administrators and the moderator role · also `?settings raid_notes_schedule` · answers privately
+  - `days`: Day(s) of the week, e.g. Tue
+  - `time`: Time of day, e.g. 9am or 09:00
+  - Each post covers the raid week (Tuesday to Monday) it is created in; a week never gets a second one.
+- **`/settings raid_nights <days> <start> <end>`** — Set the nights the guild raids and when raids start and end (Eastern time)
+  - **Who:** Administrators and the moderator role · also `?settings raid_nights` · answers privately
+  - `days`: Raid days, e.g. Tue, Thu
+  - `start`: When each raid starts, e.g. 8pm or 20:00
+  - `end`: When each raid ends, e.g. 11pm or 23:00
+  - Every raid night starts and ends at the same times. An end earlier than the start means the raid runs past midnight. Raid attendance and the absences list follow these nights. Through the prefix form, wrap the days in quotes if they contain spaces.
+- **`/settings raid_voice <channel>`** — Record who is in the raid voice channel at the start and end of each raid night
   - **Who:** Administrators and the moderator role · also `?settings raid_voice` · answers privately
   - `channel`: Voice channel the raid happens in
-  - `start`: Raid start: sec min hour day-of-month month day-of-week [year], e.g. 0 0 20 * * Tue,Thu *
-  - `end`: Raid end, same format, e.g. 0 0 23 * * Tue,Thu *
-  - Both schedules are quartz-style cron expressions. Through the prefix form, each one has to be wrapped in quotes, since they contain spaces.
+  - Recorded at the start and end of each raid night (`/settings raid_nights`), which have to be set first.
 - **`/settings replay_add <user>`** — Add a member whose self-deleted messages the bot reposts
   - **Who:** Administrators and the moderator role · also `?settings replay_add` · answers privately
   - `user`: Member to replay deleted messages for
@@ -168,12 +190,13 @@ If the slash commands don't show up in a server, register them there with `?regi
 
 ## Announcements
 
-*`/announcement`: Slash commands only. Schedules are cron expressions evaluated in Eastern time.*
+*`/announcement`: Slash commands only. Announcements are posted on days of the week at a time of day, Eastern time.*
 
-- **`/announcement add <channel> <cron>`** — Schedule a recurring announcement; you'll be asked for the message next
+- **`/announcement add <channel> <days> <time>`** — Schedule a recurring announcement; you'll be asked for the message next
   - **Who:** Moderator role · slash only · answers privately
   - `channel`: Channel to post in
-  - `cron`: When to post (Eastern): sec min hour day-of-month month day-of-week [year], e.g. 0 0 12 * * Tue *
+  - `days`: Day(s) of the week to post on, e.g. Tue, Thu
+  - `time`: Time of day to post at (Eastern), e.g. 12pm or 12:00
 - **`/announcement list`** — List this server's scheduled announcements
   - **Who:** Moderator role · slash only · answers privately
 - **`/announcement delete <id>`** — Delete one of this server's scheduled announcements
@@ -219,47 +242,34 @@ If the slash commands don't show up in a server, register them there with `?regi
 
 ## AI
 
-- **`/ask <question>`** — Ask the guild's AI assistant anything
-  - **Who:** Raider role, moderator role, administrators and the developer role (the AI assistant's access) · slash only
-  - `question`: What do you want to ask?
-  - Only for raiders. The assistant remembers the last few questions asked in the same channel, and answers messages that say "Bot please" or "hey bot" the same way. Reply to one of its answers to carry the conversation on.
-
 *`/ai`: Only members with the developer role (`/settings dev_role`) can use these commands, and every use is written to the bot's log with who ran it. What is switched here applies only to the server the command is used in, and is kept when the bot restarts.*
 
-- **`/ai status`** — Show the assistant's state, model, thinking, today's use and latest failures
+- **`/ai status`** — Show the AI features' state, model, thinking, today's use and latest failures
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
-- **`/ai on`** — Turn the AI assistant on
+- **`/ai on`** — Turn the AI features on
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
-- **`/ai off`** — Turn the AI assistant off for everybody
+- **`/ai off`** — Turn the AI features off for everybody
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
 - **`/ai usage`** — Show the tokens used
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
-- **`/ai model <name>`** — Change the model the assistant uses, or go back to the configured one
+- **`/ai model <name>`** — Change the model the AI features use, or go back to the configured one
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
   - `name`: A model name, or `default` for the one the bot was configured with
 - **`/ai think <mode>`** — Turn the model's thinking on or off. On answers slower, but follows instructions better
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
   - `mode`: On, off, left to the model, or as configured
-- **`/ai maintenance <enabled>`** — Turn maintenance mode on or off: only Officers and Developers get answers
+- **`/ai maintenance <enabled>`** — Turn maintenance mode on or off: only Officers and Developers can use the AI features
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
   - `enabled`: True to turn maintenance mode on, false to turn it off
-- **`/ai limits <user>`** — Show how many questions a member has asked in the last 10 minutes
-  - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
-  - `user`: The member to look up
-- **`/ai reset <user>`** — Give a member their whole allowance of questions back
-  - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
-  - `user`: The member whose limit to reset
 - **`/ai check`** — Check the registered roles, the model server and the model
   - **Who:** Developer role only (`/settings dev_role`); not even administrators without it · slash only · answers privately
 - **`/tldr`** — Sum up this channel's recent chat
-  - **Who:** Raider role, moderator role, administrators and the developer role (the AI assistant's access) · slash only
+  - **Who:** Raider role, moderator role, administrators and the developer role · slash only
   - Reads back up to 4 hours, stopping at the first pause of an hour or more. One per channel per hour: until then, it points to the last one. Only for raiders.
 
 ## Without a command
 
 | Message | What happens | Who |
 |---|---|---|
-| A message with the words **"Bot please"** or **"hey bot"** (any case, any punctuation between them) | The AI assistant answers it in the channel. If the message is a reply, the message replied to goes along with the question | The AI assistant's access, like `/ask` |
-| A reply to one of the assistant's answers | Carries the conversation on | The AI assistant's access, like `/ask` |
 | A reply to someone's message with the words **"bot get them"** | Deletes the message replied to and barks. The bot needs Manage Messages in the channel | Moderator role, administrators and the developer role |
 | `@bot <command>` | The same as `?<command>` | As the command |

@@ -1,4 +1,4 @@
-"""What the assistant has used, as the lines `/ai usage` shows."""
+"""What the model has used, as the lines `/ai usage` shows."""
 
 from __future__ import annotations
 

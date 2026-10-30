@@ -1,4 +1,4 @@
-"""Who may use the AI assistant, who counts as an Officer and who as a Developer, and whether the
+"""Who may use the AI features, who counts as an Officer and who as a Developer, and whether the
 developers' switches let them through. No Discord in here; roles are their numeric IDs."""
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ def access_from_roles(
     one, so that developer powers are only ever given on purpose. An Officer is a holder of the registered
     moderator role or a server administrator, the same two the bot treats alike everywhere else
     (`/settings`, `/wcl`). A role that isn't registered grants nothing, so a server that hasn't set up its
-    roles gets no assistant for its members rather than one open to everybody; administrators are still
+    roles gets no AI features for its members rather than ones open to everybody; administrators are still
     Officers there, so that somebody can always use it.
     """
 
@@ -41,15 +41,15 @@ def access_from_roles(
 
 
 def access_for_member(settings: GuildSettings, roles: Sequence[int], is_administrator: bool) -> Access:
-    """What the member holding `roles` may do with the assistant, by the roles this server registered: the
+    """What the member holding `roles` may do with the AI features, by the roles this server registered: the
     raider role, the moderator role as the Officer role, and the developer role."""
     return access_from_roles(roles, settings.raider_role_id, settings.mod_role_id, settings.dev_role_id, is_administrator)
 
 
 def ensure_switches_allow(settings: AiSettings, access: Access) -> None:
-    """Whether the developers' switches let a member with `access` talk to the assistant: not while it is
-    off, and while it is in maintenance only if the member is an Officer (a Developer is one). Raises the
-    `AskError` that says why not."""
+    """Whether the developers' switches let a member with `access` use the AI features: not while they are
+    off, and while they are in maintenance only if the member is an Officer (a Developer is one). Raises the
+    `AiError` that says why not."""
     if settings.disabled:
         raise Disabled()
     if settings.maintenance and not access.is_officer():

@@ -11,13 +11,12 @@ from discord import app_commands
 from ..core.discord_context import GulpContext, slash_context
 from ..core.discord_helpers import NO_MENTIONS, role_ids
 from ..core.permission_checks import is_administrator
-from ..exception.ai_exception import AskError
+from ..exception.ai_exception import AiError
 from ..schema.ai_schema import Access, TldrBusy, TldrWait, TranscriptLine
 from ..schema.guild_settings_schema import GuildSettings
 from ..service.ai_access_service import access_for_member, ensure_switches_allow
-from ..service.ai_assistant_service import AiAssistantService
-from ..service.ai_prompt_service import speaker_label
-from ..service.tldr_service import WINDOW_SECS, central_time, conversation_to_summarize, describe_span, transcript
+from ..service.ai_service import AiService
+from ..service.tldr_service import WINDOW_SECS, conversation_to_summarize, describe_span, guild_time, speaker_label, transcript
 from .resource_support import meta, refuse, reply_in_chunks
 
 log = logging.getLogger(__name__)
@@ -39,7 +38,7 @@ async def tldr(interaction: discord.Interaction) -> None:
         return
     ai = ctx.services.ai
 
-    # The same access as `/ask`: raiders, Officers and Developers.
+    # Raiders, Officers and Developers.
     settings = ctx.services.guild_settings.get(guild_id)
     access = access_for_member(settings, role_ids(ctx.author), is_administrator(ctx))
     if not access.is_allowed():
@@ -47,7 +46,7 @@ async def tldr(interaction: discord.Interaction) -> None:
         return
     try:
         ensure_switches_allow(settings.ai, access)
-    except AskError as e:
+    except AiError as e:
         await refuse(ctx, str(e))
         return
 
@@ -77,7 +76,7 @@ meta(
 )
 
 
-async def post_summary(ctx: GulpContext, ai: AiAssistantService, settings: GuildSettings, access: Access) -> bool:
+async def post_summary(ctx: GulpContext, ai: AiService, settings: GuildSettings, access: Access) -> bool:
     """Reads the channel back, has the conversation summed up and posts it. Returns whether a summary was
     posted."""
     # Reading the channel and the model both take longer than Discord waits for a first response.
@@ -99,15 +98,12 @@ async def post_summary(ctx: GulpContext, ai: AiAssistantService, settings: Guild
     text, omitted = transcript(lines)
     try:
         summary = await ai.summarize(access, settings.ai, text, omitted)
-    except AskError as e:
+    except AiError as e:
         await ctx.send(str(e), allowed_mentions=NO_MENTIONS)
         return False
 
     channel_link = f"https://discord.com/channels/{ctx.guild_id or 0}/{ctx.channel.id}"
     sent = await reply_in_chunks(ctx, f"**tl;dr** of the last {describe_span(now - lines[0].at)} ({len(lines)} messages)\n{summary}")
-    for message in sent:
-        # A reply to the summary carries on with the assistant, as for its other answers.
-        ai.remember_answer(message.id)
     link = f"{channel_link}/{sent[0].id}" if sent else channel_link
 
     ai.finish_tldr(ctx.channel.id, link, now)
@@ -140,7 +136,7 @@ async def read_back(ctx: GulpContext, now: int) -> list[TranscriptLine]:
                     continue
                 text = "[attachment]"
             at = int(message.created_at.timestamp())
-            lines.append(TranscriptLine(at, central_time(at), speaker_label(message.author.global_name or message.author.name, message.author.name), text))
+            lines.append(TranscriptLine(at, guild_time(at), speaker_label(message.author.global_name or message.author.name, message.author.name), text))
 
         if done:
             break

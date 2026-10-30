@@ -6,8 +6,8 @@ Run it after adding or changing a command, from the root of the repository:
 
 The commands, their descriptions, parameters and notes come from the registered command tree, the same
 place `/help` reads them from, so the file can't say something the bot doesn't. Who may use a command comes
-from the checks on it. The few things members do without a command ("Bot please", "hey bot", "bot get them") are
-written here by hand, in `MESSAGE_TRIGGERS`.
+from the checks on it. The few things members do without a command ("bot get them") are written here by hand,
+in `MESSAGE_TRIGGERS`.
 """
 
 from __future__ import annotations
@@ -32,14 +32,14 @@ WHO_BY_CHECK = {
     "check_is_admin_or_moderator": "Administrators and the moderator role",
     "check_is_moderator": "Moderator role",
     "check_is_raider": "Raider, trial and moderator roles",
+    "check_is_raider_or_administrator": "Raider, trial and moderator roles, and administrators",
 }
 # The strictest check wins when a command has more than one.
 CHECK_ORDER = list(WHO_BY_CHECK)
 
 # Commands whose access is decided inside the command rather than by a check.
 WHO_BY_COMMAND = {
-    "ask": "Raider role, moderator role, administrators and the developer role (the AI assistant's access)",
-    "tldr": "Raider role, moderator role, administrators and the developer role (the AI assistant's access)",
+    "tldr": "Raider role, moderator role, administrators and the developer role",
 }
 EVERYONE = "Everyone"
 
@@ -47,8 +47,6 @@ MESSAGE_TRIGGERS = f"""## Without a command
 
 | Message | What happens | Who |
 |---|---|---|
-| A message with the words **"Bot please"** or **"hey bot"** (any case, any punctuation between them) | The AI assistant answers it in the channel. If the message is a reply, the message replied to goes along with the question | The AI assistant's access, like `/ask` |
-| A reply to one of the assistant's answers | Carries the conversation on | The AI assistant's access, like `/ask` |
 | A reply to someone's message with the words **"bot get them"** | Deletes the message replied to and barks. The bot needs Manage Messages in the channel | Moderator role, administrators and the developer role |
 | `@bot <command>` | The same as `{PREFIX}<command>` | As the command |
 """
