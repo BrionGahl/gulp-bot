@@ -40,6 +40,7 @@ from .warcraft_logs_analysis_service import (
     pull_window,
     select_fights,
     select_pull,
+    started_at_or_after,
     totals_of,
 )
 from .wcl_ignored_player_service import IgnoredPlayerService
@@ -64,7 +65,7 @@ class WarcraftLogsService:
         report started at or after then counts: for telling one raid night's report from the night
         before's."""
         newest = newest_by_uploader(await client.fetch_guild_reports(source.guild_id), source.uploader_id)
-        if newest is None or (started_since is not None and not newest.started_at_or_after(started_since)):
+        if newest is None or (started_since is not None and not started_at_or_after(newest, started_since)):
             return None
         return newest.code
 

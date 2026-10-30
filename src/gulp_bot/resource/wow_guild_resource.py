@@ -5,7 +5,7 @@ from __future__ import annotations
 from discord import app_commands
 from discord.ext import commands
 
-from ..core.discord_context import GulpContext
+from ..core.discord_context import GulpContext, require_guild
 from ..core.embed import add_field, command_embed, to_discord_embed
 from ..core.permission_checks import check_is_raider, prefix_check
 from ..exception.wowutils_exception import WowUtilsError
@@ -41,9 +41,7 @@ TIMELINE_REMINDERS_INSTALL = (
 @prefix_check(check_is_raider)
 async def get_timeline_reminders(ctx: GulpContext) -> None:
     # `check_is_raider` has already established this is a guild.
-    guild_id = ctx.guild_id
-    if guild_id is None:
-        return
+    guild_id = require_guild(ctx)
     # Only ever the token this server registered, never another server's.
     bart_token = ctx.services.guild_settings.get(guild_id).bart_token
     if bart_token is None:
@@ -81,9 +79,7 @@ async def submit_droptimizer(ctx: GulpContext, url: str, profile_key: str) -> No
     await ctx.defer(ephemeral=True)
 
     # `check_is_raider` has already established this is a guild.
-    guild_id = ctx.guild_id
-    if guild_id is None:
-        return
+    guild_id = require_guild(ctx)
     # Reports only ever go to the group this server registered, never another server's.
     credentials = ctx.services.guild_settings.get(guild_id).wowutils
     if credentials is None:

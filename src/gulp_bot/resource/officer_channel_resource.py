@@ -15,11 +15,8 @@ import discord
 
 from ..container import Services
 from ..core.discord_helpers import NO_MENTIONS
-from ..core.schedule_parsing import now_in_new_york
-from ..exception.ai_exception import AiError
 from ..mapper.absence_mapper import absence_text, confirmation
-from ..schema.absence_schema import NewAbsence, NewChannelNote, OfficerChannelOwner
-from ..service.officer_channel_triage_service import RESPONSE_SCHEMA, SYSTEM_PROMPT, TEMPERATURE, read_detection, triage_request, worth_asking
+from ..schema.absence_schema import OfficerChannelOwner
 from .absence_resource import undo_view
 
 log = logging.getLogger(__name__)
@@ -60,34 +57,15 @@ async def on_message_deleted(services: Services, payload: discord.RawMessageDele
 
 
 async def read(services: Services, message: discord.Message, owner: OfficerChannelOwner) -> None:
-    """Has the model read `message`, and records and answers what it found."""
-    text = message.content
-    if not worth_asking(text):
+    """Has `message` read (`TriageService`), and answers what was recorded from it."""
+    outcome = await services.triage.read(owner, message.channel.id, message.id, message.content)
+    if outcome is None:
         return
-    settings = services.guild_settings.get(owner.guild_id)
-    today = now_in_new_york().date()
     try:
-        answer, _ = await services.ai.generate(settings.ai, SYSTEM_PROMPT, triage_request(text, today), TEMPERATURE, RESPONSE_SCHEMA)
-    except AiError as e:
-        log.info("Didn't read message %s in a personal officer channel: %s", message.id, getattr(e, "detail", str(e)))
-        return
-    detection = read_detection(answer, today, settings.raid_nights)
-
-    if detection.notes:
-        notes = [NewChannelNote(owner.guild_id, owner.user_id, message.channel.id, message.id, category, summary) for category, summary in detection.notes]
-        await services.absences.add_notes(owner.guild_id, notes)
-        log.info("Noted %d topic(s) from message %s of %s for the officers", len(notes), message.id, owner.user_id)
-
-    found = detection.absence
-    try:
-        if found is not None:
-            stored = await services.absences.add(
-                NewAbsence(owner.guild_id, owner.user_id, found.start, found.end, found.kind, found.note, owner.user_id, source_message_id=message.id)
-            )
-            nights = services.absences.nights_covered(owner.guild_id, found.start, found.end)
-            text = confirmation(stored, nights) if nights else f"Noted: {absence_text(stored)}."
-            await message.reply(text, view=undo_view(stored.id), allowed_mentions=NO_MENTIONS)
-        elif detection.unclear_absence:
+        if outcome.absence is not None:
+            text = confirmation(outcome.absence, outcome.nights) if outcome.nights else f"Noted: {absence_text(outcome.absence)}."
+            await message.reply(text, view=undo_view(outcome.absence.id), allowed_mentions=NO_MENTIONS)
+        elif outcome.unclear_absence:
             await message.reply(UNCLEAR, allowed_mentions=NO_MENTIONS)
     except discord.HTTPException as e:
         log.warning("Couldn't reply in personal officer channel %s: %s", message.channel.id, e)

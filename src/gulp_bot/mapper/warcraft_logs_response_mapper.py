@@ -53,7 +53,7 @@ def report_from_json(data: dict[str, Any]) -> Report:
             code=str(data["code"]),
             title=str(data["title"]),
             start_time=float(data["startTime"]),
-            fights=[fight_from_json(fight) for fight in data.get("fights") or []],
+            fights=tuple(fight_from_json(fight) for fight in data.get("fights") or []),
         )
     except (KeyError, TypeError, ValueError) as e:
         raise _unexpected(e) from None

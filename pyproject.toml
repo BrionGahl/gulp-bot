@@ -23,6 +23,14 @@ dev = ["pytest>=8", "ruff", "pyright"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+addopts = "-ra --strict-markers"
+xfail_strict = true
+# A new warning fails the run, so it gets looked at. discord.py 2.6 still calls a function Python 3.14
+# deprecates; that one is its own to fix.
+filterwarnings = [
+    "error",
+    "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:discord",
+]
 
 [tool.ruff]
 line-length = 160
@@ -30,12 +38,18 @@ target-version = "py314"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "ASYNC"]
-ignore = ["E501", "ASYNC109"]
+select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "RUF", "SIM", "C4", "PT"]
+# PT018: an assert of several facts at once is how these tests are written. RUF001/RUF002: the en dashes
+# in messages ("8:00 PM – 11:00 PM") are meant. SIM108: an if/else reads better than a long ternary.
+ignore = ["E501", "ASYNC109", "PT018", "RUF001", "RUF002", "SIM108"]
+
+[tool.ruff.lint.per-file-ignores]
+# Discord commands named `test_*` (`/test_raid_notes`) are not pytest tests.
+"src/**" = ["PT"]
 
 [tool.pyright]
 include = ["src", "tests", "scripts"]
-# The local virtualenv (`python -m venv .venv`), so that editors find the dependencies.
+# The local virtualenv `uv sync` makes, so that editors find the dependencies.
 venvPath = "."
 venv = ".venv"
 pythonVersion = "3.14"

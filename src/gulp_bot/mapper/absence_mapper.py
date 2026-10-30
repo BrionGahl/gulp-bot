@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 
+from ..core.database import Row, from_bigint, from_bigint_or_none
+from ..core.raid_week import week_end
 from ..core.schedule_parsing import SHORT_DAY_NAMES
-from ..core.text import DISCORD_MAX_CHARS, limited_lines, single_line, truncate_chars
-from ..schema.absence_schema import Absence, ChannelNote, NoteCategory
+from ..core.text import DISCORD_MAX_CHARS, clean_line, limited_lines, single_line
+from ..schema.absence_schema import Absence, AbsenceKind, ChannelNote, NoteCategory
 from ..schema.guild_settings_schema import RaidNight
 
-# Room kept under Discord's limit for the overflow note.
-DIGEST_MAX_CHARS = DISCORD_MAX_CHARS - 40
+# What the digest is cut to, in UTF-8 bytes (`limited_lines` counts bytes, never fewer than the characters
+# Discord counts), leaving room under Discord's limit for the "…and N more" note.
+DIGEST_MAX_BYTES = DISCORD_MAX_CHARS - 40
 
 # The longest note shown after an absence in the digest.
 MAX_NOTE_CHARS = 80
@@ -27,7 +30,7 @@ def span_text(start: date, end: date) -> str:
 
 
 def _note(note: str | None) -> str:
-    return "" if not note else f" ({truncate_chars(single_line(note), MAX_NOTE_CHARS)})"
+    return "" if not note else f" ({clean_line(note, MAX_NOTE_CHARS)})"
 
 
 def absence_text(absence: Absence) -> str:
@@ -45,7 +48,7 @@ def digest_text(tuesday: date, nights: list[RaidNight] | None, absences: list[Ab
     """The officer digest of the week starting `tuesday`: who is out or tentative on each of its raid
     nights (`nights`, `None` if none are registered), and what members raised in their personal officer
     channels."""
-    monday = tuesday + timedelta(days=6)
+    monday = week_end(tuesday)
     lines = [f"**Officer digest** — week of {day_text(tuesday)} – {day_text(monday)}\n", "\n**Absences**\n"]
     if nights is None:
         lines.append("Raid nights aren't set (`/settings raid_nights`), so absences can't be matched to them.\n")
@@ -63,11 +66,44 @@ def digest_text(tuesday: date, nights: list[RaidNight] | None, absences: list[Ab
         lines.append("Nothing this week.\n")
     for category in NoteCategory:
         lines += [f"{category.label} — <@{note.user_id}> in <#{note.channel_id}>: {single_line(note.summary)}\n" for note in notes if note.category is category]
-    return limited_lines(lines, DIGEST_MAX_CHARS).rstrip()
+    return limited_lines(lines, DIGEST_MAX_BYTES).rstrip()
 
 
-def member_list_text(absences: list[Absence]) -> str:
-    """A member's upcoming absences, as `/absence list` shows them."""
+def member_list_text(absences: list[Absence], someone_else: int | None = None) -> str:
+    """A member's upcoming absences, as `/absence list` shows them: the invoker's own, or `someone_else`'s."""
+    if someone_else is not None:
+        return f"<@{someone_else}>:\n" + ("\n".join(f"**#{absence.id}** {absence_text(absence)}" for absence in absences) or "No upcoming absences.")
     if not absences:
         return "You have no upcoming absences. Add one with `/absence add`."
     return "\n".join(f"**#{absence.id}** {absence_text(absence)}" for absence in absences)
+
+
+# --- Rows ---
+
+
+def absence_from_row(row: Row) -> Absence:
+    """A `raid_absences` row."""
+    return Absence(
+        id=row["id"],
+        guild_id=from_bigint(row["guild_id"]),
+        user_id=from_bigint(row["user_id"]),
+        start=row["start_date"],
+        end=row["end_date"],
+        kind=AbsenceKind(row["kind"]),
+        note=row["note"],
+        created_by=from_bigint(row["created_by"]),
+        source_message_id=from_bigint_or_none(row["source_message_id"]),
+    )
+
+
+def note_from_row(row: Row) -> ChannelNote:
+    """An `officer_channel_notes` row."""
+    return ChannelNote(
+        id=row["id"],
+        user_id=from_bigint(row["user_id"]),
+        channel_id=from_bigint(row["channel_id"]),
+        source_message_id=from_bigint(row["source_message_id"]),
+        category=NoteCategory(row["category"]),
+        summary=row["summary"],
+        created_at=row["created_at"],
+    )

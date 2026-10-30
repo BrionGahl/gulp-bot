@@ -84,18 +84,18 @@ class OfficerChannelService:
             if not await self._repository.claim(guild.id, member.id):
                 return
         except Exception as e:
-            log.error("Failed to check for an existing personal officer channel for %s: %s", member.name, e)
+            log.exception("Failed to check for an existing personal officer channel for %s: %s", member.name, e)
             return
 
         try:
             channel = await self._create_channel(member, category_id, officer_role_id)
         except Exception as e:
-            log.error("Failed to create personal officer channel for %s: %s", member.name, e)
+            log.exception("Failed to create personal officer channel for %s: %s", member.name, e)
             # Give the claim back so a later member update can try again.
             try:
                 await self._repository.delete(guild.id, member.id)
             except Exception as e:
-                log.error("Failed to release the personal officer channel claim for %s: %s", member.name, e)
+                log.exception("Failed to release the personal officer channel claim for %s: %s", member.name, e)
             return
 
         log.info("Created personal officer channel #%s for %s", channel.name, member.name)
@@ -105,7 +105,7 @@ class OfficerChannelService:
         except Exception as e:
             # The claim row is still there, so this can't lead to a duplicate channel; the row just doesn't say
             # which channel it is.
-            log.error("Created personal officer channel #%s for %s but failed to record it: %s", channel.name, member.name, e)
+            log.exception("Created personal officer channel #%s for %s but failed to record it: %s", channel.name, member.name, e)
 
     async def _create_channel(self, member: discord.Member, category_id: int, officer_role_id: int) -> discord.TextChannel:
         guild = member.guild
@@ -146,7 +146,7 @@ class OfficerChannelService:
                     self._owners.pop(channel_id, None)
                 log.info("Personal officer channel #%s was deleted; forgot its registration", channel_name)
         except Exception as e:
-            log.error("Failed to forget deleted personal officer channel #%s: %s", channel_name, e)
+            log.exception("Failed to forget deleted personal officer channel #%s: %s", channel_name, e)
 
     async def list_registered(self, guild_id: int) -> list[RegisteredOfficerChannel]:
         return await self._repository.list_for_guild(guild_id)

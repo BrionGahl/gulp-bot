@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Sequence
+from datetime import datetime
 
-from ..core.text import ascii_lower, pull_time
+from ..core.text import ascii_lower, name_key, pull_time, same_name
 from ..exception.warcraft_logs_exception import ReportRequestProblem, WarcraftLogsError
 from ..schema.guild_settings_schema import GuildSettings
 from ..schema.wcl_report_schema import (
@@ -40,7 +41,7 @@ from ..schema.wcl_report_schema import (
     ReportTarget,
     WindowDamageReport,
 )
-from ..schema.wcl_settings_schema import ALL_CONSUMABLE_KINDS, ConsumableAbility, TrackedAbility
+from ..schema.wcl_settings_schema import MAX_ABILITY_ID, ConsumableAbility, ConsumableKind, TrackedAbility
 
 # --- Which pulls and reports ---
 
@@ -62,6 +63,11 @@ def select_fights(fights: Sequence[Fight], boss: str | None) -> list[Fight]:
     if not names:
         raise WarcraftLogsError("This report has no Mythic boss pulls.")
     raise WarcraftLogsError(f"No Mythic pulls of a boss matching `{boss}`. The bosses in this report: {', '.join(names)}.")
+
+
+def started_at_or_after(report: ReportSummary, moment: datetime) -> bool:
+    """Whether `report` was started at `moment` or later (its start is in milliseconds)."""
+    return report.start_time >= int(moment.timestamp()) * 1000 + moment.microsecond // 1000
 
 
 def newest_by_uploader(reports: Sequence[ReportSummary], uploader_id: int) -> ReportSummary | None:
@@ -87,12 +93,12 @@ def scope_text(fights: Sequence[Fight], boss: str | None) -> str:
 
 
 def ignored_set(names: Iterable[str]) -> set[str]:
-    """Player names in the form they are compared in: lowercase, so capitalisation never matters."""
-    return {name.lower() for name in names}
+    """Player names in the form they are compared in (`name_key`), so capitalisation never matters."""
+    return {name_key(name) for name in names}
 
 
 def is_ignored(ignored: set[str], name: str) -> bool:
-    return name.lower() in ignored
+    return name_key(name) in ignored
 
 
 # --- Totals and rankings ---
@@ -185,7 +191,7 @@ def build_consumables_report(
     """`totals` holds each registered ability's players, in the order of `registered`; the abilities of one
     kind are added together (a plain and a demonic healthstone are both healthstones)."""
     uses = []
-    for kind in ALL_CONSUMABLE_KINDS:
+    for kind in ConsumableKind:
         players: PlayerTotals = {}
         any_registered = False
         for entry, per_ability in zip(registered, totals, strict=False):
@@ -313,8 +319,7 @@ def build_enemy_damage(name: str, target_ids: Sequence[int], tables: dict[int, l
 def build_focus_damage(focus: str, enemies: Sequence[EnemyDamage]) -> FocusDamage:
     """The damage to the tracked enemy named `focus` set apart from the damage to all the other tracked
     `enemies`, which is added together, per player."""
-    key = focus.strip().lower()
-    chosen = next((enemy for enemy in enemies if enemy.name.strip().lower() == key), None)
+    chosen = next((enemy for enemy in enemies if same_name(enemy.name, focus)), None)
     rest = [enemy for enemy in enemies if enemy is not chosen and enemy.in_report]
 
     # Per player: (class, damage to the enemy set apart, damage to the rest).
@@ -439,6 +444,6 @@ def resolve_ability(tracked: list[TrackedAbility], text: str) -> TrackedAbility 
     if not _SPELL_ID.fullmatch(text) or not text.isascii():
         return None
     ability_id = int(text)
-    if not 0 < ability_id <= 0xFFFFFFFF:
+    if not 0 < ability_id <= MAX_ABILITY_ID:
         return None
     return next((ability for ability in tracked if ability.ability_id == ability_id), TrackedAbility(ability_id, f"Ability {ability_id}"))

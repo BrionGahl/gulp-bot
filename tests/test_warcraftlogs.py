@@ -1,12 +1,14 @@
 import asyncio
 import json
+import re
 
 import pytest
 
+from fakes import token_response
 from gulp_bot.client.warcraft_logs_client import DEATHS_QUERY, REPORT_QUERY, WarcraftLogsClient, WarcraftLogsClientPool, ability_tables_query, table_alias
 from gulp_bot.core.embed import MAX_DESCRIPTION_CHARS, MAX_EMBED_CHARS, MAX_FIELD_CHARS
 from gulp_bot.core.http_client import RequestTimeout, Response
-from gulp_bot.core.text import plural, truncate_with_ellipsis
+from gulp_bot.core.text import plural, same_name, truncate_with_ellipsis
 from gulp_bot.exception.warcraft_logs_exception import WarcraftLogsError
 from gulp_bot.mapper.warcraft_logs_embed_mapper import (
     CONSUMABLE_PLAYERS_SHOWN,
@@ -27,6 +29,7 @@ from gulp_bot.mapper.warcraft_logs_embed_mapper import (
     replay_url,
 )
 from gulp_bot.mapper.warcraft_logs_response_mapper import data_from_response, deaths_from_data, player_entries_from_table, report_summary_from_json
+from gulp_bot.repository.wcl_consumable_ability_repository import consumable_kind
 from gulp_bot.schema.guild_settings_schema import GuildSettings, WclCredentials, WclSource
 from gulp_bot.schema.wcl_report_schema import DeathEntry, EncounterSummary, Fight, NewestReport, PlayerCount, PlayerEntry, Report, ReportCode
 from gulp_bot.schema.wcl_settings_schema import ConsumableAbility, ConsumableKind, TrackedAbility
@@ -45,11 +48,11 @@ from gulp_bot.service.warcraft_logs_analysis_service import (
     parse_report_target,
     resolve_ability,
     select_fights,
+    started_at_or_after,
     tally,
     wipe_moment,
 )
 from gulp_bot.service.wcl_consumable_service import ids_of_kind
-from gulp_bot.service.wcl_ignored_player_service import same_name
 
 
 def death(name, class_name, fight, timestamp):
@@ -69,7 +72,7 @@ def report(fights):
         "ABC",
         "Raid night",
         1_791_506_660_309.0,
-        [Fight(index + 1, name, kill, in_progress) for index, (name, kill, in_progress) in enumerate(fights)],
+        tuple(Fight(index + 1, name, kill, in_progress) for index, (name, kill, in_progress) in enumerate(fights)),
     )
 
 
@@ -208,7 +211,7 @@ def test_the_newest_report_from_the_uploader_is_picked():
     def at(millis):
         return datetime.fromtimestamp(millis / 1000, UTC)
 
-    assert newest.started_at_or_after(at(499)) and newest.started_at_or_after(at(500)) and not newest.started_at_or_after(at(501))
+    assert started_at_or_after(newest, at(499)) and started_at_or_after(newest, at(500)) and not started_at_or_after(newest, at(501))
 
 
 def test_the_overview_counts_pulls_and_kills_per_boss():
@@ -222,8 +225,9 @@ def test_the_overview_counts_pulls_and_kills_per_boss():
     assert overview.encounters == [EncounterSummary("Zul'jan", 3, 1), EncounterSummary("Other", 1, 0)]
     assert overview.started_at == 1_791_506_660
     description = overview_description(overview)
-    assert "**4** Mythic pulls: 1 kills, 3 wipes" in description
-    assert "• Zul'jan — 3 pulls, 1 kills" in description
+    assert "**4** Mythic pulls: 1 kill, 3 wipes" in description
+    assert "• Zul'jan — 3 pulls, 1 kill" in description
+    assert "• Other — 1 pull, 0 kills" in description
 
 
 def test_a_report_without_mythic_pulls_says_so():
@@ -461,8 +465,8 @@ def test_the_ids_of_one_kind_are_picked_out():
     assert ids_of_kind(registered, ConsumableKind.HEALTHSTONE) == [6262, 452930]
     assert ids_of_kind(registered, ConsumableKind.HEALTH_POTION) == [1234768]
     assert ids_of_kind([], ConsumableKind.HEALTHSTONE) == []
-    assert ConsumableKind.from_column_value("potion") is None
-    assert [ConsumableKind.from_column_value(kind.value) for kind in ConsumableKind] == list(ConsumableKind)
+    assert consumable_kind("potion") is None
+    assert [consumable_kind(kind.value) for kind in ConsumableKind] == list(ConsumableKind)
     assert (ConsumableKind.HEALTHSTONE.plural, ConsumableKind.HEALTH_POTION.plural) == ("Healthstones", "Health potions")
     assert consumable_field(build_consumables_report(report([]), [], None, [], [], 0).uses[0])[0] == "Healthstones"
 
@@ -476,16 +480,16 @@ class SlowApi:
     async def request(self, method, url, *, timeout, headers=None, json=None, form=None, basic_auth=None):
         self.requests.append((url, form, basic_auth, headers))
         if url.endswith("/oauth/token"):
-            return Response(200, '{"access_token":"test","expires_in":3600}')
+            return token_response()
         raise RequestTimeout("slow")
 
 
 def test_a_hung_warcraft_logs_is_given_up_on_with_a_clear_message():
     api = SlowApi()
     client = WarcraftLogsClient(api, "id", "secret")  # type: ignore[arg-type]
-    with pytest.raises(WarcraftLogsError, match="^Warcraft Logs took too long to answer. Try again in a moment.$"):
+    with pytest.raises(WarcraftLogsError, match=f"^{re.escape('Warcraft Logs took too long to answer. Try again in a moment.')}$"):
         asyncio.run(client.fetch_report("ABC"))
-    url, form, auth, _ = api.requests[0]
+    _, form, auth, _ = api.requests[0]
     assert form == {"grant_type": "client_credentials"} and auth == ("id", "secret")
     assert api.requests[1][3] == {"Authorization": "Bearer test"}
 
@@ -500,7 +504,7 @@ class ExpiredTokenApi:
     async def request(self, method, url, *, timeout, headers=None, json=None, form=None, basic_auth=None):
         if url.endswith("/oauth/token"):
             self.tokens += 1
-            return Response(200, f'{{"access_token":"t{self.tokens}","expires_in":3600}}')
+            return token_response(f"t{self.tokens}")
         self.queries += 1
         if headers == {"Authorization": "Bearer t1"}:
             return Response(401, "")

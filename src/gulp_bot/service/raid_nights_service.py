@@ -7,7 +7,8 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 
 from ..core.cron import Schedule
-from ..core.schedule_parsing import NEW_YORK, days_text, parse_days, parse_time_of_day, time_text, weekly_schedule
+from ..core.raid_week import weeks_between
+from ..core.schedule_parsing import NEW_YORK, parse_days, parse_time_of_day, weekly_schedule
 from ..exception.schedule_exception import ScheduleProblem
 from ..schema.guild_settings_schema import GuildSettings, RaidNight, RaidNights
 
@@ -38,19 +39,18 @@ def nights_in_week(nights: RaidNights, tuesday: date) -> list[RaidNight]:
     return result
 
 
+def raid_day(moment: datetime, nights: RaidNights | None) -> date:
+    """The day the raid night that `moment` (Eastern) falls in started: the day before, for the part of a raid
+    that runs past midnight. Its week is the week the raid belongs to, so that a Monday raid ending after
+    midnight is still posted in Monday's week, not in the one starting that Tuesday."""
+    if nights is not None and crosses_midnight(nights) and moment.time() < nights.start:
+        return moment.date() - timedelta(days=1)
+    return moment.date()
+
+
 def nights_between(nights: RaidNights, first: date, last: date) -> list[RaidNight]:
     """The raid nights that start on a day from `first` to `last`, both included, in order."""
-    result = []
-    tuesday = week_start(first)
-    while tuesday <= last:
-        result += [night for night in nights_in_week(nights, tuesday) if first <= night.start.date() <= last]
-        tuesday += timedelta(days=7)
-    return result
-
-
-def week_start(day: date) -> date:
-    """The Tuesday on or before `day`: raid weeks run Tuesday (the game's weekly reset) to Monday."""
-    return day - timedelta(days=(day.weekday() + 6) % 7)
+    return [night for tuesday in weeks_between(first, last) for night in nights_in_week(nights, tuesday) if first <= night.start.date() <= last]
 
 
 def start_schedule(nights: RaidNights) -> Schedule:
@@ -73,10 +73,3 @@ def attendance_schedules(settings: GuildSettings) -> tuple[Schedule, Schedule] |
     if settings.raid_nights is not None:
         return start_schedule(settings.raid_nights), end_schedule(settings.raid_nights)
     return settings.raid_voice.start, settings.raid_voice.end
-
-
-def describe_raid_nights(nights: RaidNights) -> str:
-    """`Tue, Thu, 8:00 PM – 11:00 PM Eastern`."""
-    days = days_text(nights.days)
-    past_midnight = " (the next day)" if crosses_midnight(nights) else ""
-    return f"{days}, {time_text(nights.start)} – {time_text(nights.end)}{past_midnight} Eastern"

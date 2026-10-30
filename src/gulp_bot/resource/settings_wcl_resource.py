@@ -13,28 +13,27 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from ..core.discord_context import GulpContext, slash_context
+from ..core.discord_context import GulpContext, require_guild, slash_context
 from ..core.permission_checks import check_is_admin_or_moderator, prefix_check, slash_check
 from ..schema.guild_settings_schema import ClearableSetting, WclCredentials, WclSource
 from ..schema.wcl_settings_schema import (
-    ALL_CONSUMABLE_KINDS,
+    MAX_ABILITY_ID,
+    MAX_TRACKED,
+    MAX_TRACKED_NAME_CHARS,
+    MAX_WCL_ID,
     ConsumableKind,
-    IgnorePlayerOutcome,
+    NameListOutcome,
     RegisterConsumableOutcome,
     TrackAbilityOutcome,
-    TrackEnemyOutcome,
 )
-from ..service import wcl_consumable_service, wcl_ignored_player_service, wcl_tracked_ability_service, wcl_tracked_enemy_service
+from ..service import wcl_consumable_service, wcl_ignored_player_service
 from ..service.wcl_consumable_service import ids_of_kind
-from .resource_support import choice_value, meta, reply, require_guild, subcommand_required
+from .resource_support import choice_value, meta, reply, subcommand_required
 from .wcl_autocomplete import autocomplete_ignored_player, autocomplete_tracked_ability, autocomplete_tracked_enemy
 
-# The largest ID Warcraft Logs uses: its IDs are signed 32-bit integers, and zero is never one.
-MAX_WCL_ID = 2**31 - 1
+U32 = app_commands.Range[int, 0, MAX_ABILITY_ID]
 
-U32 = app_commands.Range[int, 0, 2**32 - 1]
-
-KIND_CHOICES = [app_commands.Choice(name=kind.display_name, value=kind.value) for kind in ALL_CONSUMABLE_KINDS]
+KIND_CHOICES = [app_commands.Choice(name=kind.display_name, value=kind.value) for kind in ConsumableKind]
 
 
 def is_valid_wcl_id(value: int) -> bool:
@@ -100,8 +99,8 @@ _sub(wcl_source, "Both are the numeric IDs Warcraft Logs uses. Only reports from
 async def wcl_mechanic_add(ctx: GulpContext, name: str, ability_id: U32) -> None:
     guild_id = require_guild(ctx)
     name = name.strip()
-    if not name or len(name) > wcl_tracked_ability_service.MAX_NAME_CHARS:
-        await reply(ctx, f"The name has to be 1 to {wcl_tracked_ability_service.MAX_NAME_CHARS} characters.")
+    if not name or len(name) > MAX_TRACKED_NAME_CHARS:
+        await reply(ctx, f"The name has to be 1 to {MAX_TRACKED_NAME_CHARS} characters.")
         return
     if not is_valid_wcl_id(ability_id):
         await reply(ctx, "That isn't a valid ability ID. It's a positive whole number.")
@@ -116,7 +115,7 @@ async def wcl_mechanic_add(ctx: GulpContext, name: str, ability_id: U32) -> None
         case TrackAbilityOutcome.NAME_TAKEN:
             message = f"Another ability (ID {result.other_ability_id}) is already called **{name}**. Pick a different name."
         case TrackAbilityOutcome.FULL:
-            message = f"This server already tracks {wcl_tracked_ability_service.MAX_TRACKED} abilities. Remove one with `/settings wcl mechanic_remove` first."
+            message = f"This server already tracks {MAX_TRACKED} abilities. Remove one with `/settings wcl mechanic_remove` first."
     await reply(ctx, message)
 
 
@@ -152,7 +151,7 @@ async def wcl_mechanic_list(ctx: GulpContext) -> None:
         await reply(ctx, "No abilities are tracked. Add one with `/settings wcl mechanic_add`.")
         return
     lines = "\n".join(f"**{ability.name}** — ability {ability.ability_id}" for ability in tracked)
-    await reply(ctx, f"Tracked abilities ({len(tracked)} of {wcl_tracked_ability_service.MAX_TRACKED}):\n{lines}")
+    await reply(ctx, f"Tracked abilities ({len(tracked)} of {MAX_TRACKED}):\n{lines}")
 
 
 _sub(wcl_mechanic_list)
@@ -167,17 +166,17 @@ _sub(wcl_mechanic_list)
 async def wcl_enemy_add(ctx: GulpContext, name: str) -> None:
     guild_id = require_guild(ctx)
     name = name.strip()
-    if not name or len(name) > wcl_tracked_enemy_service.MAX_NAME_CHARS:
-        await reply(ctx, f"The name has to be 1 to {wcl_tracked_enemy_service.MAX_NAME_CHARS} characters.")
+    if not name or len(name) > MAX_TRACKED_NAME_CHARS:
+        await reply(ctx, f"The name has to be 1 to {MAX_TRACKED_NAME_CHARS} characters.")
         return
 
     match await ctx.services.tracked_enemies.track(guild_id, name):
-        case TrackEnemyOutcome.ADDED:
+        case NameListOutcome.ADDED:
             message = f"Tracking **{name}**."
-        case TrackEnemyOutcome.ALREADY_TRACKED:
+        case NameListOutcome.ALREADY_LISTED:
             message = f"**{name}** is already tracked."
-        case TrackEnemyOutcome.FULL:
-            message = f"This server already tracks {wcl_tracked_enemy_service.MAX_TRACKED} enemies. Remove one with `/settings wcl enemy_remove` first."
+        case NameListOutcome.FULL:
+            message = f"This server already tracks {MAX_TRACKED} enemies. Remove one with `/settings wcl enemy_remove` first."
     await reply(ctx, message)
 
 
@@ -212,7 +211,7 @@ async def wcl_enemy_list(ctx: GulpContext) -> None:
     if not tracked:
         await reply(ctx, "No enemies are tracked. Add one with `/settings wcl enemy_add`.")
         return
-    await reply(ctx, f"Tracked enemies ({len(tracked)} of {wcl_tracked_enemy_service.MAX_TRACKED}): {', '.join(f'**{name}**' for name in tracked)}")
+    await reply(ctx, f"Tracked enemies ({len(tracked)} of {MAX_TRACKED}): {', '.join(f'**{name}**' for name in tracked)}")
 
 
 _sub(wcl_enemy_list)
@@ -232,11 +231,11 @@ async def wcl_ignore_add(ctx: GulpContext, name: str) -> None:
         return
 
     match await ctx.services.ignored_players.ignore(guild_id, name):
-        case IgnorePlayerOutcome.ADDED:
+        case NameListOutcome.ADDED:
             message = f"**{name}** is now left out of the Warcraft Logs overview."
-        case IgnorePlayerOutcome.ALREADY_IGNORED:
+        case NameListOutcome.ALREADY_LISTED:
             message = f"**{name}** is already ignored."
-        case IgnorePlayerOutcome.FULL:
+        case NameListOutcome.FULL:
             message = f"This server already ignores {wcl_ignored_player_service.MAX_IGNORED} players. Remove one with `/settings wcl ignore_remove` first."
     await reply(ctx, message)
 
@@ -345,7 +344,7 @@ async def wcl_consumable_list(ctx: GulpContext) -> None:
         await reply(ctx, "No abilities are registered. Add one with `/settings wcl consumable_add`.")
         return
     lines = []
-    for kind in ALL_CONSUMABLE_KINDS:
+    for kind in ConsumableKind:
         ids = ids_of_kind(registered, kind)
         lines.append(f"**{kind.plural}**: {', '.join(map(str, ids)) if ids else 'none'}")
     await reply(ctx, "\n".join(lines))

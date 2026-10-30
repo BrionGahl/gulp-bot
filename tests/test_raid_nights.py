@@ -7,10 +7,10 @@ import pytest
 from gulp_bot.core.cron import Schedule
 from gulp_bot.core.schedule_parsing import NEW_YORK, parse_days, parse_time_of_day
 from gulp_bot.exception.schedule_exception import ScheduleProblem
+from gulp_bot.mapper.raid_nights_mapper import describe_raid_nights
 from gulp_bot.schema.guild_settings_schema import GuildSettings, RaidNight, RaidNights, RaidVoice
 from gulp_bot.service.raid_nights_service import (
     attendance_schedules,
-    describe_raid_nights,
     end_schedule,
     nights_in_week,
     parse_raid_nights,
@@ -97,3 +97,15 @@ def test_attendance_follows_the_raid_nights_once_they_are_set():
 def test_raid_nights_are_described_in_week_order():
     assert describe_raid_nights(TUE_THU) == "Tue, Thu, 8:00 PM – 11:00 PM Eastern"
     assert describe_raid_nights(RaidNights(frozenset({0, 1}), time(20, 30), time(0, 30))) == "Tue, Mon, 8:30 PM – 12:30 AM (the next day) Eastern"
+
+
+def test_a_raid_past_midnight_belongs_to_the_day_it_started():
+    from gulp_bot.service.raid_nights_service import raid_day
+
+    monday_late = RaidNights(frozenset({0}), time(22, 0), time(1, 0))
+    # The end fires on Tuesday at 1 AM, but the raid is Monday's, so it stays in Monday's week.
+    assert raid_day(eastern(2026, 11, 10, 1), monday_late) == date(2026, 11, 9)
+    assert raid_day(eastern(2026, 11, 9, 22), monday_late) == date(2026, 11, 9)
+    # A raid that ends before midnight, or no raid nights at all: the moment's own day.
+    assert raid_day(eastern(2026, 11, 3, 23), TUE_THU) == date(2026, 11, 3)
+    assert raid_day(eastern(2026, 11, 10, 1), None) == date(2026, 11, 10)

@@ -46,6 +46,6 @@ class RaidNotesJob:
                 await self._absences.post_digest(guild_id, week.thread_id, day)
             except Exception as e:
                 # The thread is there either way; the digest is posted with the next change to the week.
-                log.error("Failed to post the officer digest for guild %s: %s", guild_id, e)
+                log.exception("Failed to post the officer digest for guild %s: %s", guild_id, e)
 
         return create

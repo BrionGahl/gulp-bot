@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass
+from typing import Any
 
 # --- Who may use them ---
 
@@ -50,6 +51,16 @@ class Turn:
 
 
 @dataclass(frozen=True)
+class PromptSpec:
+    """How one feature asks the model: what it is told, how much it may vary its wording (`None` leaves the
+    model's own), and, for an answer that has to be JSON, the shape it must take."""
+
+    system: str
+    temperature: float | None
+    schema: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
 class ModelReply:
     """What the model answered."""
 
@@ -63,6 +74,14 @@ class ModelReply:
 
 
 # --- Whether the model can be reached ---
+
+
+class Finding(enum.Enum):
+    """How a line of `/ai check` reads."""
+
+    GOOD = "✅"
+    WARNING = "⚠️"
+    BAD = "❌"
 
 
 @dataclass(frozen=True)

@@ -4,13 +4,14 @@ week's raid notes thread."""
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from collections.abc import Sequence
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 
 from ..core.embed import to_discord_embed
 from ..mapper.raid_attendance_embed_mapper import snapshot_embed, summary_embed
 from ..repository.raid_attendance_repository import RaidAttendanceRepository
-from ..schema.raid_attendance_schema import AttendanceComparison, AttendanceMoment, StartSnapshot
+from ..schema.raid_attendance_schema import MAX_RAID_HOURS, AttendanceComparison, AttendanceMoment, StartSnapshot
 from .raid_notes_service import RaidNotesService
 
 if TYPE_CHECKING:
@@ -19,7 +20,13 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-def compare_attendance(present_at_start: list[int], present_at_end: list[int]) -> AttendanceComparison:
+def pairs_with(start: StartSnapshot, voice_channel_id: int, end: datetime) -> bool:
+    """Whether `start` is plausibly the start of the raid ending at `end` in `voice_channel_id`."""
+    elapsed = end.timestamp() - start.taken_at.timestamp()
+    return start.voice_channel_id == voice_channel_id and 0 <= elapsed <= MAX_RAID_HOURS * 3600
+
+
+def compare_attendance(present_at_start: Sequence[int], present_at_end: Sequence[int]) -> AttendanceComparison:
     """Who stayed for the whole raid, who left before the end, and who joined after the start."""
     left_early = [user for user in present_at_start if user not in present_at_end]
     joined_late = [user for user in present_at_end if user not in present_at_start]
@@ -32,16 +39,18 @@ class RaidAttendanceService:
         self._raid_notes = raid_notes
         self._discord = discord_client
 
-    async def record_snapshot(self, guild_id: int, voice_channel_id: int, raid_notes_channel_id: int, moment: AttendanceMoment, at: datetime) -> int:
+    async def record_snapshot(
+        self, guild_id: int, voice_channel_id: int, raid_notes_channel_id: int, moment: AttendanceMoment, at: datetime, day: date | None = None
+    ) -> int:
         """Takes a snapshot of who is in `voice_channel_id` right now and posts it to the raid notes thread
-        for the week containing `at`, creating that thread if the week doesn't have one yet (raids usually
+        for the week containing `day` (the day the raid started; `at`'s day if not given), creating that thread if the week doesn't have one yet (raids usually
         happen before the weekly thread's own schedule fires). At the end of a raid, also posts how it
         compares with the start. Returns the thread's ID."""
         # Taken before any awaiting below, so the list reflects the scheduled moment as closely as possible
         # rather than whenever Discord got round to creating the thread.
         present = self.members_in_voice(guild_id, voice_channel_id)
 
-        week = await self._raid_notes.week_thread(guild_id, raid_notes_channel_id, at.date())
+        week = await self._raid_notes.week_thread(guild_id, raid_notes_channel_id, at.date() if day is None else day)
         thread = self._raid_notes.thread_messageable(guild_id, week.thread_id)
 
         # Mentions inside an embed never notify anyone, so the list is a record, not a summons.
@@ -62,7 +71,7 @@ class RaidAttendanceService:
         """The stored start snapshot, if it is the start of this raid. Taken (not just read) so one start is
         only ever compared against one end."""
         start = await self._repository.take_start_snapshot(guild_id)
-        if start is not None and not start.pairs_with(voice_channel_id, end):
+        if start is not None and not pairs_with(start, voice_channel_id, end):
             return None
         return start
 

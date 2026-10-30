@@ -1,54 +1,25 @@
 """The AI features themselves, with a stand-in for the model server."""
 
-import asyncio
 import json
 
 import pytest
 
-from gulp_bot.client.ollama_client import OllamaClient, is_installed
+from fakes import FakeHttp, ai_service, ollama_answer, run
+from gulp_bot.client.ollama_client import is_installed
 from gulp_bot.core.http_client import RequestTimeout, Response
 from gulp_bot.exception.ai_exception import DailyLimit, Disabled, Maintenance, NotAllowed, Unavailable
 from gulp_bot.mapper.ai_model_mapper import api_error_message, ollama_reply, ollama_request
 from gulp_bot.schema.ai_schema import Access, ApiFailure, CheckOk, TldrBusy, TldrReady, TldrWait, Tokens, Turn, Unreachable
 from gulp_bot.schema.guild_settings_schema import AiSettings, GuildSettings, ThinkSetting
 from gulp_bot.service.ai_access_service import access_for_member, ensure_switches_allow
-from gulp_bot.service.ai_service import EVERYBODY, AiService
+from gulp_bot.service.ai_service import EVERYBODY
 from gulp_bot.service.tldr_service import CUT_SHORT_NOTE, SYSTEM_PROMPT, TEMPERATURE, tldr_request, with_cut_short_note
 
 CHAT = "[20:00] Kail: who's tanking tonight?\n[20:01] Trit: me"
 
 
-class FakeHttp:
-    """Answers each request with the next of `responses`, and keeps what was asked."""
-
-    def __init__(self, *responses):
-        self.responses = list(responses)
-        self.requests = []
-
-    async def request(self, method, url, *, timeout, headers=None, json=None, form=None, basic_auth=None):
-        self.requests.append({"method": method, "url": url, "headers": headers, "json": json, "form": form, "basic_auth": basic_auth})
-        response = self.responses.pop(0)
-        if isinstance(response, Exception):
-            raise response
-        return response
-
-
-def local_ai(http=None, model="qwen3.5:9b", think: bool | None = False, daily_limit=100):
-    return AiService(OllamaClient(http or FakeHttp(), "http://ollama:11434"), model, daily_limit, think=think)
-
-
-def answer(text, done_reason="stop"):
-    return Response(
-        200, json.dumps({"message": {"role": "assistant", "content": text}, "done_reason": done_reason, "prompt_eval_count": 100, "eval_count": 20})
-    )
-
-
 def summarize(ai, access=Access.RAIDER, settings=None, transcript=CHAT, omitted=0):
-    return asyncio.run(ai.summarize(access, settings or AiSettings(), transcript, omitted))
-
-
-def run(coroutine):
-    return asyncio.run(coroutine)
+    return run(ai.summarize(access, settings or AiSettings(), transcript, omitted))
 
 
 # --- the summary prompt ---
@@ -107,7 +78,7 @@ def test_the_switches_decide_who_gets_through():
 
 
 def test_a_summary_is_refused_before_anything_is_asked():
-    ai = local_ai()
+    ai = ai_service()
     with pytest.raises(NotAllowed):
         summarize(ai, Access.DENIED)
     with pytest.raises(Disabled):
@@ -116,7 +87,7 @@ def test_a_summary_is_refused_before_anything_is_asked():
         summarize(ai, Access.RAIDER, AiSettings(maintenance=True))
     assert ai.daily_usage()[0] == 0 and ai.failure_report()[0] == 0
     with pytest.raises(DailyLimit):
-        summarize(local_ai(daily_limit=0))
+        summarize(ai_service(daily_limit=0))
 
 
 def test_members_are_told_what_went_wrong_without_details():
@@ -130,24 +101,24 @@ def test_members_are_told_what_went_wrong_without_details():
 
 
 def test_the_model_is_what_the_developers_chose_else_what_the_bot_was_configured_with():
-    ai = local_ai()
+    ai = ai_service()
     assert ai.configured_model == "qwen3.5:9b"
     assert ai.resolve_model(AiSettings()) == "qwen3.5:9b"
     assert ai.resolve_model(AiSettings(model="gemma4:12b")) == "gemma4:12b"
 
 
 def test_thinking_is_what_the_developers_chose_else_what_the_bot_was_configured_with():
-    ai = local_ai(think=False)
+    ai = ai_service(think=False)
     assert ai.configured_think is False and ai.resolve_think(AiSettings()) is False
     assert ai.resolve_think(AiSettings(think=ThinkSetting.ON)) is True
     assert ai.resolve_think(AiSettings(think=ThinkSetting.OFF)) is False
     assert ai.resolve_think(AiSettings(think=ThinkSetting.DEFAULT)) is None
-    assert local_ai(think=None).resolve_think(AiSettings()) is None
+    assert ai_service(think=None).resolve_think(AiSettings()) is None
 
 
 def test_a_summary_is_asked_for_with_the_prompt_and_the_transcript_and_counted():
-    http = FakeHttp(answer("Trit is tanking tonight."))
-    ai = local_ai(http)
+    http = FakeHttp(ollama_answer("Trit is tanking tonight."))
+    ai = ai_service(http)
     assert summarize(ai, transcript=CHAT, omitted=3) == "Trit is tanking tonight."
 
     sent = http.requests[0]
@@ -162,8 +133,8 @@ def test_a_summary_is_asked_for_with_the_prompt_and_the_transcript_and_counted()
 
 
 def test_the_model_and_thinking_the_developers_chose_are_used():
-    http = FakeHttp(answer("ok"), answer("ok"), answer("ok"))
-    ai = local_ai(http, think=False)
+    http = FakeHttp(ollama_answer("ok"), ollama_answer("ok"), ollama_answer("ok"))
+    ai = ai_service(http, think=False)
     summarize(ai)
     summarize(ai, settings=AiSettings(model="gemma4:12b", think=ThinkSetting.ON))
     summarize(ai, settings=AiSettings(think=ThinkSetting.DEFAULT))
@@ -177,11 +148,11 @@ def test_thinking_written_into_the_summary_is_left_out_and_a_cut_is_noted():
     http = FakeHttp(
         Response(200, json.dumps({"message": {"content": "<think>x</think>Trit tanks"}, "done_reason": "length", "prompt_eval_count": 50, "eval_count": 9}))
     )
-    assert summarize(local_ai(http)) == f"Trit tanks\n\n{CUT_SHORT_NOTE}"
+    assert summarize(ai_service(http)) == f"Trit tanks\n\n{CUT_SHORT_NOTE}"
 
 
 def test_a_failure_costs_nothing_and_is_kept_for_the_developers():
-    ai = local_ai(FakeHttp(Response(500, '{"error":"overloaded"}'), RequestTimeout("no answer within 240 seconds")))
+    ai = ai_service(FakeHttp(Response(500, '{"error":"overloaded"}'), RequestTimeout("no answer within 240 seconds")))
     for _ in range(2):
         with pytest.raises(Unavailable):
             summarize(ai)
@@ -193,7 +164,7 @@ def test_a_failure_costs_nothing_and_is_kept_for_the_developers():
 
 
 def test_an_answer_without_text_is_a_failure_but_its_tokens_are_counted():
-    ai = local_ai(FakeHttp(Response(200, '{"message": {"content": "<think>still going"}, "done_reason": "length", "eval_count": 4096}')))
+    ai = ai_service(FakeHttp(Response(200, '{"message": {"content": "<think>still going"}, "done_reason": "length", "eval_count": 4096}')))
     with pytest.raises(Unavailable):
         summarize(ai)
     assert 'Some("length")' in ai.failure_report()[1][0].detail
@@ -202,7 +173,7 @@ def test_an_answer_without_text_is_a_failure_but_its_tokens_are_counted():
 
 def test_the_server_is_checked():
     tags = Response(200, '{"models":[{"name":"qwen3.5:9b","model":"qwen3.5:9b","size":6600000000}]}')
-    ai = local_ai(FakeHttp(tags, tags, RequestTimeout("x"), tags, RequestTimeout("x")))
+    ai = ai_service(FakeHttp(tags, tags, RequestTimeout("x"), tags, RequestTimeout("x")))
     assert run(ai.check_model("qwen3.5:9b")) == CheckOk(True)
     assert run(ai.check_model("qwen3.5:27b")) == CheckOk(False)
     assert isinstance(run(ai.check_model("qwen3.5:9b")), Unreachable)
@@ -255,14 +226,14 @@ def test_an_api_error_is_reduced_to_its_message():
 
 
 def test_the_day_is_counted_for_everybody_together():
-    ai = local_ai()
+    ai = ai_service()
     assert ai.daily_usage() == (0, 100)
     ai.daily_limiter.check(EVERYBODY, 0.0)
     assert ai.daily_usage()[1] == 100
 
 
 def test_usage_and_failures_are_reported():
-    ai = local_ai()
+    ai = ai_service()
     assert ai.usage_report().since_start == [] and ai.failure_report() == (0, [])
     ai.token_usage.record("model", 100, 20, 0.0)
     ai.failures.record(5, "boom")
@@ -271,7 +242,7 @@ def test_usage_and_failures_are_reported():
 
 
 def test_a_channel_summarized_is_held_for_an_hour():
-    ai = local_ai()
+    ai = ai_service()
     assert ai.start_tldr(1) == TldrReady()
     assert ai.start_tldr(1) == TldrBusy()
     ai.cancel_tldr(1)
@@ -279,3 +250,42 @@ def test_a_channel_summarized_is_held_for_an_hour():
     ai.finish_tldr(1, "link", 5)
     waiting = ai.start_tldr(1)
     assert isinstance(waiting, TldrWait) and waiting.posted_unix == 5
+
+
+# --- /ai status and /ai check ---
+
+
+def test_the_check_finds_missing_everyone_and_shared_roles():
+    from gulp_bot.schema.ai_schema import Finding
+    from gulp_bot.service.ai_diagnostics_service import role_findings
+
+    settings = GuildSettings(raider_role_id=10, mod_role_id=1, dev_role_id=10)
+    findings = role_findings(settings, guild_id=1, existing_role_ids={10})
+    assert (Finding.GOOD, "Raider role: <@&10> exists") in findings
+    assert (Finding.BAD, "Moderator (Officer) role: `@everyone` is registered, which would be everybody") in findings
+    assert findings[-1][0] is Finding.BAD and "not only developers" in findings[-1][1]
+    # The trial role is optional: not registering it is fine.
+    assert not any("Trial role" in text for _, text in findings)
+
+
+def test_the_check_reports_the_model_server_and_the_switches():
+    from gulp_bot.mapper.ai_admin_mapper import check_text
+    from gulp_bot.schema.ai_schema import Finding
+    from gulp_bot.service.ai_diagnostics_service import model_finding, state_findings
+
+    assert model_finding("m", CheckOk(True))[0] is Finding.GOOD
+    assert "ollama pull m" in model_finding("m", CheckOk(False))[1]
+    assert "couldn't be reached: down" in model_finding("m", Unreachable("down"))[1]
+    findings = state_findings(GuildSettings(ai=AiSettings(disabled=True)), 100, 100, 1, [ApiFailure(5, "boom")])
+    assert [finding for finding, _ in findings] == [Finding.WARNING, Finding.BAD, Finding.WARNING]
+    assert check_text(findings).endswith("**3 thing(s) to look at.**")
+    assert check_text([(Finding.GOOD, "fine")]) == "**AI features check**\n✅ fine\n\n**Nothing to fix.**"
+
+
+def test_the_status_says_what_was_changed_from_the_configuration():
+    from gulp_bot.mapper.ai_admin_mapper import status_text
+
+    text = status_text(AiSettings(maintenance=True, model="gemma"), "gemma", "qwen", False, False, 3, 100, 0, [])
+    assert "maintenance mode" in text and "`gemma`" in text and "configured with `qwen`" in text
+    assert text.endswith("No failures since the bot started.")
+    assert status_text(AiSettings(), "qwen", "qwen", None, None, 0, 100, 2, [ApiFailure(5, "boom")]).endswith("• <t:5:R>: boom")

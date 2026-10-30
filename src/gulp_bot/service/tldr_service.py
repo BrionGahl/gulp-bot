@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from ..core.schedule_parsing import NEW_YORK
-from ..core.text import ascii_lower, single_line, truncate_chars
-from ..schema.ai_schema import TldrBusy, TldrCooldown, TldrReady, TldrWait, TranscriptLine
+from ..core.text import ascii_lower, clean_line, single_line, truncate_chars
+from ..schema.ai_schema import PromptSpec, TldrBusy, TldrCooldown, TldrReady, TldrWait, TranscriptLine
 
 # How far back a summary reaches: the last 4 hours.
 WINDOW_SECS = 4 * 60 * 60
@@ -54,6 +54,8 @@ The conversation comes in the user message between <conversation> tags, one mess
 # to what was written and to the format asked for; not 0, at which small models tend to repeat themselves.
 TEMPERATURE = 0.3
 
+SPEC = PromptSpec(SYSTEM_PROMPT, TEMPERATURE)
+
 # Put after a summary that ran out of tokens, so the member knows it isn't all there.
 CUT_SHORT_NOTE = "_(This summary was cut short.)_"
 
@@ -77,7 +79,7 @@ def transcript(lines: list[TranscriptLine], max_chars: int = MAX_TRANSCRIPT_CHAR
     """The conversation as text for the model, one `[time] author: text` line per message, each on one line
     and cut to length. If it all doesn't fit in `max_chars`, the oldest lines are left out; returns how many
     were."""
-    rendered = [f"[{line.time}] {single_line(line.author)}: {single_line(truncate_chars(line.text, MAX_LINE_CHARS))}" for line in lines]
+    rendered = [f"[{line.time}] {single_line(line.author)}: {clean_line(line.text, MAX_LINE_CHARS)}" for line in lines]
 
     # The newest lines are kept first, then as many older ones as fit.
     kept = 0

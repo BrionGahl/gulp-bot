@@ -23,8 +23,9 @@ def on_message_edited(services: Services, payload: discord.RawMessageUpdateEvent
 
 
 async def on_message_deleted(services: Services, payload: discord.RawMessageDeleteEvent) -> None:
+    # Separate tasks: the two are unrelated, and one failing mustn't stop the other.
+    services.tasks.spawn(officer_channel_resource.on_message_deleted(services, payload))
     await services.message_replay.replay_if_self_deleted(payload.message_id, payload.guild_id)
-    await officer_channel_resource.on_message_deleted(services, payload)
 
 
 def on_messages_bulk_deleted(services: Services, payload: discord.RawBulkMessageDeleteEvent) -> None:

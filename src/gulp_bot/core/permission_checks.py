@@ -15,15 +15,13 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from .discord_context import GulpContext, slash_context
+from .discord_context import ONLY_FOR_DEVELOPERS, ONLY_FOR_RAIDERS, ONLY_IN_A_SERVER, GulpContext, services_of, slash_context
 from .discord_helpers import member_is_administrator, role_ids
 
 log = logging.getLogger(__name__)
 
 Check = Callable[[GulpContext], Coroutine[Any, Any, bool]]
 T = TypeVar("T")
-
-ONLY_IN_A_SERVER = "This command is only available in a server."
 
 
 async def _deny(ctx: GulpContext, reason: str) -> bool:
@@ -56,7 +54,7 @@ async def check_is_raider(ctx: GulpContext) -> bool:
     if not allowed_roles:
         return await _deny(ctx, "No raider roles are registered for this server. An administrator or moderator can set them with `/settings`.")
     if not any(_holds(ctx, role) for role in allowed_roles):
-        return await _deny(ctx, "This command is only available to raiders.")
+        return await _deny(ctx, ONLY_FOR_RAIDERS)
     return True
 
 
@@ -100,7 +98,7 @@ async def check_is_developer(ctx: GulpContext) -> bool:
         return await _deny(ctx, "No developer role is registered for this server. An administrator can set one with `/settings dev_role`.")
     if not is_developer(ctx, guild_id):
         log.warning("Refused %s (%s) a developer command in guild %s", ctx.author.id, ctx.author.name, guild_id)
-        return await _deny(ctx, "This command is only available to developers.")
+        return await _deny(ctx, ONLY_FOR_DEVELOPERS)
     return True
 
 
@@ -130,7 +128,7 @@ def interaction_is_admin_or_moderator(interaction: discord.Interaction) -> bool:
     guild_id = interaction.guild_id
     if guild_id is None:
         return False
-    mod_role_id = interaction.client.services.guild_settings.get(guild_id).mod_role_id  # type: ignore[attr-defined]
+    mod_role_id = services_of(interaction).guild_settings.get(guild_id).mod_role_id
     return interaction.permissions.administrator or (mod_role_id is not None and mod_role_id in role_ids(interaction.user))
 
 
@@ -139,7 +137,7 @@ def interaction_is_developer(interaction: discord.Interaction) -> bool:
     guild_id = interaction.guild_id
     if guild_id is None:
         return False
-    dev_role_id = interaction.client.services.guild_settings.get(guild_id).dev_role_id  # type: ignore[attr-defined]
+    dev_role_id = services_of(interaction).guild_settings.get(guild_id).dev_role_id
     return dev_role_id is not None and dev_role_id in role_ids(interaction.user)
 
 

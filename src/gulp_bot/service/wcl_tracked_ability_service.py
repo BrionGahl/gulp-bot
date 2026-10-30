@@ -2,17 +2,9 @@
 
 from __future__ import annotations
 
-from ..core.text import ascii_lower
+from ..core.text import same_name
 from ..repository.wcl_tracked_ability_repository import TrackedAbilityRepository
-from ..schema.wcl_settings_schema import TrackAbilityOutcome, TrackAbilityResult, TrackedAbility
-
-# The most abilities one server can track. Each is a query to the Warcraft Logs API and a field of the
-# overview embed, which has a size limit of its own.
-MAX_TRACKED = 6
-
-# The longest name an officer can give an ability: it is a field title in the overview, and Discord allows
-# 256 characters there.
-MAX_NAME_CHARS = 100
+from ..schema.wcl_settings_schema import MAX_TRACKED, TrackAbilityOutcome, TrackAbilityResult, TrackedAbility
 
 
 class TrackedAbilityService:
@@ -30,7 +22,7 @@ class TrackedAbilityService:
         already_tracked = any(ability.ability_id == ability_id for ability in tracked)
 
         for other in tracked:
-            if other.ability_id != ability_id and ascii_lower(other.name) == ascii_lower(name):
+            if other.ability_id != ability_id and same_name(other.name, name):
                 return TrackAbilityResult(TrackAbilityOutcome.NAME_TAKEN, other.ability_id)
         if not already_tracked and len(tracked) >= MAX_TRACKED:
             return TrackAbilityResult(TrackAbilityOutcome.FULL)

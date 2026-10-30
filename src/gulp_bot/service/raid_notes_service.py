@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 import discord
 
 from ..core.cron import Schedule
+from ..core.raid_week import week_end, week_start
 from ..repository.raid_notes_post_repository import RaidNotesPostRepository
 from ..schema.guild_settings_schema import GuildSettings
 from ..schema.raid_notes_schema import WeekThread
-from .raid_nights_service import week_start as raid_week_start
 
 log = logging.getLogger(__name__)
 
@@ -24,15 +24,9 @@ DEFAULT_RAID_NOTES_SCHEDULE = Schedule.parse("0 0 9 * * Fri *")
 STARTER_MESSAGE = "Raid notes for this week go here."
 
 
-# The Tuesday on or before a day, which is what identifies a week's thread. Raid weeks run Tuesday (the
-# game's weekly reset) to Monday, so a Tuesday always starts a new week and a Monday belongs to the week
-# that began six days earlier.
-week_start = raid_week_start
-
-
 def week_title(day: date) -> str:
     tuesday = week_start(day)
-    monday = tuesday + timedelta(days=6)
+    monday = week_end(tuesday)
     return f"Week of {tuesday:%b} {tuesday.day} - {monday:%b} {monday.day}"
 
 

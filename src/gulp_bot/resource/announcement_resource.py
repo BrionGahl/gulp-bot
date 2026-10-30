@@ -9,7 +9,7 @@ from __future__ import annotations
 import discord
 from discord import app_commands
 
-from ..core.discord_context import slash_context
+from ..core.discord_context import guild_context
 from ..core.discord_helpers import NO_MENTIONS
 from ..core.embed import command_embed, to_discord_embed
 from ..core.permission_checks import check_is_moderator, slash_check
@@ -61,10 +61,7 @@ meta(announcement, category="Announcements", help_text="Slash commands only. Ann
     time="Time of day to post at (Eastern), e.g. 12pm or 12:00",
 )
 async def add(interaction: discord.Interaction, channel: discord.TextChannel, days: str, time: str) -> None:
-    ctx = await slash_context(interaction)
-    guild_id = ctx.guild_id
-    if guild_id is None:
-        return
+    ctx, guild_id = await guild_context(interaction)
     announcements = ctx.services.announcements
 
     # Everything that can be rejected is checked before the modal opens, so nobody writes out a message only
@@ -99,10 +96,7 @@ async def add(interaction: discord.Interaction, channel: discord.TextChannel, da
 @announcement.command(name="list", description="List this server's scheduled announcements")
 @slash_check(check_is_moderator)
 async def list_announcements(interaction: discord.Interaction) -> None:
-    ctx = await slash_context(interaction)
-    guild_id = ctx.guild_id
-    if guild_id is None:
-        return
+    ctx, guild_id = await guild_context(interaction)
 
     scheduled = await ctx.services.announcements.list_for_guild(guild_id)
     if not scheduled:
@@ -118,10 +112,7 @@ async def list_announcements(interaction: discord.Interaction) -> None:
 @slash_check(check_is_moderator)
 @app_commands.describe(id="Announcement number, from /announcement list")
 async def delete(interaction: discord.Interaction, id: int) -> None:
-    ctx = await slash_context(interaction)
-    guild_id = ctx.guild_id
-    if guild_id is None:
-        return
+    ctx, guild_id = await guild_context(interaction)
     if await ctx.services.announcements.delete(guild_id, id):
         await reply(ctx, f"Announcement **#{id}** deleted.")
     else:
@@ -132,10 +123,7 @@ async def delete(interaction: discord.Interaction, id: int) -> None:
 @slash_check(check_is_moderator)
 @app_commands.describe(id="Announcement number, from /announcement list")
 async def post(interaction: discord.Interaction, id: int) -> None:
-    ctx = await slash_context(interaction)
-    guild_id = ctx.guild_id
-    if guild_id is None:
-        return
+    ctx, guild_id = await guild_context(interaction)
     entry = await ctx.services.announcements.find(guild_id, id)
     if entry is None:
         await reply(ctx, f"This server has no announcement **#{id}**.")

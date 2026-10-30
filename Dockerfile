@@ -31,4 +31,7 @@ RUN useradd --system --no-create-home gulp
 USER gulp
 
 EXPOSE 8080
+# The health listener (`core/health_server.py`) answers once the bot is running. The slim image has no curl.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080', timeout=3)"]
 CMD ["python", "-m", "gulp_bot"]

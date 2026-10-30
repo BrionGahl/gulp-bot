@@ -13,17 +13,24 @@ absence has to be on days the bot can read, ahead, and cover a raid night.
 from __future__ import annotations
 
 import json
+import logging
 import re
+from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
-from ..core.schedule_parsing import DAY_NAMES, parse_span
-from ..core.text import single_line, truncate_chars
+from ..core.schedule_parsing import DAY_NAMES, now_in_new_york, parse_span
+from ..core.text import clean_line, truncate_chars
+from ..exception.ai_exception import AiError
 from ..exception.schedule_exception import ScheduleProblem
-from ..schema.absence_schema import AbsenceKind, DetectedAbsence, Detection, NoteCategory
-from ..schema.guild_settings_schema import RaidNights
-from .absence_service import span_problem
-from .raid_nights_service import nights_between
+from ..schema.absence_schema import Absence, AbsenceKind, DetectedAbsence, Detection, NewAbsence, NewChannelNote, NoteCategory, OfficerChannelOwner
+from ..schema.ai_schema import PromptSpec
+from ..schema.guild_settings_schema import RaidNight, RaidNights
+from .absence_service import AbsenceService, nothing_to_miss, span_problem
+from .ai_service import AiService
+from .guild_settings_service import GuildSettingsService
+
+log = logging.getLogger(__name__)
 
 # The most of a message that is sent to the model.
 MAX_MESSAGE_CHARS = 1000
@@ -93,6 +100,8 @@ RESPONSE_SCHEMA: dict[str, Any] = {
     "required": ["absence", "topics"],
 }
 
+SPEC = PromptSpec(SYSTEM_PROMPT, TEMPERATURE, RESPONSE_SCHEMA)
+
 NOTHING = Detection(absence=None, unclear_absence=False, notes=[])
 
 
@@ -124,7 +133,7 @@ def _span(words: Any, today: date) -> tuple[date, date] | None:
 def _text(value: Any, max_chars: int) -> str | None:
     if not isinstance(value, str):
         return None
-    cleaned = truncate_chars(single_line(value), max_chars)
+    cleaned = clean_line(value, max_chars)
     return cleaned or None
 
 
@@ -163,8 +172,60 @@ def read_detection(answer: str, today: date, nights: RaidNights | None) -> Detec
         last = last_span[1]
     if span_problem(first, last, today) is not None:
         return Detection(absence=None, unclear_absence=True, notes=notes)
-    if nights is not None and not nights_between(nights, first, last):
+    if nothing_to_miss(nights, first, last):
         return Detection(absence=None, unclear_absence=False, notes=notes)
 
     absence = DetectedAbsence(first, last, AbsenceKind(found["kind"]), _text(found.get("note"), MAX_ABSENCE_NOTE_CHARS))
     return Detection(absence=absence, unclear_absence=False, notes=notes)
+
+
+@dataclass(frozen=True)
+class ReadMessage:
+    """What reading a member's message recorded, for the reply."""
+
+    # The absence recorded, and the raid nights it covers (`None` if the guild has none registered).
+    absence: Absence | None
+    nights: list[RaidNight] | None
+    # An absence the bot couldn't place: the member is asked to use `/absence add`.
+    unclear_absence: bool
+
+
+class TriageService:
+    """Reads messages in personal officer channels and records what they say: an absence, and notes for the
+    officer digest."""
+
+    def __init__(self, ai: AiService, absences: AbsenceService, guild_settings: GuildSettingsService):
+        self._ai = ai
+        self._absences = absences
+        self._guild_settings = guild_settings
+
+    async def read(self, owner: OfficerChannelOwner, channel_id: int, message_id: int, text: str) -> ReadMessage | None:
+        """Has the model read `text`, the owner's message `message_id` in their channel, and records what it
+        says. `None` if the message wasn't read: it can't say anything the officers need, or the model gave
+        no answer (the AI features are off, or it couldn't be reached)."""
+        if not worth_asking(text):
+            return None
+        settings = self._guild_settings.get(owner.guild_id)
+        today = now_in_new_york().date()
+        try:
+            answer, cut_short = await self._ai.generate(settings.ai, SPEC, triage_request(text, today))
+        except AiError as e:
+            log.info("Didn't read message %s in a personal officer channel: %s", message_id, e.reason)
+            return None
+        if cut_short:
+            # JSON that was cut off doesn't parse, so nothing is recorded from it.
+            log.warning("The model ran out of tokens reading message %s; nothing was recorded from it", message_id)
+        detection = read_detection(answer, today, settings.raid_nights)
+
+        if detection.notes:
+            notes = [NewChannelNote(owner.guild_id, owner.user_id, channel_id, message_id, category, summary) for category, summary in detection.notes]
+            await self._absences.add_notes(owner.guild_id, notes)
+            log.info("Noted %d topic(s) from message %s of %s for the officers", len(notes), message_id, owner.user_id)
+
+        found = detection.absence
+        if found is None:
+            return ReadMessage(absence=None, nights=None, unclear_absence=detection.unclear_absence)
+        stored = await self._absences.add(
+            NewAbsence(owner.guild_id, owner.user_id, found.start, found.end, found.kind, found.note, owner.user_id, source_message_id=message_id)
+        )
+        return ReadMessage(absence=stored, nights=self._absences.nights_covered(owner.guild_id, found.start, found.end), unclear_absence=False)

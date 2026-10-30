@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .database import Connection
 from .paths import MIGRATIONS_DIR
 
 if TYPE_CHECKING:
@@ -97,7 +98,7 @@ async def run_migrations(pool: asyncpg.Pool, migrations: list[Migration] | None 
             await connection.execute("SELECT pg_advisory_unlock($1)", lock)
 
 
-async def _create_migrations_table(connection: asyncpg.Connection) -> None:
+async def _create_migrations_table(connection: Connection) -> None:
     await connection.execute(
         """
         CREATE TABLE IF NOT EXISTS _sqlx_migrations (
@@ -115,7 +116,7 @@ async def _create_migrations_table(connection: asyncpg.Connection) -> None:
         raise MigrationError(f"Migration {dirty} was partially applied; fix the database and delete its row in _sqlx_migrations.")
 
 
-async def _applied_checksums(connection: asyncpg.Connection) -> dict[int, bytes]:
+async def _applied_checksums(connection: Connection) -> dict[int, bytes]:
     rows = await connection.fetch("SELECT version, checksum FROM _sqlx_migrations ORDER BY version")
     return {row["version"]: bytes(row["checksum"]) for row in rows}
 
@@ -130,7 +131,7 @@ def _refuse_unsafe_database(applied: dict[int, bytes], migrations: list[Migratio
             raise MigrationError(f"Migration {migration.version} was previously applied but has been modified.")
 
 
-async def _apply(connection: asyncpg.Connection, migration: Migration) -> None:
+async def _apply(connection: Connection, migration: Migration) -> None:
     started = time.monotonic_ns()
     async with connection.transaction():
         await connection.execute(migration.sql)

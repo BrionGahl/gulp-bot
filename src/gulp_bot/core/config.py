@@ -23,6 +23,16 @@ LOG_LEVELS = {
 }
 
 
+# What an unset variable means.
+DEFAULT_BOT_NAME = "gulp-bot"
+DEFAULT_LOG_LEVEL = "INFO"
+DEFAULT_AI_DAILY_LIMIT = 100
+# The Ollama server docker-compose.ollama.yml runs next to the bot.
+DEFAULT_LOCAL_MODEL_URL = "http://ollama:11434"
+# Fits a 12 GB GPU (see the README, "Requirements").
+DEFAULT_LOCAL_MODEL = "qwen3.5:9b"
+
+
 class ConfigError(Exception):
     """An environment variable is missing or can't be read. The message says which."""
 
@@ -34,12 +44,12 @@ class Config:
     # Postgres connection URL for the database holding per-guild settings. Holds the password.
     database_url: str = field(repr=False)
     log_level: int
-    # The most requests the AI features (`/tldr`) send the model in 24 hours, from everybody together: what
-    # keeps the GPU from being kept busy. Default 100.
+    # The most requests the AI features send the model in 24 hours, from everybody together: what keeps the
+    # GPU from being kept busy.
     ai_daily_limit: int
-    # Where the Ollama server that runs the model listens. Default: `http://ollama:11434`.
+    # Where the Ollama server that runs the model listens.
     local_model_url: str
-    # The model Ollama runs. Default: `qwen3.5:9b`.
+    # The model Ollama runs.
     local_model: str
     # Whether the local model "thinks" before it answers (`think` in Ollama's API). Default `False`:
     # thinking makes answers slower without making them better. `None` sends nothing and leaves
@@ -61,13 +71,13 @@ class Config:
             value = env.get(name, "").strip()
             return value or None
 
-        log_level_name = env.get("LOG_LEVEL", "INFO")
+        log_level_name = env.get("LOG_LEVEL", DEFAULT_LOG_LEVEL)
         if log_level_name.strip().lower() not in LOG_LEVELS:
             raise ConfigError("Failed to parse `LOG_LEVEL` env variable. Valid values: TRACE, DEBUG, INFO, WARN, ERROR")
 
         daily_limit = optional("AI_DAILY_LIMIT")
         if daily_limit is None:
-            ai_daily_limit = 100
+            ai_daily_limit = DEFAULT_AI_DAILY_LIMIT
         elif daily_limit.isascii() and daily_limit.isdigit():
             ai_daily_limit = int(daily_limit)
         else:
@@ -75,12 +85,12 @@ class Config:
 
         return cls(
             discord_token=required("DISCORD_TOKEN"),
-            bot_name=env.get("BOT_NAME", "gulp-bot"),
+            bot_name=env.get("BOT_NAME", DEFAULT_BOT_NAME),
             database_url=required("DATABASE_URL"),
             log_level=LOG_LEVELS[log_level_name.strip().lower()],
             ai_daily_limit=ai_daily_limit,
-            local_model_url=optional("LOCAL_MODEL_URL") or "http://ollama:11434",
-            local_model=optional("LOCAL_MODEL") or "qwen3.5:9b",
+            local_model_url=optional("LOCAL_MODEL_URL") or DEFAULT_LOCAL_MODEL_URL,
+            local_model=optional("LOCAL_MODEL") or DEFAULT_LOCAL_MODEL,
             local_model_think=parse_think(optional("LOCAL_MODEL_THINK")),
         )
 

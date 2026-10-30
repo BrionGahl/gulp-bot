@@ -1,11 +1,13 @@
 """`/wcl damage_window`: the damage done to each tracked enemy in a moment of a pull."""
 
 import asyncio
-import json
 import re
+from json import dumps
+from typing import Any
 
 import pytest
 
+from fakes import token_response
 from gulp_bot.client.warcraft_logs_client import (
     ACTORS_QUERY,
     ALL_DAMAGE_DONE_QUERY,
@@ -16,7 +18,7 @@ from gulp_bot.client.warcraft_logs_client import (
 )
 from gulp_bot.core.embed import MAX_EMBED_CHARS, MAX_FIELD_CHARS
 from gulp_bot.core.http_client import Response
-from gulp_bot.core.text import pull_time
+from gulp_bot.core.text import pull_time, same_name
 from gulp_bot.exception.warcraft_logs_exception import WarcraftLogsError
 from gulp_bot.mapper.warcraft_logs_embed_mapper import WINDOW_DAMAGE_SHOWN, window_damage_embed, window_url
 from gulp_bot.mapper.warcraft_logs_response_mapper import actors_from_data
@@ -32,7 +34,6 @@ from gulp_bot.service.warcraft_logs_analysis_service import (
     select_pull,
 )
 from gulp_bot.service.warcraft_logs_service import WarcraftLogsService
-from gulp_bot.service.wcl_tracked_enemy_service import same_enemy
 
 
 def fight(fight_id, name, start, end, kill=False, in_progress=False):
@@ -77,7 +78,7 @@ def test_the_last_finished_pull_of_the_boss_is_the_default():
 
 
 def test_a_pull_that_isnt_there_or_a_boss_name_that_fits_two_bosses_is_refused():
-    with pytest.raises(WarcraftLogsError, match="has 2 Mythic pulls of Nexus-King Salhadaar. Pick one from 1 to 2"):
+    with pytest.raises(WarcraftLogsError, match=re.escape("has 2 Mythic pulls of Nexus-King Salhadaar. Pick one from 1 to 2")):
         select_pull(FIGHTS, "nexus", 3)
     with pytest.raises(WarcraftLogsError, match="matches more than one boss: Nexus-King Salhadaar, Plexus Sentinel"):
         select_pull(FIGHTS, "xus", None)
@@ -108,7 +109,7 @@ def test_an_empty_window_or_one_after_the_pull_is_refused():
 def test_enemies_with_the_same_name_count_as_one_and_names_ignore_case():
     actors = [Actor(10, "Sporecaller"), Actor(11, "Nexus-King Salhadaar"), Actor(12, "sporecaller"), Actor(13, "Sporecaller"), Actor(10, "Sporecaller")]
     assert enemy_targets(actors, ["SPORECALLER ", "Nexus-King Salhadaar", "Dimensius"]) == [[10, 12, 13], [11], []]
-    assert same_enemy("Sporecaller", " sporecaller") and not same_enemy("Sporecaller", "Spore caller")
+    assert same_name("Sporecaller", " sporecaller") and not same_name("Sporecaller", "Spore caller")
 
 
 def test_the_damage_to_an_enemy_is_added_over_every_one_of_that_name():
@@ -143,17 +144,14 @@ class DamageDoneApi:
     def __init__(self):
         self.queries = []
 
-    async def request(self, method, url, *, timeout, headers=None, json=None, form=None, basic_auth=None):
+    async def request(self, method, url, *, timeout, headers=None, json: dict[str, Any] | None = None, form=None, basic_auth=None):
         if url.endswith("/oauth/token"):
-            return Response(200, '{"access_token":"test","expires_in":3600}')
+            return token_response()
+        assert json is not None, "a GraphQL query is always sent as JSON"
         self.queries.append(json)
         aliases = re.findall(r"\bt([0-9]+): table", json["query"])
         tables = {f"t{alias}": {"data": {"entries": [{"name": "Aaron", "type": "Mage", "total": 100 + int(alias)}]}} for alias in aliases}
-        return Response(200, _dumps({"data": {"reportData": {"report": tables}}}))
-
-
-def _dumps(value):
-    return json.dumps(value)
+        return Response(200, dumps({"data": {"reportData": {"report": tables}}}))
 
 
 def test_damage_done_is_asked_for_one_pull_between_two_moments_in_chunks():
@@ -177,7 +175,7 @@ class FakeClient:
         self.asked = None
 
     async def fetch_report(self, code):
-        return Report(code, "Raid night", 1_791_506_660_309.0, FIGHTS)
+        return Report(code, "Raid night", 1_791_506_660_309.0, tuple(FIGHTS))
 
     async def fetch_enemies(self, code):
         return self.actors

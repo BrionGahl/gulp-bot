@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import enum
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -11,15 +10,17 @@ from dataclasses import dataclass
 import discord
 from discord import app_commands
 
-from ..core.discord_context import GulpContext, slash_context
+from ..core.discord_context import ONLY_FOR_DEVELOPERS, GulpContext, guild_context, services_of
 from ..core.permission_checks import check_is_developer, interaction_is_developer, is_developer, slash_check
 from ..exception.ai_exception import ModelNameProblem
+from ..mapper.ai_admin_mapper import check_text, status_text
 from ..mapper.ai_usage_mapper import describe_think, usage_lines
 from ..schema.ai_schema import CheckOk, Unreachable
 from ..schema.guild_settings_schema import AiSettings, ThinkSetting
+from ..service.ai_diagnostics_service import model_finding, role_findings, state_findings
 from ..service.ai_model_catalog_service import normalize_model_name
 from ..service.ai_service import AiService
-from .resource_support import filter_choices, meta, reply_in_chunks
+from .resource_support import filter_choices, meta, reply, reply_in_chunks
 
 log = logging.getLogger(__name__)
 
@@ -30,14 +31,6 @@ THINK_CHOICES = [
     app_commands.Choice(name="Off", value=ThinkSetting.OFF.value),
     app_commands.Choice(name="Left to the model (send nothing)", value=ThinkSetting.DEFAULT.value),
 ]
-
-
-class Finding(enum.Enum):
-    """How a line of `/ai check` reads."""
-
-    GOOD = "✅"
-    WARNING = "⚠️"
-    BAD = "❌"
 
 
 # Every subcommand carries the check, and checks the role again for itself in `start_developer_command`,
@@ -68,12 +61,9 @@ async def start_developer_command(interaction: discord.Interaction, action: str)
     """Confirms the invoker holds the developer role (the check has already said so, but these commands are
     too powerful to rely on that alone), writes the use to the log, and hands back what the command needs.
     Tells the invoker and returns `None` if there is nothing to do."""
-    ctx = await slash_context(interaction)
-    guild_id = ctx.guild_id
-    if guild_id is None:
-        return None
+    ctx, guild_id = await guild_context(interaction)
     if not is_developer(ctx, guild_id):
-        await reply_in_chunks(ctx, "This command is only available to developers.")
+        await reply(ctx, ONLY_FOR_DEVELOPERS)
         return None
 
     log.info("audit: %s (%s) used /ai %s in guild %s", ctx.author.id, ctx.author.name, action, guild_id)
@@ -105,30 +95,11 @@ async def ai_status(interaction: discord.Interaction) -> None:
         return
     ai = command.ai
     settings = command.ctx.services.guild_settings.get(command.guild_id).ai
-    model = ai.resolve_model(settings)
-
-    if settings.disabled:
-        state = "**off**: nobody can use them"
-    elif settings.maintenance:
-        state = "**on, in maintenance mode**: only Officers and Developers can use them"
-    else:
-        state = "**on**"
-    model_note = f"set with `/ai model`; the bot was configured with `{ai.configured_model}`" if settings.model is not None else "as configured"
-    think_note = f"set with `/ai think`; the bot was configured with {describe_think(ai.configured_think)}" if settings.think is not None else "as configured"
     answered, limit = ai.daily_usage()
     failure_total, failures = ai.failure_report()
-
-    text = (
-        f"**AI features**\nState: {state}\nModel: `{model}`, runs locally, through Ollama ({model_note})\n"
-        f"Thinking: {describe_think(ai.resolve_think(settings))} ({think_note})\n"
-        f"Requests answered in the last 24 hours: {answered} of {limit}\n"
+    text = status_text(
+        settings, ai.resolve_model(settings), ai.configured_model, ai.resolve_think(settings), ai.configured_think, answered, limit, failure_total, failures
     )
-    if not failures:
-        text += "No failures since the bot started."
-    else:
-        text += f"Failures since the bot started: {failure_total}. The latest:"
-        for failure in failures:
-            text += f"\n• <t:{failure.at_unix}:R>: {failure.detail}"
     await reply_in_chunks(command.ctx, text)
 
 
@@ -170,7 +141,7 @@ async def ai_usage(interaction: discord.Interaction) -> None:
 async def autocomplete_model(interaction: discord.Interaction, partial: str) -> list[app_commands.Choice[str]]:
     """The models offered while a developer types one: the ones installed on the server. Autocomplete runs
     no checks, so developers are checked here."""
-    ai: AiService = interaction.client.services.ai  # type: ignore[attr-defined]
+    ai: AiService = services_of(interaction).ai
     models: list[str] = []
     if interaction_is_developer(interaction):
         models = await ai.installed_models()
@@ -270,59 +241,15 @@ async def ai_check(interaction: discord.Interaction) -> None:
 
     settings = ctx.services.guild_settings.get(guild_id)
     model = ai.resolve_model(settings.ai)
-    findings: list[tuple[Finding, str]] = []
-
-    # The registered roles have to exist in this server, or they grant nobody anything.
     existing = await ctx.services.guild_validation.existing_role_ids(guild_id)
-    roles = [
-        ("Raider role", settings.raider_role_id, True),
-        ("Moderator (Officer) role", settings.mod_role_id, True),
-        ("Developer role", settings.dev_role_id, True),
-        ("Trial role", settings.trial_role_id, False),
-    ]
-    for label, role_id, needed in roles:
-        if role_id is not None and role_id == guild_id:
-            findings.append((Finding.BAD, f"{label}: `@everyone` is registered, which would be everybody"))
-        elif role_id is not None and role_id in existing:
-            findings.append((Finding.GOOD, f"{label}: <@&{role_id}> exists"))
-        elif role_id is not None:
-            findings.append((Finding.BAD, f"{label}: <@&{role_id}> is registered but no longer exists in this server"))
-        elif needed:
-            findings.append((Finding.WARNING, f"{label}: not registered"))
-    if settings.dev_role_id is not None and settings.dev_role_id in (settings.mod_role_id, settings.raider_role_id, settings.trial_role_id):
-        findings.append((Finding.BAD, "The developer role is also registered as another role, so its holders are not only developers"))
-
-    check = await ai.check_model(model)
-    if isinstance(check, CheckOk) and check.model_listed:
-        findings.append((Finding.GOOD, f"The local model server answers and has `{model}` installed; nothing leaves it"))
-    elif isinstance(check, CheckOk):
-        findings.append(
-            (
-                Finding.BAD,
-                f"The local model server answers, but doesn't have `{model}`: answers will fail. Install it there with `ollama pull {model}`, or change it with `/ai model`",
-            )
-        )
-    else:
-        findings.append((Finding.BAD, f"The local model server couldn't be reached: {check.problem}. Is the Ollama container up, and on the bot's network?"))
-
-    if settings.ai.disabled:
-        findings.append((Finding.WARNING, "The AI features are off (`/ai on`)"))
-    if settings.ai.maintenance:
-        findings.append((Finding.WARNING, "The AI features are in maintenance mode (`/ai maintenance`)"))
     answered, limit = ai.daily_usage()
-    if answered >= limit:
-        findings.append((Finding.BAD, f"The limit for the last 24 hours is reached: {answered} of {limit}"))
-    else:
-        findings.append((Finding.GOOD, f"Requests answered in the last 24 hours: {answered} of {limit}"))
     failure_total, failures = ai.failure_report()
-    if failures:
-        latest = failures[0]
-        findings.append((Finding.WARNING, f"{failure_total} failure(s) since the bot started; the latest <t:{latest.at_unix}:R>: {latest.detail}"))
-
-    problems = sum(1 for finding, _ in findings if finding is not Finding.GOOD)
-    lines = "\n".join(f"{finding.value} {text}" for finding, text in findings)
-    summary = "**Nothing to fix.**" if problems == 0 else f"**{problems} thing(s) to look at.**"
-    await reply_in_chunks(ctx, f"**AI features check**\n{lines}\n\n{summary}")
+    findings = [
+        *role_findings(settings, guild_id, set(existing)),
+        model_finding(model, await ai.check_model(model)),
+        *state_findings(settings, answered, limit, failure_total, failures),
+    ]
+    await reply_in_chunks(ctx, check_text(findings))
 
 
 for _command in ai_group.commands:

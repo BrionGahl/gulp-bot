@@ -11,8 +11,19 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Protocol
 
+from .text import truncate_chars
+
 if TYPE_CHECKING:
     import aiohttp
+
+
+# The most of a response body that goes into an error message: an error page can be a whole HTML document.
+MAX_ERROR_BODY_CHARS = 300
+
+
+def error_body(body: str) -> str:
+    """The start of a response body, for an error message."""
+    return truncate_chars(body, MAX_ERROR_BODY_CHARS)
 
 
 def status_text(code: int) -> str:
@@ -60,10 +71,14 @@ class Http:
 
     def __init__(self) -> None:
         self._session: aiohttp.ClientSession | None = None
+        # Set by `close`: a request after that fails rather than opening a new pool nobody will close.
+        self._closed = False
 
     def _client(self) -> aiohttp.ClientSession:
         import aiohttp
 
+        if self._closed:
+            raise RequestFailed("the HTTP client is closed: the bot is shutting down")
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
         return self._session
@@ -100,5 +115,7 @@ class Http:
             raise RequestFailed(str(e) or type(e).__name__) from None
 
     async def close(self) -> None:
+        self._closed = True
         if self._session is not None:
             await self._session.close()
+            self._session = None

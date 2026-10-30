@@ -36,4 +36,4 @@ class RaidAttendanceRepository:
         )
         if row is None:
             return None
-        return StartSnapshot(from_bigint(row["voice_channel_id"]), row["taken_at"], [from_bigint(user_id) for user_id in row["user_ids"]])
+        return StartSnapshot(from_bigint(row["voice_channel_id"]), row["taken_at"], tuple(from_bigint(user_id) for user_id in row["user_ids"]))

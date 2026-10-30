@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import asyncpg
@@ -11,6 +12,13 @@ if TYPE_CHECKING:
 # the negative number with the same bits (two's complement), and read back from it.
 _U64 = 1 << 64
 _I64_MAX = (1 << 63) - 1
+
+
+# A database row as the mappers read it: by column name.
+Row = Mapping[str, Any]
+
+# A connection to work on: one opened alone, or one taken from the pool (which asyncpg wraps in a proxy).
+type Connection = asyncpg.Connection | asyncpg.pool.PoolConnectionProxy
 
 
 def to_bigint(discord_id: int) -> int:

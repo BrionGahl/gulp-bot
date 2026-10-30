@@ -24,6 +24,20 @@ from ..schema.guild_settings_schema import (
 )
 from .raid_nights_service import end_schedule, start_schedule
 
+# The roles a developer role must not also be: each would hand developer powers to all its holders.
+SHARED_ROLES = (GuildIdSetting.MOD_ROLE, GuildIdSetting.RAIDER_ROLE, GuildIdSetting.TRIAL_ROLE)
+
+
+def role_conflict(settings: GuildSettings, setting: GuildIdSetting, role_id: int) -> str | None:
+    """Why `role_id` can't be registered as `setting`, or `None` if it can: the developer role has to be one
+    only developers hold, whichever of the two is registered second."""
+    shared = {other: getattr(settings, other.column) for other in SHARED_ROLES}
+    if setting is GuildIdSetting.DEV_ROLE and role_id in shared.values():
+        return "That role is registered as the moderator, raider or trial role. Pick a role that only developers hold."
+    if setting in SHARED_ROLES and role_id == settings.dev_role_id:
+        return "That role is registered as the developer role, which only developers may hold. Pick another role."
+    return None
+
 
 class GuildSettingsService:
     def __init__(self, repository: GuildSettingsRepository, cache: dict[int, GuildSettings]):

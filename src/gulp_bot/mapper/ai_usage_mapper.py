@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ..core.text import noun_for
 from ..schema.ai_schema import Tokens
 
 
@@ -26,7 +27,7 @@ def usage_lines(rows: list[tuple[str, Tokens]]) -> str:
 
 def _requests(count: int) -> str:
     """`1 request`, `2 requests`."""
-    return f"{format_count(count)} request{'' if count == 1 else 's'}"
+    return f"{format_count(count)} {noun_for(count, 'request')}"
 
 
 def format_count(count: int) -> str:

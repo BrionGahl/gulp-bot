@@ -13,15 +13,15 @@ from typing import Any
 import discord
 from discord import app_commands
 
-from ..core.discord_context import GulpContext, slash_context
+from ..core.discord_context import GulpContext, guild_context, services_of
 from ..core.discord_helpers import NO_MENTIONS
 from ..core.permission_checks import check_is_raider_or_administrator, interaction_is_admin_or_moderator, is_admin_or_moderator, slash_check
 from ..core.schedule_parsing import now_in_new_york, parse_date
 from ..exception.schedule_exception import ScheduleProblem
 from ..mapper.absence_mapper import absence_text, confirmation, member_list_text
 from ..schema.absence_schema import AbsenceKind, NewAbsence
-from ..service.absence_service import span_problem
-from .resource_support import meta, reply
+from ..service.absence_service import may_manage, nothing_to_miss, span_problem
+from .resource_support import filter_choices, meta, reply
 
 absence = app_commands.Group(name="absence", description="Report, list and take back absences from raid nights", guild_only=True)
 meta(
@@ -63,10 +63,7 @@ async def add(
     note: str | None = None,
     member: discord.Member | None = None,
 ) -> None:
-    ctx = await slash_context(interaction)
-    guild_id = ctx.guild_id
-    if guild_id is None:
-        return
+    ctx, guild_id = await guild_context(interaction)
     user_id = await _target(ctx, guild_id, member)
     if user_id is None:
         return
@@ -83,11 +80,11 @@ async def add(
         await reply(ctx, problem)
         return
     absences = ctx.services.absences
-    nights = absences.nights_covered(guild_id, first, last)
-    if nights is not None and not nights:
+    if nothing_to_miss(ctx.services.guild_settings.get(guild_id).raid_nights, first, last):
         await reply(ctx, "There's no raid night on those days, so there's nothing to miss.")
         return
 
+    nights = absences.nights_covered(guild_id, first, last)
     stored = await absences.add(NewAbsence(guild_id, user_id, first, last, AbsenceKind.TENTATIVE if tentative else AbsenceKind.ABSENT, note, ctx.author.id))
     whose = "" if user_id == ctx.author.id else f"<@{user_id}>: "
     text = confirmation(stored, nights) if nights is not None else f"Noted: {absence_text(stored)}. (Raid nights aren't set for this server yet.)"
@@ -100,9 +97,8 @@ async def autocomplete_absence(interaction: discord.Interaction, partial: str) -
     guild_id = interaction.guild_id
     if guild_id is None:
         return []
-    upcoming = await interaction.client.services.absences.upcoming_for_member(guild_id, interaction.user.id)  # type: ignore[attr-defined]
-    choices = [app_commands.Choice(name=f"#{entry.id} {absence_text(entry)}"[:100], value=entry.id) for entry in upcoming]
-    return [choice for choice in choices if partial.strip().lower() in choice.name.lower()][:25]
+    upcoming = await services_of(interaction).absences.upcoming_for_member(guild_id, interaction.user.id)
+    return filter_choices([f"#{entry.id} {absence_text(entry)}" for entry in upcoming], partial, [entry.id for entry in upcoming])
 
 
 @absence.command(name="remove", description="Take back an absence")
@@ -110,16 +106,16 @@ async def autocomplete_absence(interaction: discord.Interaction, partial: str) -
 @app_commands.describe(id="The absence, from the list or /absence list")
 @app_commands.autocomplete(id=autocomplete_absence)
 async def remove(interaction: discord.Interaction, id: int) -> None:
-    ctx = await slash_context(interaction)
-    guild_id = ctx.guild_id
-    if guild_id is None:
-        return
+    ctx, guild_id = await guild_context(interaction)
     absences = ctx.services.absences
     found = await absences.find(guild_id, id)
-    if found is None or (found.user_id != ctx.author.id and not is_admin_or_moderator(ctx, guild_id)):
+    if found is None or not may_manage(found, ctx.author.id, is_admin_or_moderator(ctx, guild_id)):
         await reply(ctx, f"You have no absence **#{id}**.")
         return
-    await absences.remove(guild_id, id)
+    # Whatever removes it first wins: another `/absence remove` or an Undo may have got there in between.
+    if await absences.remove(guild_id, id) is None:
+        await reply(ctx, f"Absence **#{id}** was already removed.")
+        return
     await reply(ctx, f"Removed: {absence_text(found)}." if found.user_id == ctx.author.id else f"Removed <@{found.user_id}>'s {absence_text(found)}.")
 
 
@@ -127,16 +123,12 @@ async def remove(interaction: discord.Interaction, id: int) -> None:
 @slash_check(check_is_raider_or_administrator)
 @app_commands.describe(member="Officers: the member whose absences to list")
 async def list_absences(interaction: discord.Interaction, member: discord.Member | None = None) -> None:
-    ctx = await slash_context(interaction)
-    guild_id = ctx.guild_id
-    if guild_id is None:
-        return
+    ctx, guild_id = await guild_context(interaction)
     user_id = await _target(ctx, guild_id, member)
     if user_id is None:
         return
     upcoming = await ctx.services.absences.upcoming_for_member(guild_id, user_id)
-    text = member_list_text(upcoming)
-    await reply(ctx, text if user_id == ctx.author.id else f"<@{user_id}>:\n{text}".replace("You have", "They have"))
+    await reply(ctx, member_list_text(upcoming, None if user_id == ctx.author.id else user_id))
 
 
 for _command in absence.commands:
@@ -159,16 +151,18 @@ class UndoAbsenceButton(discord.ui.DynamicItem[discord.ui.Button[Any]], template
         guild_id = interaction.guild_id
         if guild_id is None:
             return
-        absences = interaction.client.services.absences  # type: ignore[attr-defined]
+        absences = services_of(interaction).absences
         found = await absences.find(guild_id, self.absence_id)
         if found is None:
             await interaction.response.edit_message(content="Already removed.", view=None)
             return
-        if interaction.user.id != found.user_id and not interaction_is_admin_or_moderator(interaction):
+        if not may_manage(found, interaction.user.id, interaction_is_admin_or_moderator(interaction)):
             await interaction.response.send_message(f"Only <@{found.user_id}> or an officer can undo this.", ephemeral=True, allowed_mentions=NO_MENTIONS)
             return
-        await absences.remove(guild_id, self.absence_id)
-        await interaction.response.edit_message(content=f"~~Noted: {absence_text(found)}.~~ Removed.", view=None, allowed_mentions=NO_MENTIONS)
+        # Whatever removes it first wins: a second press, or `/absence remove`, may have got there in between.
+        removed = await absences.remove(guild_id, self.absence_id) is not None
+        text = f"~~Noted: {absence_text(found)}.~~ Removed." if removed else "Already removed."
+        await interaction.response.edit_message(content=text, view=None, allowed_mentions=NO_MENTIONS)
 
 
 def undo_view(absence_id: int) -> discord.ui.View:
