@@ -8,7 +8,7 @@ import time
 import discord
 from discord import app_commands
 
-from ..core.discord_context import GulpContext, slash_context
+from ..core.discord_context import ONLY_FOR_RAIDERS, GulpContext, guild_context
 from ..core.discord_helpers import NO_MENTIONS, role_ids
 from ..core.permission_checks import is_administrator
 from ..exception.ai_exception import AiError
@@ -32,17 +32,14 @@ PAGE_SIZE = 100
 @app_commands.command(name="tldr", description="Sum up this channel's recent chat")
 @app_commands.guild_only()
 async def tldr(interaction: discord.Interaction) -> None:
-    ctx = await slash_context(interaction)
-    guild_id = ctx.guild_id
-    if guild_id is None:
-        return
+    ctx, guild_id = await guild_context(interaction)
     ai = ctx.services.ai
 
     # Raiders, Officers and Developers.
     settings = ctx.services.guild_settings.get(guild_id)
     access = access_for_member(settings, role_ids(ctx.author), is_administrator(ctx))
     if not access.is_allowed():
-        await refuse(ctx, "This command is only available to raiders.")
+        await refuse(ctx, ONLY_FOR_RAIDERS)
         return
     try:
         ensure_switches_allow(settings.ai, access)
@@ -63,7 +60,7 @@ async def tldr(interaction: discord.Interaction) -> None:
     # The channel is held from here: unless a summary gets posted, let it go again.
     posted = False
     try:
-        posted = await post_summary(ctx, ai, settings, access)
+        posted = await post_summary(ctx, guild_id, ai, settings, access)
     finally:
         if not posted:
             ai.cancel_tldr(channel)
@@ -76,7 +73,7 @@ meta(
 )
 
 
-async def post_summary(ctx: GulpContext, ai: AiService, settings: GuildSettings, access: Access) -> bool:
+async def post_summary(ctx: GulpContext, guild_id: int, ai: AiService, settings: GuildSettings, access: Access) -> bool:
     """Reads the channel back, has the conversation summed up and posts it. Returns whether a summary was
     posted."""
     # Reading the channel and the model both take longer than Discord waits for a first response.
@@ -102,7 +99,7 @@ async def post_summary(ctx: GulpContext, ai: AiService, settings: GuildSettings,
         await ctx.send(str(e), allowed_mentions=NO_MENTIONS)
         return False
 
-    channel_link = f"https://discord.com/channels/{ctx.guild_id or 0}/{ctx.channel.id}"
+    channel_link = f"https://discord.com/channels/{guild_id}/{ctx.channel.id}"
     sent = await reply_in_chunks(ctx, f"**tl;dr** of the last {describe_span(now - lines[0].at)} ({len(lines)} messages)\n{summary}")
     link = f"{channel_link}/{sent[0].id}" if sent else channel_link
 

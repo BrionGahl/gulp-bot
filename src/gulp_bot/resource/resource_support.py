@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import discord
 from discord import app_commands
-from discord.ext import commands
 
 from ..core.discord_context import GulpContext
 from ..core.discord_helpers import NO_MENTIONS
@@ -26,14 +25,6 @@ def meta(command: Any, *, category: str | None = None, help_text: str | None = N
     app_command = getattr(command, "app_command", None)
     if app_command is not None and app_command is not discord.utils.MISSING:
         app_command.extras.update(extras)
-
-
-def require_guild(ctx: GulpContext, message: str = "Settings can only be changed in a server.") -> int:
-    """The guild the command was used in. Fails the command outside a server."""
-    guild_id = ctx.guild_id
-    if guild_id is None:
-        raise commands.CommandError(message)
-    return guild_id
 
 
 async def reply(ctx: GulpContext, content: str, **kwargs: Any) -> None:
@@ -72,7 +63,18 @@ async def subcommand_required(ctx: GulpContext) -> None:
     await ctx.send(f"You must specify one of the following subcommands: {', '.join(names)}", ephemeral=True)
 
 
-def filter_choices(names: list[str], partial: str) -> list[app_commands.Choice[str]]:
-    """The autocomplete choices among `names` that contain what has been typed so far (at most 25)."""
-    partial = partial.lower()
-    return [app_commands.Choice(name=name, value=name) for name in names if partial in name.lower()][:25]
+# Discord's limits on autocomplete: how many choices it shows, and how long a choice's name may be.
+MAX_CHOICES = 25
+MAX_CHOICE_NAME_CHARS = 100
+
+
+def filter_choices[T: (str, int)](names: list[str], partial: str, values: list[T] | None = None) -> list[app_commands.Choice[T]]:
+    """The autocomplete choices among `names` that contain what has been typed so far, in any case. Each
+    choice's value is its name, or the matching entry of `values`."""
+    partial = partial.strip().lower()
+    # Without `values`, T is `str`: each name is its own value.
+    pairs: list[tuple[str, T]] = list(zip(names, values if values is not None else cast(list[T], names), strict=True))
+    chosen: list[app_commands.Choice[T]] = [
+        app_commands.Choice(name=name[:MAX_CHOICE_NAME_CHARS], value=value) for name, value in pairs if partial in name.lower()
+    ]
+    return chosen[:MAX_CHOICES]

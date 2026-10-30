@@ -38,6 +38,7 @@ from .service.guild_settings_service import GuildSettingsService
 from .service.guild_validation_service import GuildValidationService
 from .service.message_replay_service import MessageReplayService
 from .service.officer_channel_service import OfficerChannelService
+from .service.officer_channel_triage_service import TriageService
 from .service.raid_attendance_service import RaidAttendanceService
 from .service.raid_notes_service import RaidNotesService
 from .service.raid_report_service import RaidReportService
@@ -65,6 +66,8 @@ class Services:
     # Absences from raid nights and what members raise in their personal officer channels, and the weekly
     # officer digest of both.
     absences: AbsenceService
+    # Reads messages in personal officer channels for absences and notes.
+    triage: TriageService
     officer_channels: OfficerChannelService
     clips_channels: ClipsChannelService
     message_replay: MessageReplayService
@@ -93,6 +96,7 @@ def build_services(
     warcraft_logs = WarcraftLogsService(WarcraftLogsClientPool(http), tracked_abilities, ignored_players)
     message_replay = MessageReplayService(guild_settings, ReplayMessageMemoryRepository(), discord_client)
     ai = AiService.from_config(http, config)
+    absences = AbsenceService(AbsenceRepository(pool), guild_settings, raid_notes)
 
     return Services(
         config=config,
@@ -103,7 +107,8 @@ def build_services(
         raid_notes=raid_notes,
         raid_attendance=RaidAttendanceService(RaidAttendanceRepository(pool), raid_notes, discord_client),
         raid_report=RaidReportService(guild_settings, warcraft_logs, raid_notes, ai),
-        absences=AbsenceService(AbsenceRepository(pool), guild_settings, raid_notes),
+        absences=absences,
+        triage=TriageService(ai, absences, guild_settings),
         officer_channels=OfficerChannelService(OfficerChannelRepository(pool), guild_settings),
         clips_channels=ClipsChannelService(guild_settings, tasks),
         message_replay=message_replay,

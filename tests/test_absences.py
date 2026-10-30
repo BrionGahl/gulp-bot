@@ -5,13 +5,15 @@ from datetime import date, datetime, time
 
 import pytest
 
+from fakes import FakeContext, run
+from gulp_bot.core.raid_week import week_begins, week_end, week_start, weeks_between
 from gulp_bot.core.schedule_parsing import NEW_YORK, parse_date, parse_span
 from gulp_bot.exception.schedule_exception import ScheduleProblem
 from gulp_bot.mapper.absence_mapper import confirmation, digest_text, member_list_text, span_text
 from gulp_bot.mapper.ai_model_mapper import ollama_request
 from gulp_bot.schema.absence_schema import Absence, AbsenceKind, ChannelNote, NoteCategory
 from gulp_bot.schema.guild_settings_schema import GuildSettings, RaidNights
-from gulp_bot.service.absence_service import span_problem, week_begins
+from gulp_bot.service.absence_service import nothing_to_miss, span_problem
 from gulp_bot.service.officer_channel_triage_service import (
     RESPONSE_SCHEMA,
     SYSTEM_PROMPT,
@@ -20,7 +22,7 @@ from gulp_bot.service.officer_channel_triage_service import (
     triage_request,
     worth_asking,
 )
-from gulp_bot.service.raid_nights_service import nights_between, nights_in_week, week_start
+from gulp_bot.service.raid_nights_service import nights_between, nights_in_week
 
 TUE_THU = RaidNights(frozenset({1, 3}), time(20, 0), time(23, 0))
 # A Wednesday.
@@ -66,6 +68,13 @@ def test_weeks_are_calendar_weeks_and_the_weekend_its_saturday_and_sunday():
     assert parse_span("thursday", TODAY) == (date(2026, 11, 5), date(2026, 11, 5))
 
 
+def test_an_absence_with_no_raid_night_in_it_has_nothing_to_miss():
+    assert nothing_to_miss(TUE_THU, date(2026, 11, 6), date(2026, 11, 9))
+    assert not nothing_to_miss(TUE_THU, date(2026, 11, 6), date(2026, 11, 10))
+    # Without raid nights registered, any day might be one.
+    assert not nothing_to_miss(None, date(2026, 11, 6), date(2026, 11, 6))
+
+
 def test_an_absence_has_to_be_ahead_and_not_too_far():
     assert span_problem(TODAY, TODAY, TODAY) is None
     assert span_problem(date(2026, 11, 3), TODAY, TODAY) is None
@@ -83,6 +92,8 @@ def test_the_raid_nights_of_a_span_are_found_across_weeks():
     ]
     assert nights_between(TUE_THU, date(2026, 11, 6), date(2026, 11, 9)) == []
     assert week_begins(date(2026, 11, 3)) == datetime(2026, 11, 3, tzinfo=NEW_YORK)
+    assert week_end(date(2026, 11, 3)) == date(2026, 11, 9)
+    assert list(weeks_between(date(2026, 11, 2), date(2026, 11, 10))) == [date(2026, 10, 27), date(2026, 11, 3), date(2026, 11, 10)]
 
 
 # --- what members and officers read ---
@@ -242,36 +253,16 @@ def test_topics_are_kept_checked_and_limited():
 # --- who may use /absence ---
 
 
-class FakeContext:
-    """What the permission checks read of a command's context."""
-
-    def __init__(self, roles, administrator=False, settings=None):
-        from types import SimpleNamespace
-
-        from gulp_bot.service.guild_settings_service import GuildSettingsService
-
-        self.guild_id = 1
-        self.author = SimpleNamespace(roles=roles)
-        self.interaction = SimpleNamespace(guild_id=1, permissions=SimpleNamespace(administrator=administrator))
-        self.services = SimpleNamespace(guild_settings=GuildSettingsService(repository=None, cache={1: settings or GuildSettings()}))  # type: ignore[arg-type]
-        self.sent = []
-
-    async def send(self, content, **kwargs):
-        self.sent.append(content)
-
-
 def test_raiders_trials_officers_and_administrators_may_report_absences(monkeypatch):
-    import asyncio
-
     from gulp_bot.core import permission_checks
 
     monkeypatch.setattr(permission_checks, "role_ids", lambda member: member.roles)
     settings = GuildSettings(raider_role_id=10, mod_role_id=20, trial_role_id=30)
     check = permission_checks.check_is_raider_or_administrator
     for roles in ([10], [20], [30]):
-        assert asyncio.run(check(FakeContext(roles, settings=settings))), roles  # type: ignore[arg-type]
+        assert run(check(FakeContext(roles, settings=settings))), roles  # type: ignore[arg-type]
     # An administrator gets through without any of the roles, even before any are registered.
-    assert asyncio.run(check(FakeContext([], administrator=True, settings=settings)))  # type: ignore[arg-type]
-    assert asyncio.run(check(FakeContext([], administrator=True)))  # type: ignore[arg-type]
+    assert run(check(FakeContext([], administrator=True, settings=settings)))  # type: ignore[arg-type]
+    assert run(check(FakeContext([], administrator=True)))  # type: ignore[arg-type]
     refused = FakeContext([99], settings=settings)
-    assert not asyncio.run(check(refused)) and refused.sent == ["This command is only available to raiders."]  # type: ignore[arg-type]
+    assert not run(check(refused)) and refused.sent == ["This command is only available to raiders."]  # type: ignore[arg-type]

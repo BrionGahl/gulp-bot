@@ -36,7 +36,7 @@ def test_the_defaults():
 
 def test_the_migrations_are_at_the_root_of_the_repository():
     root = Path(__file__).resolve().parent.parent
-    assert MIGRATIONS_DIR == root / "migrations" and MIGRATIONS_DIR.is_dir()
+    assert root / "migrations" == MIGRATIONS_DIR and MIGRATIONS_DIR.is_dir()
 
 
 def test_empty_variables_mean_unset():

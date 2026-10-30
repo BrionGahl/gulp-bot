@@ -51,7 +51,7 @@ If the slash commands don't show up in a server, register them there with `?regi
   - `command` (optional): Command to show details for, e.g. settings
   - Give a command name to see its full description, parameters and subcommands, e.g. `/help settings` or `/help settings raid_voice`.
 - **`/register`** — Register slash commands in this guild or globally
-  - **Who:** Moderator role · also `?register` · not listed in `/help` · answers privately
+  - **Who:** Everyone · also `?register` · not listed in `/help` · answers privately
 
 ## Debug
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from ..core.http_client import HttpClient, RequestFailed, RequestTimeout, status_text
+from ..core.http_client import HttpClient, RequestFailed, RequestTimeout, error_body, status_text
 from ..exception.wowutils_exception import WowUtilsError
 from ..schema.guild_settings_schema import WowUtilsCredentials
 
@@ -35,5 +35,5 @@ class WowUtilsClient:
         except (RequestTimeout, RequestFailed) as e:
             raise WowUtilsError(f"WowUtils couldn't be reached: {e}") from None
         if not response.ok:
-            raise WowUtilsError(f"WowUtils API returned {status_text(response.status)}: {response.body}")
+            raise WowUtilsError(f"WowUtils API returned {status_text(response.status)}: {error_body(response.body)}")
         log.info("Successfully submitted droptimizer report to WowUtils group %s", group_id)

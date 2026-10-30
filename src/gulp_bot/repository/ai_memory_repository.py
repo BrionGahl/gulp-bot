@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 
-from ..core.text import single_line, truncate_chars
+from ..core.text import clean_line
 from ..schema.ai_schema import ApiFailure, Tokens
 
 # The longest explanation of a failure that is kept.
@@ -63,7 +63,7 @@ class ApiFailureRepository:
 
     def record(self, at_unix: int, detail: str) -> None:
         self._total += 1
-        self._items.append(ApiFailure(at_unix, truncate_chars(single_line(detail), MAX_FAILURE_DETAIL_CHARS)))
+        self._items.append(ApiFailure(at_unix, clean_line(detail, MAX_FAILURE_DETAIL_CHARS)))
         while len(self._items) > self._max:
             self._items.popleft()
 

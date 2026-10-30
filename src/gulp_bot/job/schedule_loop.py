@@ -36,7 +36,9 @@ class ScheduledWork:
 
 async def run_schedule_loop(name: str, scheduled_work: Callable[[], Awaitable[list[ScheduledWork]]]) -> None:
     """Runs forever, doing each piece of `scheduled_work()` whenever its schedule fires. If what is scheduled
-    can't be read, nothing is run until it can, and then everything that came due in the meantime is."""
+    can't be read, nothing is run until it can. Then each piece that came due in the meantime runs once,
+    given the earliest fire time it missed, however many it missed: a database outage over two raid nights
+    posts one late attendance snapshot, not two."""
     last_checked = now_in_new_york()
 
     while True:
@@ -46,8 +48,8 @@ async def run_schedule_loop(name: str, scheduled_work: Callable[[], Awaitable[li
         try:
             work = await scheduled_work()
         except Exception as e:
-            # `last_checked` is left alone, so anything that came due in the meantime is done once it's back.
-            log.error("Failed to load %s: %s", name, e)
+            # `last_checked` is left alone, so what came due in the meantime is done (once) when it's back.
+            log.exception("Failed to load %s: %s", name, e)
         else:
             for item in work:
                 fire_time = item.schedule.after(last_checked)
@@ -55,7 +57,7 @@ async def run_schedule_loop(name: str, scheduled_work: Callable[[], Awaitable[li
                     try:
                         await item.run(fire_time)
                     except Exception as e:
-                        log.error("%s: %s", item.failure_message, e)
+                        log.exception("%s: %s", item.failure_message, e)
 
                 upcoming = item.schedule.after(now)
                 if upcoming is not None:

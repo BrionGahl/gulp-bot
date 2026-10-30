@@ -99,7 +99,7 @@ from before it.
 
 ### Release tags
 
-`.github/workflows/unit-tests.yml` runs the linter, the formatting check and every test, the database tests
+`.github/workflows/unit-tests.yml` runs the linter, the formatting check, the type checker and every test, the database tests
 included against a Postgres service, on each pull request into `master` and each push to it. Its check is
 called **Unit Tests**; the branch rules on `master` require it to pass before a pull request can be merged.
 

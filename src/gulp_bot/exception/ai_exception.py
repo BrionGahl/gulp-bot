@@ -15,6 +15,11 @@ class AiError(Exception):
     def __str__(self) -> str:
         return self.message
 
+    @property
+    def reason(self) -> str:
+        """Why there was no answer, for the log: more than the member is told, where there is more."""
+        return str(self)
+
 
 class NotAllowed(AiError):
     """The member isn't a raider. Callers check access first and say so themselves; this is the last line
@@ -50,6 +55,10 @@ class Unavailable(AiError):
     def __init__(self, detail: str):
         super().__init__()
         self.detail = detail
+
+    @property
+    def reason(self) -> str:
+        return self.detail
 
 
 def unavailable(detail: str) -> Unavailable:

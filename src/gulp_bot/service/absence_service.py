@@ -9,18 +9,19 @@ Absences that ended before the week, and the notes of earlier weeks, are deleted
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 import discord
 
 from ..core.discord_helpers import NO_MENTIONS
-from ..core.schedule_parsing import NEW_YORK, now_in_new_york
+from ..core.raid_week import week_begins, week_end, week_start, weeks_between
+from ..core.schedule_parsing import now_in_new_york
 from ..mapper.absence_mapper import digest_text
 from ..repository.absence_repository import AbsenceRepository
 from ..schema.absence_schema import Absence, NewAbsence, NewChannelNote
-from ..schema.guild_settings_schema import RaidNight
+from ..schema.guild_settings_schema import RaidNight, RaidNights
 from .guild_settings_service import GuildSettingsService
-from .raid_nights_service import nights_between, nights_in_week, week_start
+from .raid_nights_service import nights_between, nights_in_week
 from .raid_notes_service import RaidNotesService
 
 log = logging.getLogger(__name__)
@@ -40,9 +41,16 @@ def span_problem(start: date, end: date, today: date) -> str | None:
     return None
 
 
-def week_begins(tuesday: date) -> datetime:
-    """Midnight Eastern at the start of the week beginning `tuesday`."""
-    return datetime.combine(tuesday, datetime.min.time(), NEW_YORK)
+def nothing_to_miss(nights: RaidNights | None, start: date, end: date) -> bool:
+    """Whether an absence from `start` to `end` misses no raid night, so there is nothing to record. The one
+    rule for `/absence add` and for absences read from personal officer channels. Without raid nights
+    registered, every day might be one."""
+    return nights is not None and not nights_between(nights, start, end)
+
+
+def may_manage(absence: Absence, actor_id: int, actor_is_officer: bool) -> bool:
+    """Whether the member `actor_id` may take `absence` back: their own, or anyone's for an Officer."""
+    return absence.user_id == actor_id or actor_is_officer
 
 
 class AbsenceService:
@@ -81,7 +89,7 @@ class AbsenceService:
 
     async def week(self, guild_id: int, tuesday: date) -> list[Absence]:
         """The absences that cover any day of the week starting `tuesday`."""
-        return await self._repository.overlapping(guild_id, tuesday, tuesday + timedelta(days=6))
+        return await self._repository.overlapping(guild_id, tuesday, week_end(tuesday))
 
     # --- Personal officer channel notes ---
 
@@ -109,8 +117,7 @@ class AbsenceService:
         """The officer digest of the week starting `tuesday`, as it is posted."""
         nights = self._guild_settings.get(guild_id).raid_nights
         absences = await self.week(guild_id, tuesday)
-        begins = week_begins(tuesday)
-        notes = await self._repository.notes_between(guild_id, begins, week_begins(tuesday + timedelta(days=7)))
+        notes = await self._repository.notes_between(guild_id, week_begins(tuesday), week_begins(week_end(tuesday) + timedelta(days=1)))
         return digest_text(tuesday, None if nights is None else nights_in_week(nights, tuesday), absences, notes)
 
     async def post_digest(self, guild_id: int, thread_id: int, day: date) -> None:
@@ -144,10 +151,8 @@ class AbsenceService:
             log.info("Cleaned up %d old absence(s) and %d old note(s) for guild %s", absences, notes, guild_id)
 
     async def _refresh_weeks(self, guild_id: int, start: date, end: date) -> None:
-        tuesday = week_start(start)
-        while tuesday <= end:
+        for tuesday in weeks_between(start, end):
             await self.refresh_digest(guild_id, tuesday)
-            tuesday += timedelta(days=7)
 
     async def _edit(self, thread: discord.PartialMessageable, message_id: int, text: str) -> bool:
         """Edits the digest message. Returns whether it was there to edit."""

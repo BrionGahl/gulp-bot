@@ -9,6 +9,8 @@ from zoneinfo import ZoneInfo
 from gulp_bot.core.database import from_bigint, rows_affected, to_bigint
 from gulp_bot.core.embed import MAX_DESCRIPTION_CHARS, MAX_FIELD_CHARS
 from gulp_bot.core.migrations import load_migrations, lock_id, same_checksum
+from gulp_bot.core.paths import MIGRATIONS_DIR
+from gulp_bot.core.raid_week import week_start
 from gulp_bot.mapper.announcement_mapper import render_announcement
 from gulp_bot.mapper.help_text_mapper import HELP_FOOTER, command_help_page, help_overview
 from gulp_bot.mapper.message_replay_mapper import replay_embed
@@ -21,8 +23,8 @@ from gulp_bot.schema.raid_attendance_schema import MAX_RAID_HOURS, AttendanceCom
 from gulp_bot.service.help_service import find_command, with_paths
 from gulp_bot.service.message_replay_service import ModeratorDeletionTracker
 from gulp_bot.service.officer_channel_service import channel_name, has_trial_or_raider_role
-from gulp_bot.service.raid_attendance_service import compare_attendance
-from gulp_bot.service.raid_notes_service import week_start, week_title
+from gulp_bot.service.raid_attendance_service import compare_attendance, pairs_with
+from gulp_bot.service.raid_notes_service import week_title
 from gulp_bot.service.raid_report_service import is_set_up
 
 NEW_YORK = ZoneInfo("America/New_York")
@@ -81,15 +83,15 @@ def test_a_long_list_is_cut_to_fit_an_embed_field():
 
 
 def start_snapshot(present, hours_before_end):
-    return StartSnapshot(9, at().astimezone(UTC) - timedelta(hours=hours_before_end), present)
+    return StartSnapshot(9, at().astimezone(UTC) - timedelta(hours=hours_before_end), tuple(present))
 
 
 def test_a_start_only_pairs_with_an_end_of_the_same_raid():
-    assert start_snapshot([1], 3).pairs_with(9, at())
-    assert start_snapshot([1], 0).pairs_with(9, at())
-    assert not start_snapshot([1], MAX_RAID_HOURS + 1).pairs_with(9, at())
-    assert not start_snapshot([1], -1).pairs_with(9, at())
-    assert not start_snapshot([1], 3).pairs_with(10, at())
+    assert pairs_with(start_snapshot([1], 3), 9, at())
+    assert pairs_with(start_snapshot([1], 0), 9, at())
+    assert not pairs_with(start_snapshot([1], MAX_RAID_HOURS + 1), 9, at())
+    assert not pairs_with(start_snapshot([1], -1), 9, at())
+    assert not pairs_with(start_snapshot([1], 3), 10, at())
 
 
 def test_the_summary_compares_the_end_with_the_start():
@@ -184,7 +186,8 @@ def test_ids_above_the_signed_maximum_round_trip_through_bigint():
 
 def test_migrations_are_read_with_their_version_description_and_checksum():
     migrations = load_migrations()
-    assert [migration.version for migration in migrations] == list(range(1, 19))
+    # Numbered from 1 without a gap, one migration per file.
+    assert [migration.version for migration in migrations] == list(range(1, len(list(MIGRATIONS_DIR.glob("*.sql"))) + 1))
     first = migrations[0]
     assert first.description == "guild settings"
     raw = (Path(__file__).resolve().parent.parent / "migrations" / "0001_guild_settings.sql").read_bytes()
@@ -238,3 +241,85 @@ def test_find_command_resolves_nested_names_and_ignores_prefixes():
     page = command_help_page("settings raid_voice", COMMANDS[3].subcommands[1])
     assert "**Parameters**\n`channel` (required) — " in page
     assert [path for path, _ in with_paths(COMMANDS)][:4] == ["get_timeline_reminders", "source", "register", "settings show"]
+
+
+def test_the_developer_role_is_never_also_a_shared_role_whichever_comes_second():
+    from gulp_bot.schema.guild_settings_schema import GuildIdSetting
+    from gulp_bot.service.guild_settings_service import role_conflict
+
+    settings = GuildSettings(mod_role_id=1, raider_role_id=2, trial_role_id=3, dev_role_id=4)
+    for taken in (1, 2, 3):
+        assert role_conflict(settings, GuildIdSetting.DEV_ROLE, taken) is not None
+    for setting in (GuildIdSetting.MOD_ROLE, GuildIdSetting.RAIDER_ROLE, GuildIdSetting.TRIAL_ROLE):
+        assert role_conflict(settings, setting, 4) is not None
+        assert role_conflict(settings, setting, 9) is None
+    assert role_conflict(settings, GuildIdSetting.DEV_ROLE, 9) is None
+    # Re-registering the same role as itself is fine.
+    assert role_conflict(settings, GuildIdSetting.DEV_ROLE, 4) is None
+
+
+# --- helpers that had no tests ---
+
+
+def test_a_clip_is_a_video_file_or_a_link_that_unfurls_to_a_video():
+    from types import SimpleNamespace
+
+    from gulp_bot.service.clips_channel_service import has_video
+
+    def message(attachments=(), embeds=()):
+        return SimpleNamespace(attachments=[SimpleNamespace(content_type=kind) for kind in attachments], embeds=[SimpleNamespace(video=v) for v in embeds])
+
+    assert has_video(message(attachments=["video/mp4"]))  # type: ignore[arg-type]
+    assert has_video(message(embeds=[{"url": "https://clips.example/1"}]))  # type: ignore[arg-type]
+    assert not has_video(message(attachments=["image/png", None]))  # type: ignore[arg-type]
+    assert not has_video(message(embeds=[None]))  # type: ignore[arg-type]
+    assert not has_video(message())  # type: ignore[arg-type]
+
+
+def test_the_officer_channel_list_shows_a_channel_that_was_never_recorded():
+    from gulp_bot.mapper.officer_channel_mapper import officer_channel_list_description
+    from gulp_bot.schema.officer_channel_schema import RegisteredOfficerChannel
+
+    text = officer_channel_list_description([RegisteredOfficerChannel(1, 10), RegisteredOfficerChannel(2, None)])
+    assert text == "<@1> — <#10>\n<@2> — channel not recorded\n"
+
+
+def test_the_settings_overview_never_shows_a_credential():
+    from datetime import time
+
+    from gulp_bot.core.cron import Schedule
+    from gulp_bot.mapper.guild_settings_mapper import settings_overview_embed
+    from gulp_bot.schema.guild_settings_schema import RaidNights
+
+    settings = GuildSettings(
+        mod_role_id=5,
+        bart_token="secret-bart",
+        wowutils_token="secret-wow",
+        wowutils_group_id="group",
+        wcl_credentials=WclCredentials("client-id", "secret-wcl"),
+        raid_nights=RaidNights(frozenset({1, 3}), time(20), time(23)),
+    )
+    embed = settings_overview_embed("gulp-bot", settings, Schedule.parse("0 0 9 * * Fri *"), [], 0, [])
+    shown = {field["name"]: field["value"] for field in embed["fields"]}
+    assert all("secret" not in value for value in shown.values())
+    assert shown["Bart token"] == "Set" and shown["Warcraft Logs API client"] == "Set"
+    assert shown["Raid nights"] == "Tue, Thu, 8:00 PM – 11:00 PM Eastern"
+    assert shown["Raid notes schedule"] == "Default (Fri, 9:00 AM Eastern)"
+    assert shown["Moderator role"] == "<@&5>"
+
+
+def test_a_reply_is_followed_to_the_message_it_replies_to_while_that_is_still_there():
+    from types import SimpleNamespace
+
+    import discord
+
+    from gulp_bot.service.bot_get_them_service import replied_message
+
+    # A message Discord sent along with the reply; built bare, it is still a `discord.Message`.
+    original = object.__new__(discord.Message)
+    assert replied_message(SimpleNamespace(reference=SimpleNamespace(resolved=original))) is original  # type: ignore[arg-type]
+    # Not a reply, a reply whose message Discord didn't send along, and one to a deleted message.
+    assert replied_message(SimpleNamespace(reference=None)) is None  # type: ignore[arg-type]
+    assert replied_message(SimpleNamespace(reference=SimpleNamespace(resolved=None))) is None  # type: ignore[arg-type]
+    deleted = object.__new__(discord.DeletedReferencedMessage)
+    assert replied_message(SimpleNamespace(reference=SimpleNamespace(resolved=deleted))) is None  # type: ignore[arg-type]

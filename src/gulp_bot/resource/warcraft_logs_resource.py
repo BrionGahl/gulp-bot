@@ -4,6 +4,7 @@ threads."""
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,16 +12,16 @@ import discord
 from discord import app_commands
 
 from ..client.warcraft_logs_client import WarcraftLogsClient
-from ..core.discord_context import GulpContext, slash_context
+from ..core.discord_context import NO_RAID_NOTES_CHANNEL, GulpContext, guild_context
 from ..core.discord_helpers import NO_MENTIONS
-from ..core.embed import to_discord_embed
+from ..core.embed import Embed, to_discord_embed
 from ..core.permission_checks import check_is_admin_or_moderator, slash_check
+from ..core.text import same_name
 from ..exception.warcraft_logs_exception import ReportRequestProblem, WarcraftLogsError
 from ..mapper.warcraft_logs_embed_mapper import consumables_embed, damage_embed, overview_embed, replay_embed, window_damage_embed
 from ..schema.guild_settings_schema import GuildSettings
 from ..schema.wcl_report_schema import ReportTarget
 from ..service.warcraft_logs_analysis_service import parse_pull_time, parse_report_target, resolve_ability
-from ..service.wcl_tracked_enemy_service import same_enemy
 from .resource_support import meta, refuse
 from .wcl_autocomplete import autocomplete_tracked_ability, autocomplete_tracked_enemy
 
@@ -57,15 +58,12 @@ async def start_request(interaction: discord.Interaction, report: str | None) ->
     report asked for can be worked out. If not, tells only the officer who ran it and returns `None`.
     Everything here is checked before the command is deferred, so that a refusal is private rather than a
     public follow-up."""
-    ctx = await slash_context(interaction)
-    guild_id = ctx.guild_id
-    if guild_id is None:
-        return None
+    ctx, guild_id = await guild_context(interaction)
     settings = ctx.services.guild_settings.get(guild_id)
 
     raid_notes_channel_id = settings.raid_notes_channel_id
     if raid_notes_channel_id is None:
-        await refuse(ctx, "No raid notes channel is registered for this server. An administrator or moderator can set one with `/settings raid_notes_channel`.")
+        await refuse(ctx, NO_RAID_NOTES_CHANNEL)
         return None
     if not await _in_thread_of(ctx, raid_notes_channel_id):
         await refuse(ctx, f"Warcraft Logs results are only posted in the weekly threads of <#{raid_notes_channel_id}>. Use the command in one of them.")
@@ -112,6 +110,23 @@ async def say_it_failed(ctx: GulpContext, error: Exception) -> None:
     await say_quietly(ctx, f"Couldn't get that from Warcraft Logs. {error}")
 
 
+async def post_from_report[T](request: WclRequest, fetch: Callable[[str], Awaitable[T]], to_embed: Callable[[T], Embed]) -> None:
+    """What every `/wcl` command does once its own checks are done: defers (the API takes longer than Discord
+    waits for a first response), works out the report, fetches what the command shows with `fetch(code)`,
+    and posts it as an embed that pings nobody. A failure is said in the channel."""
+    ctx = request.ctx
+    await ctx.defer()
+    code = await resolve_report_code(request)
+    if code is None:
+        return
+    try:
+        result = await fetch(code)
+    except WarcraftLogsError as e:
+        await say_it_failed(ctx, e)
+        return
+    await ctx.send(embed=to_discord_embed(to_embed(result)), allowed_mentions=NO_MENTIONS)
+
+
 async def say_quietly(ctx: GulpContext, content: str) -> None:
     """Says something in the channel without pinging anyone, whatever the text holds: it may hold the API's
     own error text, or what an officer typed."""
@@ -125,21 +140,10 @@ async def report(interaction: discord.Interaction, report: str | None = None) ->
     request = await start_request(interaction, report)
     if request is None:
         return
-    ctx, services = request.ctx, request.ctx.services
+    services = request.ctx.services
     tracked = await services.tracked_abilities.list_tracked(request.guild_id)
     ignored = await services.ignored_players.list_ignored(request.guild_id)
-
-    # The API takes a few seconds, longer than Discord waits for a first response.
-    await ctx.defer()
-    code = await resolve_report_code(request)
-    if code is None:
-        return
-    try:
-        overview = await services.warcraft_logs.overview(request.client, code, tracked, ignored)
-    except WarcraftLogsError as e:
-        await say_it_failed(ctx, e)
-        return
-    await ctx.send(embed=to_discord_embed(overview_embed(overview)))
+    await post_from_report(request, lambda code: services.warcraft_logs.overview(request.client, code, tracked, ignored), overview_embed)
 
 
 meta(
@@ -167,17 +171,7 @@ async def damage_taken(interaction: discord.Interaction, ability: str, boss: str
     if chosen is None:
         await refuse(ctx, f"`{ability.strip()}` isn't a tracked ability or a spell ID. Track one with `/settings wcl mechanic_add`, or give its spell ID.")
         return
-
-    await ctx.defer()
-    code = await resolve_report_code(request)
-    if code is None:
-        return
-    try:
-        damage = await services.warcraft_logs.damage_report(request.client, code, boss, chosen, ignored)
-    except WarcraftLogsError as e:
-        await say_it_failed(ctx, e)
-        return
-    await ctx.send(embed=to_discord_embed(damage_embed(damage)))
+    await post_from_report(request, lambda code: services.warcraft_logs.damage_report(request.client, code, boss, chosen, ignored), damage_embed)
 
 
 meta(
@@ -203,17 +197,7 @@ async def consumables(interaction: discord.Interaction, boss: str | None = None,
         await refuse(ctx, "No healthstone or health potion abilities are registered for this server. Add them with `/settings wcl consumable_add`.")
         return
     ignored = await services.ignored_players.list_ignored(request.guild_id)
-
-    await ctx.defer()
-    code = await resolve_report_code(request)
-    if code is None:
-        return
-    try:
-        used = await services.warcraft_logs.consumables_report(request.client, code, boss, registered, ignored)
-    except WarcraftLogsError as e:
-        await say_it_failed(ctx, e)
-        return
-    await ctx.send(embed=to_discord_embed(consumables_embed(used)))
+    await post_from_report(request, lambda code: services.warcraft_logs.consumables_report(request.client, code, boss, registered, ignored), consumables_embed)
 
 
 meta(
@@ -265,7 +249,12 @@ async def damage_window(
         return
     ignored = await services.ignored_players.list_ignored(request.guild_id)
     if boss_damage:
-        await post_boss_damage(request, boss, pull, start_seconds, end_seconds, ignored)
+        # Boss against non-boss damage, which needs no tracked enemies.
+        await post_from_report(
+            request,
+            lambda code: services.warcraft_logs.window_boss_damage_report(request.client, code, boss, pull, start_seconds, end_seconds, ignored),
+            window_damage_embed,
+        )
         return
 
     enemies = await services.tracked_enemies.list_tracked(request.guild_id)
@@ -273,37 +262,16 @@ async def damage_window(
         await refuse(ctx, "No enemies are tracked on this server. Add them with `/settings wcl enemy_add`.")
         return
     if focus is not None:
-        chosen = next((name for name in enemies if same_enemy(name, focus)), None)
+        chosen = next((name for name in enemies if same_name(name, focus)), None)
         if chosen is None:
             await refuse(ctx, f"`{focus.strip()}` isn't a tracked enemy. See `/settings wcl enemy_list`.")
             return
         focus = chosen
-
-    await ctx.defer()
-    code = await resolve_report_code(request)
-    if code is None:
-        return
-    try:
-        damage = await services.warcraft_logs.window_damage_report(request.client, code, boss, pull, start_seconds, end_seconds, enemies, ignored, focus)
-    except WarcraftLogsError as e:
-        await say_it_failed(ctx, e)
-        return
-    await ctx.send(embed=to_discord_embed(window_damage_embed(damage)), allowed_mentions=NO_MENTIONS)
-
-
-async def post_boss_damage(request: WclRequest, boss: str, pull: int | None, start_seconds: int, end_seconds: int, ignored: list[str]) -> None:
-    """`/wcl damage_window boss_damage:True`: boss against non-boss damage, which needs no tracked enemies."""
-    ctx = request.ctx
-    await ctx.defer()
-    code = await resolve_report_code(request)
-    if code is None:
-        return
-    try:
-        damage = await ctx.services.warcraft_logs.window_boss_damage_report(request.client, code, boss, pull, start_seconds, end_seconds, ignored)
-    except WarcraftLogsError as e:
-        await say_it_failed(ctx, e)
-        return
-    await ctx.send(embed=to_discord_embed(window_damage_embed(damage)), allowed_mentions=NO_MENTIONS)
+    await post_from_report(
+        request,
+        lambda code: services.warcraft_logs.window_damage_report(request.client, code, boss, pull, start_seconds, end_seconds, enemies, ignored, focus),
+        window_damage_embed,
+    )
 
 
 meta(
@@ -325,18 +293,7 @@ async def replay(interaction: discord.Interaction, report: str | None = None) ->
     request = await start_request(interaction, report)
     if request is None:
         return
-    ctx = request.ctx
-
-    await ctx.defer()
-    code = await resolve_report_code(request)
-    if code is None:
-        return
-    try:
-        wipe = await ctx.services.warcraft_logs.last_wipe(request.client, code)
-    except WarcraftLogsError as e:
-        await say_it_failed(ctx, e)
-        return
-    await ctx.send(embed=to_discord_embed(replay_embed(wipe)), allowed_mentions=NO_MENTIONS)
+    await post_from_report(request, lambda code: request.ctx.services.warcraft_logs.last_wipe(request.client, code), replay_embed)
 
 
 meta(

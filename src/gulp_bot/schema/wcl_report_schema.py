@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 
 from .guild_settings_schema import WclSource
 from .wcl_settings_schema import ConsumableKind
@@ -47,7 +46,7 @@ class Report:
     title: str
     # Milliseconds since the Unix epoch.
     start_time: float
-    fights: list[Fight]
+    fights: tuple[Fight, ...]
 
     @property
     def started_at(self) -> int:
@@ -63,10 +62,6 @@ class ReportSummary:
     # Milliseconds since the Unix epoch.
     start_time: float
     owner_id: int | None
-
-    def started_at_or_after(self, moment: datetime) -> bool:
-        millis = int(moment.timestamp()) * 1000 + moment.microsecond // 1000
-        return self.start_time >= millis
 
 
 @dataclass(frozen=True)

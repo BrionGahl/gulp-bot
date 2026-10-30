@@ -27,12 +27,7 @@ class StartSnapshot:
 
     voice_channel_id: int
     taken_at: datetime
-    present: list[int]
-
-    def pairs_with(self, voice_channel_id: int, end: datetime) -> bool:
-        """Whether this is plausibly the start of the raid ending at `end` in `voice_channel_id`."""
-        elapsed = end.timestamp() - self.taken_at.timestamp()
-        return self.voice_channel_id == voice_channel_id and 0 <= elapsed <= MAX_RAID_HOURS * 3600
+    present: tuple[int, ...]
 
 
 @dataclass(frozen=True)

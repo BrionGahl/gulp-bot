@@ -19,6 +19,9 @@ from .guild_settings_service import GuildSettingsService
 
 log = logging.getLogger(__name__)
 
+# How many of the newest message deletions in the audit log are read to tell who deleted a message.
+AUDIT_LOG_ENTRIES = 25
+
 # Discord writes the audit log entry for a moderator deletion a beat after the gateway delivers the delete
 # event, so we wait this many seconds before going to look for it.
 AUDIT_LOG_LOOKUP_DELAY = 2.0
@@ -122,7 +125,7 @@ class MessageReplayService:
         # Entries come back newest first; take the most recent deletion of one of the author's messages in
         # this channel.
         found = None
-        async for entry in guild.audit_logs(limit=25, action=discord.AuditLogAction.message_delete):
+        async for entry in guild.audit_logs(limit=AUDIT_LOG_ENTRIES, action=discord.AuditLogAction.message_delete):
             extra: Any = entry.extra
             target = entry.target
             if target is not None and target.id == key.author_id and extra is not None and extra.channel.id == key.channel_id:
@@ -142,7 +145,7 @@ class MessageReplayService:
         try:
             await channel.send(embed=to_discord_embed(replay_embed(stored)), allowed_mentions=NO_MENTIONS)
         except Exception as e:
-            log.error("Failed to replay deleted message in %s: %s", stored.channel_id, e)
+            log.exception("Failed to replay deleted message in %s: %s", stored.channel_id, e)
             return
         log.info("Replayed a message %s deleted in %s", stored.author_name, stored.channel_id)
 

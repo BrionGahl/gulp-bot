@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
+from ..core.embed import MAX_LIST_CHARS
 from ..core.text import limited_lines
 from ..schema.officer_channel_schema import RegisteredOfficerChannel
-
-# Cap on the list's embed description, under Discord's 4096-character limit.
-MAX_LIST_CHARS = 4000
 
 
 def officer_channel_list_description(registered: list[RegisteredOfficerChannel]) -> str:

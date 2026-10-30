@@ -6,6 +6,19 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass
 
+# The largest ability ID: the game's ability IDs are unsigned 32-bit numbers.
+MAX_ABILITY_ID = 0xFFFFFFFF
+
+# The largest ID Warcraft Logs gives its own things (guilds, users): signed 32-bit numbers, and zero is never one.
+MAX_WCL_ID = 2**31 - 1
+
+# The most abilities, or enemies, one server can track: each is a field of an embed, which has a size limit
+# of its own.
+MAX_TRACKED = 6
+
+# The longest tracked ability or enemy name: it is an embed field title, which Discord allows 256 characters.
+MAX_TRACKED_NAME_CHARS = 100
+
 
 @dataclass(frozen=True)
 class TrackedAbility:
@@ -33,24 +46,19 @@ class TrackAbilityResult:
     other_ability_id: int | None = None
 
 
-class TrackEnemyOutcome(enum.Enum):
-    ADDED = enum.auto()
-    # An enemy with this name is already tracked, possibly in another capitalisation.
-    ALREADY_TRACKED = enum.auto()
-    # The server already tracks as many enemies as it may.
-    FULL = enum.auto()
+class NameListOutcome(enum.Enum):
+    """What adding a name to one of a guild's lists of names (tracked enemies, ignored players) did."""
 
-
-class IgnorePlayerOutcome(enum.Enum):
     ADDED = enum.auto()
-    # The player is already ignored, possibly under a different capitalisation.
-    ALREADY_IGNORED = enum.auto()
-    # The server already ignores as many players as it may.
+    # The name is on the list already, possibly in another capitalisation.
+    ALREADY_LISTED = enum.auto()
+    # The list is as long as it may be.
     FULL = enum.auto()
 
 
 class ConsumableKind(enum.Enum):
-    """What kind of consumable an ability is. The value is how it is stored in the database."""
+    """What kind of consumable an ability is. The value is how it is stored in the database; the order is the
+    order they are shown in, healthstones first."""
 
     HEALTHSTONE = "healthstone"
     HEALTH_POTION = "health_potion"
@@ -64,17 +72,6 @@ class ConsumableKind(enum.Enum):
     def plural(self) -> str:
         """For headings: "Healthstones"."""
         return {ConsumableKind.HEALTHSTONE: "Healthstones", ConsumableKind.HEALTH_POTION: "Health potions"}[self]
-
-    @classmethod
-    def from_column_value(cls, value: str) -> ConsumableKind | None:
-        try:
-            return cls(value)
-        except ValueError:
-            return None
-
-
-# Every kind, in the order they are shown: healthstones first.
-ALL_CONSUMABLE_KINDS = [ConsumableKind.HEALTHSTONE, ConsumableKind.HEALTH_POTION]
 
 
 @dataclass(frozen=True)

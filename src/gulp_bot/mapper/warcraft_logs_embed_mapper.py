@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ..core.embed import MAX_DESCRIPTION_CHARS, MAX_EMBED_CHARS, MAX_FIELD_CHARS, MAX_TITLE_CHARS, Embed, add_field, new_embed
-from ..core.text import plural, pull_time, truncate_with_ellipsis, utf8_length
+from ..core.text import format_damage, noun_for, plural, pull_time, truncate_with_ellipsis, utf8_length
 from ..schema.wcl_report_schema import (
     WIPE_CUTOFF,
     WIPE_DEATHS,
@@ -59,6 +59,15 @@ def window_url(report: WindowDamageReport) -> str:
 # --- /wcl report ---
 
 
+# Said for a report that has no Mythic boss pull to show.
+NO_PULLS = "No Mythic boss pulls in this report."
+
+
+def report_header(started_at: int, title: str) -> str:
+    """The first line of a report's embed: when it started, and its title."""
+    return f"<t:{started_at}:F> · {truncate_with_ellipsis(title, MAX_ABILITY_NAME_CHARS)}"
+
+
 def overview_embed(overview: ReportOverview) -> Embed:
     title = truncate_with_ellipsis(overview.title, MAX_TITLE_CHARS)
     description = overview_description(overview)
@@ -94,12 +103,12 @@ def overview_embed(overview: ReportOverview) -> Embed:
 def overview_description(overview: ReportOverview) -> str:
     pulls = sum(encounter.pulls for encounter in overview.encounters)
     if pulls == 0:
-        return f"<t:{overview.started_at}:F>\nNo Mythic boss pulls in this report."
+        return f"<t:{overview.started_at}:F>\n{NO_PULLS}"
 
     kills = sum(encounter.kills for encounter in overview.encounters)
-    description = f"<t:{overview.started_at}:F>\n**{pulls}** Mythic pulls: {kills} kills, {pulls - kills} wipes\n"
+    description = f"<t:{overview.started_at}:F>\n**{pulls}** Mythic {noun_for(pulls, 'pull')}: {plural(kills, 'kill')}, {plural(pulls - kills, 'wipe')}\n"
     for listed, encounter in enumerate(overview.encounters):
-        line = f"\n• {encounter.name} — {encounter.pulls} pulls, {encounter.kills} kills"
+        line = f"\n• {encounter.name} — {plural(encounter.pulls, 'pull')}, {plural(encounter.kills, 'kill')}"
         overflow_note = f"\n…and {len(overview.encounters) - listed} more."
         if utf8_length(description) + utf8_length(line) + utf8_length(overflow_note) > MAX_DESCRIPTION_CHARS:
             description += overflow_note
@@ -123,19 +132,16 @@ def damage_field(ability: AbilityDamage, shown: int, pulls: int) -> tuple[str, s
 
 def damage_embed(report: DamageReport) -> Embed:
     ability = report.ability
-    report_title = truncate_with_ellipsis(report.title, MAX_ABILITY_NAME_CHARS)
     embed = new_embed(
         title=f"{truncate_with_ellipsis(ability.name, MAX_ABILITY_NAME_CHARS)} — damage taken",
         url=report_url(report.code),
         footer=footer_text(report.ignored),
     )
     if report.pulls == 0:
-        embed["description"] = f"<t:{report.started_at}:F> · {report_title}\nNo Mythic boss pulls in this report."
+        embed["description"] = f"{report_header(report.started_at, report.title)}\n{NO_PULLS}"
         return embed
 
-    description = (
-        f"<t:{report.started_at}:F> · {report_title}\n**{report.scope}**, {report.pulls} pulls\nTotal damage taken: **{format_damage(ability.total)}**"
-    )
+    description = f"{report_header(report.started_at, report.title)}\n**{report.scope}**, {plural(report.pulls, 'pull')}\nTotal damage taken: **{format_damage(ability.total)}**"
     # Cut so that however many bosses the scope names, the description stays within Discord's limit.
     embed["description"] = truncate_with_ellipsis(description, MAX_DESCRIPTION_CHARS)
 
@@ -156,13 +162,12 @@ def damage_embed(report: DamageReport) -> Embed:
 
 def consumables_embed(report: ConsumablesReport) -> Embed:
     embed = new_embed(title="Consumables used", url=report_url(report.code), footer=consumables_footer(report.ignored))
-    report_title = truncate_with_ellipsis(report.title, MAX_ABILITY_NAME_CHARS)
     if report.pulls == 0:
-        embed["description"] = f"<t:{report.started_at}:F> · {report_title}\nNo Mythic boss pulls in this report."
+        embed["description"] = f"{report_header(report.started_at, report.title)}\n{NO_PULLS}"
         return embed
 
     # Cut so that however many bosses the scope names, the description stays within Discord's limit.
-    description = f"<t:{report.started_at}:F> · {report_title}\n**{report.scope}**, {plural(report.pulls, 'pull')}"
+    description = f"{report_header(report.started_at, report.title)}\n**{report.scope}**, {plural(report.pulls, 'pull')}"
     embed["description"] = truncate_with_ellipsis(description, MAX_DESCRIPTION_CHARS)
     for used in report.uses:
         add_field(embed, *consumable_field(used))
@@ -189,7 +194,7 @@ def window_damage_embed(report: WindowDamageReport) -> Embed:
     outcome = "" if report.kill is None else (" (kill)" if report.kill else " (wipe)")
     target = "the bosses and everything else" if report.boss_damage is not None else "the tracked enemies"
     description = (
-        f"<t:{report.started_at}:F> · {truncate_with_ellipsis(report.title, MAX_ABILITY_NAME_CHARS)}\n"
+        f"{report_header(report.started_at, report.title)}\n"
         f"Damage done to {target} from **{pull_time(report.start_ms)}** to **{pull_time(report.end_ms)}** of pull {report.pull}{outcome}"
     )
     if report.cut_at_pull_end:
@@ -371,17 +376,6 @@ def ranked_list(rows: Sequence[RankingRow], max_lines: int, max_chars: int) -> s
             break
         text += separator + line
     return text
-
-
-def format_damage(amount: int) -> str:
-    """Damage as a short number: 3.5B, 200.3M, 12.3K."""
-    if amount >= 1_000_000_000:
-        return f"{amount / 1e9:.1f}B"
-    if amount >= 1_000_000:
-        return f"{amount / 1e6:.1f}M"
-    if amount >= 1_000:
-        return f"{amount / 1e3:.1f}K"
-    return str(amount)
 
 
 def display_class(class_name: str) -> str:

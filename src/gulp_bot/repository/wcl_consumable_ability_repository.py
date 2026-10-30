@@ -5,14 +5,18 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..core.database import to_bigint
-from ..schema.wcl_settings_schema import ConsumableAbility, ConsumableKind
+from ..schema.wcl_settings_schema import MAX_ABILITY_ID, ConsumableAbility, ConsumableKind
 
 if TYPE_CHECKING:
     import asyncpg
 
-# Ability IDs are stored from 32-bit numbers, so they always convert back; a row edited by hand into
-# something else is ignored.
-_MAX_ABILITY_ID = 0xFFFFFFFF
+
+def consumable_kind(value: str) -> ConsumableKind | None:
+    """The kind stored as `value`, or `None` for one this version doesn't know (stored by a newer one)."""
+    try:
+        return ConsumableKind(value)
+    except ValueError:
+        return None
 
 
 class ConsumableAbilityRepository:
@@ -26,8 +30,8 @@ class ConsumableAbilityRepository:
         )
         registered = []
         for row in rows:
-            kind = ConsumableKind.from_column_value(row["kind"])
-            if kind is not None and 0 <= row["ability_id"] <= _MAX_ABILITY_ID:
+            kind = consumable_kind(row["kind"])
+            if kind is not None and 0 <= row["ability_id"] <= MAX_ABILITY_ID:
                 registered.append(ConsumableAbility(kind, row["ability_id"]))
         return registered
 
@@ -46,4 +50,4 @@ class ConsumableAbilityRepository:
             to_bigint(guild_id),
             ability_id,
         )
-        return None if kind is None else ConsumableKind.from_column_value(kind)
+        return None if kind is None else consumable_kind(kind)

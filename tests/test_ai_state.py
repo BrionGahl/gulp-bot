@@ -109,10 +109,10 @@ def test_idle_users_are_not_kept():
     for user in range(100):
         assert limiter.check(user, 0.0) is None
     assert limiter.check(1000, 120.0) is None
-    assert len(limiter.requests) == 1
+    assert len(limiter._requests) == 1
 
 
-def test_a_users_requests_can_be_counted_and_cleared():
+def test_a_users_requests_are_counted_within_the_window():
     limiter = RateLimiter(5, 60.0)
     assert limiter.max == 5
     assert limiter.count(1, 0.0) == 0
@@ -124,18 +124,11 @@ def test_a_users_requests_can_be_counted_and_cleared():
     assert limiter.count(1, 70.0) == 1
     assert limiter.count(2, 0.0) == 1
     assert limiter.count(3, 0.0) == 0
-    assert limiter.clear(1, 30.0) == 2
-    assert limiter.count(1, 30.0) == 0
-    assert limiter.count(2, 0.0) == 1
-    assert limiter.clear(1, 30.0) == 0
 
 
-def test_a_user_who_was_cleared_may_ask_again_at_once():
-    limiter = RateLimiter(1, 60.0)
-    assert limiter.check(1, 0.0) is None
-    assert limiter.check(1, 0.0) is not None
-    limiter.clear(1, 0.0)
-    assert limiter.check(1, 0.0) is None
+def test_a_limit_of_zero_lets_nobody_ask():
+    limiter = RateLimiter(0, 60.0)
+    assert limiter.check(1, 0.0) == 60.0 and limiter.count(1, 0.0) == 0
 
 
 # --- usage ---

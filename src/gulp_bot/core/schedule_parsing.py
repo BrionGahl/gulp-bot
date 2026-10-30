@@ -33,7 +33,7 @@ _DAY_BY_NAME = {name: day for day, names in DAY_NAMES.items() for name in names}
 # How a day is shown, and named in a cron expression.
 SHORT_DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
-# Raid weeks run Tuesday to Monday (`raid_notes_service.week_start`), so days are listed in that order.
+# Raid weeks run Tuesday to Monday (`raid_week.week_start`), so days are listed in that order.
 WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0]
 
 _TIME = re.compile(r"^(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m?\.?$|^(\d{1,2}):(\d{2})$|^(\d{1,2})$")

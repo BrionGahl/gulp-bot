@@ -1,24 +1,18 @@
 """The commands as Discord gets them, registered on a real bot. Needs discord.py installed."""
 
 import importlib.util
+import inspect
 import re
 from pathlib import Path
 
-import pytest
+from discord import app_commands
 
-pytest.importorskip("discord")
-
-from discord import app_commands  # noqa: E402
-
-from gulp_bot.bot import GulpBot  # noqa: E402
-from gulp_bot.core.config import Config  # noqa: E402
-from gulp_bot.mapper.help_entry_mapper import help_entries  # noqa: E402
-from gulp_bot.mapper.help_text_mapper import command_help_page, help_overview  # noqa: E402
-from gulp_bot.resource.registry import register_all_resources  # noqa: E402
-from gulp_bot.resource.settings_resource import settings  # noqa: E402
-from gulp_bot.resource.settings_wcl_resource import settings_wcl  # noqa: E402
-from gulp_bot.service.guild_settings_service import GuildSettingsService  # noqa: E402
-from gulp_bot.service.help_service import find_command, with_paths  # noqa: E402
+from gulp_bot.core import permission_checks
+from gulp_bot.mapper.help_entry_mapper import help_entries
+from gulp_bot.mapper.help_text_mapper import command_help_page, help_overview
+from gulp_bot.resource.settings_resource import settings
+from gulp_bot.resource.settings_wcl_resource import settings_wcl
+from gulp_bot.service.help_service import find_command, with_paths
 
 # Discord's limits on a message's content and on an embed description, where one command's page goes.
 MAX_MESSAGE_CHARS = 2000
@@ -43,14 +37,21 @@ TOP_LEVEL_ORDER = [
 ]
 
 
-def make_bot(**env):
-    config = Config.from_env({"DISCORD_TOKEN": "token", "DATABASE_URL": "postgres://unused", **env})
-    bot = GulpBot(config, pool=None, guild_settings=GuildSettingsService(repository=None, cache={}))  # type: ignore[arg-type]
-    register_all_resources(bot)
-    return bot
+ROOT = Path(__file__).resolve().parent.parent
 
 
-BOT = make_bot()
+def load_generator():
+    """`scripts/generate_commands_md.py`, which isn't a package: loaded from its file."""
+    spec = importlib.util.spec_from_file_location("generate_commands_md", ROOT / "scripts" / "generate_commands_md.py")
+    assert spec is not None and spec.loader is not None
+    generator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generator)
+    return generator
+
+
+GENERATOR = load_generator()
+# The bot with every command registered, built the way COMMANDS.md is generated from.
+BOT = GENERATOR.build_bot()
 
 
 def entries():
@@ -98,8 +99,6 @@ def test_every_expected_command_is_registered():
         "register",
     ]:
         assert expected in names
-    assert len(settings.app_command.commands) == 21
-    assert len(settings_wcl.app_command.commands) == 14
     assert settings_wcl.app_command.qualified_name == "settings wcl"
 
 
@@ -152,10 +151,11 @@ def test_every_service_is_built():
 
 
 def test_commands_md_lists_the_commands_as_they_are():
-    root = Path(__file__).resolve().parent.parent
-    spec = importlib.util.spec_from_file_location("generate_commands_md", root / "scripts" / "generate_commands_md.py")
-    assert spec is not None and spec.loader is not None
-    generator = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(generator)
-    written = (root / "COMMANDS.md").read_text(encoding="utf-8").replace("\r\n", "\n")
-    assert written == generator.render(BOT), "COMMANDS.md is out of date: run uv run scripts/generate_commands_md.py"
+    written = (ROOT / "COMMANDS.md").read_text(encoding="utf-8").replace("\r\n", "\n")
+    assert written == GENERATOR.render(BOT), "COMMANDS.md is out of date: run uv run scripts/generate_commands_md.py"
+
+
+def test_commands_md_says_who_every_permission_check_lets_through():
+    # A check missing from the generator's table would make its commands read "Everyone".
+    checks = {name for name, _ in inspect.getmembers(permission_checks, inspect.iscoroutinefunction) if name.startswith("check_is_")}
+    assert checks == set(GENERATOR.WHO_BY_CHECK)

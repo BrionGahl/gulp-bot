@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from ..repository.wcl_ignored_player_repository import IgnoredPlayerRepository
-from ..schema.wcl_settings_schema import IgnorePlayerOutcome
+from ..schema.wcl_settings_schema import NameListOutcome
+from .name_list_service import NameListService
 
 # The most players one server can ignore.
 MAX_IGNORED = 50
@@ -13,33 +14,17 @@ MAX_IGNORED = 50
 MAX_NAME_CHARS = 24
 
 
-def same_name(a: str, b: str) -> bool:
-    """Whether two character names are the same one: names compare ignoring case, including the accented
-    letters character names can have."""
-    return a.lower() == b.lower()
-
-
-class IgnoredPlayerService:
+class IgnoredPlayerService(NameListService):
     def __init__(self, repository: IgnoredPlayerRepository):
-        self._repository = repository
+        super().__init__(repository, MAX_IGNORED)
 
     async def list_ignored(self, guild_id: int) -> list[str]:
         """Every player the guild ignores, in name order (ignoring case)."""
-        return await self._repository.list_for_guild(guild_id)
+        return await self.names(guild_id)
 
-    async def ignore(self, guild_id: int, name: str) -> IgnorePlayerOutcome:
-        ignored = await self._repository.list_for_guild(guild_id)
-        if any(same_name(existing, name) for existing in ignored):
-            return IgnorePlayerOutcome.ALREADY_IGNORED
-        if len(ignored) >= MAX_IGNORED:
-            return IgnorePlayerOutcome.FULL
-        await self._repository.insert(guild_id, name)
-        return IgnorePlayerOutcome.ADDED
+    async def ignore(self, guild_id: int, name: str) -> NameListOutcome:
+        return await self.add(guild_id, name)
 
     async def stop_ignoring(self, guild_id: int, name: str) -> bool:
         """Stops ignoring `name` (in any capitalisation). Returns whether the player was ignored."""
-        stored = next((existing for existing in await self._repository.list_for_guild(guild_id) if same_name(existing, name)), None)
-        if stored is None:
-            return False
-        await self._repository.delete(guild_id, stored)
-        return True
+        return await self.remove(guild_id, name)

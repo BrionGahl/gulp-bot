@@ -15,7 +15,7 @@ from ..core.background_tasks import BackgroundTasks
 from ..schema.raid_attendance_schema import AttendanceMoment
 from ..service.guild_settings_service import GuildSettingsService
 from ..service.raid_attendance_service import RaidAttendanceService
-from ..service.raid_nights_service import attendance_schedules
+from ..service.raid_nights_service import attendance_schedules, raid_day
 from ..service.raid_report_service import RaidReportService
 from .schedule_loop import ScheduledWork, run_schedule_loop
 
@@ -64,4 +64,6 @@ class RaidAttendanceJob:
         if settings.raid_notes_channel_id is None:
             log.error("Skipping raid %s attendance for guild %s: no raid notes channel is registered", moment.value, guild_id)
             return
-        await self._attendance.record_snapshot(guild_id, settings.raid_voice.channel_id, settings.raid_notes_channel_id, moment, fire_time)
+        await self._attendance.record_snapshot(
+            guild_id, settings.raid_voice.channel_id, settings.raid_notes_channel_id, moment, fire_time, raid_day(fire_time, settings.raid_nights)
+        )

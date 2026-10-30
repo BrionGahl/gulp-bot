@@ -17,8 +17,9 @@ from ..schema.raid_attendance_schema import MAX_RAID_HOURS
 from ..schema.wcl_report_schema import ReportOverview
 from .ai_service import AiService
 from .guild_settings_service import GuildSettingsService
+from .raid_nights_service import raid_day
 from .raid_notes_service import RaidNotesService
-from .raid_recap_service import SYSTEM_PROMPT, TEMPERATURE, recap_facts, recap_message, recap_request
+from .raid_recap_service import SPEC, recap_facts, recap_message, recap_request
 from .warcraft_logs_service import WarcraftLogsService
 
 if TYPE_CHECKING:
@@ -60,7 +61,7 @@ class RaidReportService:
         try:
             await self._post(guild_id, raid_end)
         except Exception as e:
-            log.error("Failed to post the Warcraft Logs overview after the raid for guild %s: %s", guild_id, e)
+            log.exception("Failed to post the Warcraft Logs overview after the raid for guild %s: %s", guild_id, e)
 
     async def _post(self, guild_id: int, raid_end: datetime) -> None:
         # Read again after the wait, so that a change made in the meantime counts.
@@ -83,7 +84,8 @@ class RaidReportService:
             log.info("No Warcraft Logs report from this raid for guild %s", guild_id)
             message = {"content": NO_REPORT}
 
-        week = await self._raid_notes.week_thread(guild_id, raid_notes_channel_id, raid_end.date())
+        # The week the raid started in: a raid running past Monday midnight is still that week's.
+        week = await self._raid_notes.week_thread(guild_id, raid_notes_channel_id, raid_day(raid_end, settings.raid_nights))
         thread = self._raid_notes.thread_messageable(guild_id, week.thread_id)
         await thread.send(**message)  # type: ignore[arg-type]
 
@@ -100,8 +102,8 @@ class RaidReportService:
         if facts is None:
             return None
         try:
-            recap, cut_short = await self._ai.generate(self._guild_settings.get(guild_id).ai, SYSTEM_PROMPT, recap_request(facts), TEMPERATURE)
+            recap, cut_short = await self._ai.generate(self._guild_settings.get(guild_id).ai, SPEC, recap_request(facts))
         except AiError as e:
-            log.info("No raid recap for report %s of guild %s: %s", overview.code, guild_id, getattr(e, "detail", str(e)))
+            log.info("No raid recap for report %s of guild %s: %s", overview.code, guild_id, e.reason)
             return None
         return recap_message(f"{recap} …" if cut_short else recap)

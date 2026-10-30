@@ -14,11 +14,15 @@ log = logging.getLogger(__name__)
 
 RESPONSE = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK"
 
+# How long a caller has to send its request, and how much of it is read (and thrown away).
+READ_TIMEOUT_SECS = 5
+MAX_REQUEST_BYTES = 1024
+
 
 async def _answer(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     try:
         # Drain (and discard) whatever request was sent; we don't route on it.
-        await asyncio.wait_for(reader.read(1024), timeout=5)
+        await asyncio.wait_for(reader.read(MAX_REQUEST_BYTES), timeout=READ_TIMEOUT_SECS)
         writer.write(RESPONSE)
         await writer.drain()
     except TimeoutError, OSError:

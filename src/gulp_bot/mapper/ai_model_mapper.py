@@ -6,7 +6,7 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
-from ..core.text import truncate_chars
+from ..core.http_client import error_body
 from ..schema.ai_schema import ModelReply, Turn
 
 # Room for an answer of about the 2000 characters Discord allows in a message, with some to spare in case
@@ -98,4 +98,4 @@ def api_error_message(body: str) -> str:
         error = parsed.get("error")
         if isinstance(error, str):
             return error
-    return truncate_chars(body, 300)
+    return error_body(body)

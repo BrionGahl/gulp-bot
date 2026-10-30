@@ -14,7 +14,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from ..core.http_client import HttpClient, RequestFailed, RequestTimeout, status_text
+from ..core.http_client import HttpClient, RequestFailed, RequestTimeout, Response, error_body, status_text
 from ..exception.warcraft_logs_exception import WarcraftLogsError
 from ..mapper.warcraft_logs_response_mapper import (
     actors_from_data,
@@ -212,30 +212,28 @@ class WarcraftLogsClient:
         # Twice: a token the API turns down is dropped and a fresh one is tried once.
         for attempt in range(2):
             token = await self._access_token()
-            try:
-                response = await self._http.request(
-                    "POST",
-                    self.api_url,
-                    timeout=self.timeout,
-                    headers={"Authorization": f"Bearer {token}"},
-                    json={"query": query, "variables": variables},
-                )
-            except RequestTimeout:
-                raise WarcraftLogsError(TIMEOUT_MESSAGE) from None
-            except RequestFailed as e:
-                raise WarcraftLogsError(str(e)) from None
+            response = await self._post(self.api_url, headers={"Authorization": f"Bearer {token}"}, json={"query": query, "variables": variables})
 
             if response.status == 401 and attempt == 0:
                 self._token = None
                 continue
             if not response.ok:
-                raise WarcraftLogsError(f"Warcraft Logs API returned {status_text(response.status)}: {response.body}")
+                raise WarcraftLogsError(f"Warcraft Logs API returned {status_text(response.status)}: {error_body(response.body)}")
             try:
                 body = json.loads(response.body)
             except ValueError as e:
                 raise WarcraftLogsError(f"error decoding response body: {e}") from None
             return data_from_response(body)
         raise WarcraftLogsError("Warcraft Logs turned down a freshly issued access token.")
+
+    async def _post(self, url: str, **kwargs: Any) -> Response:
+        """A POST to the API, with its timeout. A request that times out or can't be sent raises."""
+        try:
+            return await self._http.request("POST", url, timeout=self.timeout, **kwargs)
+        except RequestTimeout:
+            raise WarcraftLogsError(TIMEOUT_MESSAGE) from None
+        except RequestFailed as e:
+            raise WarcraftLogsError(str(e)) from None
 
     async def _access_token(self) -> str:
         """A valid access token, fetched with the client credentials flow when there is none yet or the one
@@ -244,20 +242,9 @@ class WarcraftLogsClient:
             if self._token is not None and self._token.expires_at > time.monotonic() + TOKEN_REFRESH_MARGIN:
                 return self._token.value
 
-            try:
-                response = await self._http.request(
-                    "POST",
-                    self.token_url,
-                    timeout=self.timeout,
-                    form={"grant_type": "client_credentials"},
-                    basic_auth=(self._client_id, self._client_secret),
-                )
-            except RequestTimeout:
-                raise WarcraftLogsError(TIMEOUT_MESSAGE) from None
-            except RequestFailed as e:
-                raise WarcraftLogsError(str(e)) from None
+            response = await self._post(self.token_url, form={"grant_type": "client_credentials"}, basic_auth=(self._client_id, self._client_secret))
             if not response.ok:
-                raise WarcraftLogsError(f"Warcraft Logs refused the client credentials ({status_text(response.status)}): {response.body}")
+                raise WarcraftLogsError(f"Warcraft Logs refused the client credentials ({status_text(response.status)}): {error_body(response.body)}")
 
             try:
                 issued = json.loads(response.body)

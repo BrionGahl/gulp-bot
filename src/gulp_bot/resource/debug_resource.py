@@ -8,13 +8,11 @@ from datetime import datetime
 from discord import app_commands
 from discord.ext import commands
 
-from ..core.discord_context import GulpContext
+from ..core.discord_context import NO_RAID_NOTES_CHANNEL, GulpContext, require_guild
 from ..core.permission_checks import check_is_moderator, prefix_check
 from ..core.schedule_parsing import now_in_new_york
 from ..schema.raid_attendance_schema import AttendanceMoment
 from .resource_support import meta
-
-NO_RAID_NOTES_CHANNEL = "No raid notes channel is registered for this server; set one with `/settings raid_notes_channel`."
 
 
 @commands.hybrid_command(
@@ -24,9 +22,7 @@ NO_RAID_NOTES_CHANNEL = "No raid notes channel is registered for this server; se
 @app_commands.describe(week="Any date (YYYY-MM-DD) in the target week; defaults to this week")
 async def test_raid_notes(ctx: GulpContext, week: str | None = None) -> None:
     # `check_is_moderator` has already established this is a guild.
-    guild_id = ctx.guild_id
-    if guild_id is None:
-        return
+    guild_id = require_guild(ctx)
     channel_id = ctx.services.guild_settings.get(guild_id).raid_notes_channel_id
     if channel_id is None:
         await ctx.send(NO_RAID_NOTES_CHANNEL)
@@ -62,9 +58,7 @@ meta(
 @prefix_check(check_is_moderator)
 async def test_raid_attendance(ctx: GulpContext) -> None:
     # `check_is_moderator` has already established this is a guild.
-    guild_id = ctx.guild_id
-    if guild_id is None:
-        return
+    guild_id = require_guild(ctx)
     settings = ctx.services.guild_settings.get(guild_id)
     if settings.raid_voice is None:
         await ctx.send("Raid attendance isn't set up for this server; set it with `/settings raid_voice`.")

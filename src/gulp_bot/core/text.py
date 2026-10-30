@@ -32,6 +32,23 @@ def single_line(text: str) -> str:
     return " ".join(text.split())
 
 
+def same_name(a: str, b: str) -> bool:
+    """Whether two names a member typed are the same one: ignoring case, accented letters included, and
+    spaces around them ("Sporecaller" and " sporecaller", "Rè" and "rÈ")."""
+    return name_key(a) == name_key(b)
+
+
+def name_key(name: str) -> str:
+    """`name` in the form names are compared in (`same_name`), for sets and dictionaries of names."""
+    return name.strip().casefold()
+
+
+def clean_line(text: str, max_chars: int) -> str:
+    """`text` on one line, then cut to `max_chars`: whitespace is collapsed first, so the budget isn't spent
+    on it."""
+    return truncate_chars(single_line(text), max_chars)
+
+
 def ascii_lower(text: str) -> str:
     """`text` with only its ASCII letters lowercased, for comparisons that ignore ASCII case alone."""
     return "".join(char.lower() if char.isascii() else char for char in text)
@@ -39,7 +56,12 @@ def ascii_lower(text: str) -> str:
 
 def plural(count: int, noun: str) -> str:
     """ "1 pull", "34 pulls"."""
-    return f"1 {noun}" if count == 1 else f"{count} {noun}s"
+    return f"{count} {noun_for(count, noun)}"
+
+
+def noun_for(count: int, noun: str) -> str:
+    """`noun` as it goes after `count`, for when the number is written apart: "pull", "pulls"."""
+    return noun if count == 1 else f"{noun}s"
 
 
 def pull_time(ms: float) -> str:
@@ -81,3 +103,14 @@ def limited_lines(lines: list[str], max_bytes: int, overflow_note: str = "…and
             return text + overflow_note.format(left=len(lines) - shown)
         text += line
     return text
+
+
+def format_damage(amount: int) -> str:
+    """Damage as a short number: 3.5B, 200.3M, 12.3K."""
+    if amount >= 1_000_000_000:
+        return f"{amount / 1e9:.1f}B"
+    if amount >= 1_000_000:
+        return f"{amount / 1e6:.1f}M"
+    if amount >= 1_000:
+        return f"{amount / 1e3:.1f}K"
+    return str(amount)

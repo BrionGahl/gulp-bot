@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..core.database import from_bigint
+from ..core.embed import MAX_LIST_CHARS
 from ..core.schedule_parsing import describe_schedule, next_fire_discord_timestamp, parse_stored_schedule
 from ..core.text import limited_lines
 from ..schema.announcement_schema import Announcement
@@ -16,9 +17,6 @@ log = logging.getLogger(__name__)
 
 # How much of each message `/announcement list` shows.
 PREVIEW_CHARS = 80
-
-# Cap on the `/announcement list` embed description, under Discord's 4096-character limit.
-MAX_LIST_CHARS = 4000
 
 
 def announcement_from_row(row: Mapping[str, Any]) -> Announcement | None:

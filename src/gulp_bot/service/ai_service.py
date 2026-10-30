@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Sequence
-from typing import Any
 
 from ..client.chat_model_client import ChatModelClient
 from ..client.ollama_client import OllamaClient
@@ -20,10 +19,11 @@ from ..core.http_client import HttpClient
 from ..core.rate_limiter import RateLimiter
 from ..exception.ai_exception import AiError, DailyLimit, Disabled, NotAllowed, Unavailable, unavailable
 from ..repository.ai_memory_repository import ApiFailureRepository, TokenUsageRepository
-from ..schema.ai_schema import Access, ApiFailure, ModelCheck, TldrCooldown, Turn, UsageReport
+from ..schema.ai_schema import Access, ApiFailure, ModelCheck, PromptSpec, TldrCooldown, Turn, UsageReport
 from ..schema.guild_settings_schema import AiSettings
 from .ai_access_service import ensure_switches_allow
-from .tldr_service import SYSTEM_PROMPT, TEMPERATURE, TLDR_COOLDOWN, TldrCooldowns, tldr_request, with_cut_short_note
+from .tldr_service import SPEC as TLDR_SPEC
+from .tldr_service import TLDR_COOLDOWN, TldrCooldowns, tldr_request, with_cut_short_note
 
 log = logging.getLogger(__name__)
 
@@ -109,33 +109,28 @@ class AiService:
         if not access.is_allowed():
             raise NotAllowed()
         ensure_switches_allow(settings, access)
-        summary, cut_short = await self._complete(SYSTEM_PROMPT, [Turn.user(tldr_request(transcript, omitted))], settings, TEMPERATURE)
+        summary, cut_short = await self._complete(TLDR_SPEC, [Turn.user(tldr_request(transcript, omitted))], settings)
         return with_cut_short_note(summary, cut_short)
 
-    async def generate(
-        self, settings: AiSettings, system: str, prompt: str, temperature: float | None, schema: dict[str, Any] | None = None
-    ) -> tuple[str, bool]:
-        """What the model answers to `prompt`, with `system` as the system prompt, for something the bot does
-        by itself rather than for a member, in a guild whose developers have set `settings`: refused while
-        they have the AI features off. With a JSON `schema`, the answer is JSON in that shape. Counts towards the limit on all requests together. Returns the answer,
-        and whether it ran out of tokens before it was finished. Raises `AiError` if there is no answer."""
+    async def generate(self, settings: AiSettings, spec: PromptSpec, prompt: str) -> tuple[str, bool]:
+        """What the model answers to `prompt`, asked as `spec` says, for something the bot does by itself
+        rather than for a member, in a guild whose developers have set `settings`: refused while they have
+        the AI features off. Counts towards the limit on all requests together. Returns the answer, and
+        whether it ran out of tokens before it was finished. Raises `AiError` if there is no answer."""
         if settings.disabled:
             raise Disabled()
-        return await self._complete(system, [Turn.user(prompt)], settings, temperature, schema)
+        return await self._complete(spec, [Turn.user(prompt)], settings)
 
-    async def _complete(
-        self, system: str, turns: Sequence[Turn], settings: AiSettings, temperature: float | None, schema: dict[str, Any] | None = None
-    ) -> tuple[str, bool]:
-        """One request with `system` as the system prompt and `turns` as the conversation, to the model the
-        guild's `settings` choose, at `temperature` (`None` leaves the model's own), counted in the limit on
-        all requests together. Returns the answer, and
-        whether it ran out of tokens before it was finished. A request that gets no answer isn't counted.
-        Raises `AiError` if there is no answer."""
+    async def _complete(self, spec: PromptSpec, turns: Sequence[Turn], settings: AiSettings) -> tuple[str, bool]:
+        """One request with `turns` as the conversation, asked as `spec` says, to the model the guild's
+        `settings` choose, counted in the limit on all requests together. Returns the answer, and whether it
+        ran out of tokens before it was finished. A request that gets no answer isn't counted. Raises
+        `AiError` if there is no answer."""
         if self.daily_limiter.check(EVERYBODY, time.monotonic()) is not None:
             raise DailyLimit()
         model = self.resolve_model(settings)
         try:
-            reply = await self._model_client.complete(model, system, turns, self.resolve_think(settings), temperature, schema)
+            reply = await self._model_client.complete(model, spec.system, turns, self.resolve_think(settings), spec.temperature, spec.schema)
             if reply.tokens is not None:
                 input_tokens, output_tokens = reply.tokens
                 log.info("%s answered with %d input and %d output tokens", model, input_tokens, output_tokens)

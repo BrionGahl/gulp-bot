@@ -23,7 +23,10 @@ fi
 ENGINE="${ENGINE:-$(command -v podman || command -v docker)}"
 TARBALL="gulp-bot-$VERSION.tar"
 
-"$ENGINE" build -t "gulp-bot:$VERSION" -t "gulp-bot:$CHANNEL" .
+# podman builds OCI images unless told otherwise, and those drop the Dockerfile's HEALTHCHECK.
+BUILD_FORMAT=()
+if [ "$(basename "$ENGINE")" = podman ]; then BUILD_FORMAT=(--format docker); fi
+"$ENGINE" build "${BUILD_FORMAT[@]}" -t "gulp-bot:$VERSION" -t "gulp-bot:$CHANNEL" .
 
 # podman needs --multi-image-archive to write more than one tag into a docker-format archive.
 if [ "$(basename "$ENGINE")" = podman ]; then

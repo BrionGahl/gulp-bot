@@ -125,7 +125,8 @@ class GulpBot(commands.Bot):
 
     async def on_command(self, ctx: commands.Context[Any]) -> None:
         channel = getattr(ctx.channel, "name", None) or "<unknown>"
-        log.info("%s in %s used slash command '%s'", ctx.author.name, channel, ctx.invoked_with)
+        kind = "slash command" if ctx.interaction is not None else "command"
+        log.info("%s in %s used %s '%s'", ctx.author.name, channel, kind, ctx.invoked_with)
 
     async def on_command_completion(self, ctx: commands.Context[Any]) -> None:
         if ctx.command is not None:

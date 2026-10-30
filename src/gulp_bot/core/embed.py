@@ -21,6 +21,8 @@ SOURCE_FOOTER = "/source to view repository"
 # together (title, description, field names and values, footer).
 MAX_TITLE_CHARS = 256
 MAX_DESCRIPTION_CHARS = 4096
+# What a list in an embed description is cut to: under the limit, with room for its "…and N more" note.
+MAX_LIST_CHARS = MAX_DESCRIPTION_CHARS - 96
 MAX_FIELD_CHARS = 1024
 MAX_EMBED_CHARS = 6000
 

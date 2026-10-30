@@ -9,26 +9,22 @@ from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 
-asyncpg = pytest.importorskip("asyncpg")
-URL = os.environ.get("TEST_DATABASE_URL")
-pytestmark = pytest.mark.skipif(URL is None, reason="needs TEST_DATABASE_URL pointing at a disposable Postgres database")
-
-from gulp_bot.core import database  # noqa: E402
-from gulp_bot.core.cron import Schedule  # noqa: E402
-from gulp_bot.core.migrations import run_migrations  # noqa: E402
-from gulp_bot.repository.absence_repository import AbsenceRepository  # noqa: E402
-from gulp_bot.repository.announcement_repository import AnnouncementRepository  # noqa: E402
-from gulp_bot.repository.guild_settings_repository import GuildSettingsRepository  # noqa: E402
-from gulp_bot.repository.officer_channel_repository import OfficerChannelRepository  # noqa: E402
-from gulp_bot.repository.raid_attendance_repository import RaidAttendanceRepository  # noqa: E402
-from gulp_bot.repository.raid_notes_post_repository import RaidNotesPostRepository  # noqa: E402
-from gulp_bot.repository.wcl_consumable_ability_repository import ConsumableAbilityRepository  # noqa: E402
-from gulp_bot.repository.wcl_ignored_player_repository import IgnoredPlayerRepository  # noqa: E402
-from gulp_bot.repository.wcl_tracked_ability_repository import TrackedAbilityRepository  # noqa: E402
-from gulp_bot.repository.wcl_tracked_enemy_repository import TrackedEnemyRepository  # noqa: E402
-from gulp_bot.schema.absence_schema import AbsenceKind, NewAbsence, NewChannelNote, NoteCategory, OfficerChannelOwner  # noqa: E402
-from gulp_bot.schema.announcement_schema import NewAnnouncement  # noqa: E402
-from gulp_bot.schema.guild_settings_schema import (  # noqa: E402
+from gulp_bot.core import database
+from gulp_bot.core.cron import Schedule
+from gulp_bot.core.migrations import load_migrations, run_migrations
+from gulp_bot.repository.absence_repository import AbsenceRepository
+from gulp_bot.repository.announcement_repository import AnnouncementRepository
+from gulp_bot.repository.guild_settings_repository import GuildSettingsRepository
+from gulp_bot.repository.officer_channel_repository import OfficerChannelRepository
+from gulp_bot.repository.raid_attendance_repository import RaidAttendanceRepository
+from gulp_bot.repository.raid_notes_post_repository import RaidNotesPostRepository
+from gulp_bot.repository.wcl_consumable_ability_repository import ConsumableAbilityRepository
+from gulp_bot.repository.wcl_ignored_player_repository import IgnoredPlayerRepository
+from gulp_bot.repository.wcl_tracked_ability_repository import TrackedAbilityRepository
+from gulp_bot.repository.wcl_tracked_enemy_repository import TrackedEnemyRepository
+from gulp_bot.schema.absence_schema import AbsenceKind, NewAbsence, NewChannelNote, NoteCategory, OfficerChannelOwner
+from gulp_bot.schema.announcement_schema import NewAnnouncement
+from gulp_bot.schema.guild_settings_schema import (
     AiSettings,
     GuildIdSetting,
     RaidNights,
@@ -38,20 +34,24 @@ from gulp_bot.schema.guild_settings_schema import (  # noqa: E402
     WclSource,
     WowUtilsCredentials,
 )
-from gulp_bot.schema.officer_channel_schema import RegisteredOfficerChannel  # noqa: E402
-from gulp_bot.schema.wcl_settings_schema import (  # noqa: E402
+from gulp_bot.schema.officer_channel_schema import RegisteredOfficerChannel
+from gulp_bot.schema.wcl_settings_schema import (
+    MAX_TRACKED,
     ConsumableKind,
-    IgnorePlayerOutcome,
+    NameListOutcome,
     RegisterConsumableOutcome,
     TrackAbilityOutcome,
-    TrackEnemyOutcome,
 )
-from gulp_bot.service import wcl_consumable_service, wcl_ignored_player_service, wcl_tracked_ability_service, wcl_tracked_enemy_service  # noqa: E402
-from gulp_bot.service.guild_settings_service import GuildSettingsService  # noqa: E402
-from gulp_bot.service.wcl_consumable_service import ConsumableService, ids_of_kind  # noqa: E402
-from gulp_bot.service.wcl_ignored_player_service import IgnoredPlayerService  # noqa: E402
-from gulp_bot.service.wcl_tracked_ability_service import TrackedAbilityService  # noqa: E402
-from gulp_bot.service.wcl_tracked_enemy_service import TrackedEnemyService  # noqa: E402
+from gulp_bot.service import wcl_consumable_service, wcl_ignored_player_service
+from gulp_bot.service.guild_settings_service import GuildSettingsService
+from gulp_bot.service.raid_attendance_service import pairs_with
+from gulp_bot.service.wcl_consumable_service import ConsumableService, ids_of_kind
+from gulp_bot.service.wcl_ignored_player_service import IgnoredPlayerService
+from gulp_bot.service.wcl_tracked_ability_service import TrackedAbilityService
+from gulp_bot.service.wcl_tracked_enemy_service import TrackedEnemyService
+
+URL = os.environ.get("TEST_DATABASE_URL")
+pytestmark = pytest.mark.skipif(URL is None, reason="needs TEST_DATABASE_URL pointing at a disposable Postgres database")
 
 GUILD_A, GUILD_B = 111, 222
 
@@ -72,7 +72,7 @@ def test_migrating_twice_changes_nothing():
     async def test(pool):
         await run_migrations(pool)
         rows = await pool.fetch("SELECT version, success FROM _sqlx_migrations ORDER BY version")
-        assert [row["version"] for row in rows] == list(range(1, 19)) and all(row["success"] for row in rows)
+        assert [row["version"] for row in rows] == [migration.version for migration in load_migrations()] and all(row["success"] for row in rows)
 
     with_pool(test)
 
@@ -205,11 +205,11 @@ def test_a_start_snapshot_is_stored_per_guild_and_taken_once():
         await attendance.save_start_snapshot(GUILD_A, 9, at, present)
         await attendance.save_start_snapshot(GUILD_B, 9, at, [])
         taken = await attendance.take_start_snapshot(GUILD_A)
-        assert taken is not None and (taken.voice_channel_id, taken.taken_at, taken.present) == (9, at, present)
-        assert taken.pairs_with(9, at + timedelta(hours=3))
+        assert taken is not None and (taken.voice_channel_id, taken.taken_at, taken.present) == (9, at, tuple(present))
+        assert pairs_with(taken, 9, at + timedelta(hours=3))
         assert await attendance.take_start_snapshot(GUILD_A) is None
         b = await attendance.take_start_snapshot(GUILD_B)
-        assert b is not None and b.present == []
+        assert b is not None and b.present == ()
 
     with_pool(test)
 
@@ -227,7 +227,7 @@ def test_tracked_abilities_are_scoped_to_their_guild_and_limited():
         assert [ability.name for ability in await mechanics.list_tracked(GUILD_A)] == ["coalesced venom (soak)", "Venom Rupture"]
         assert not await mechanics.untrack(GUILD_B, "coalesced venom (soak)")
         assert await mechanics.untrack(GUILD_A, "COALESCED VENOM (SOAK)")
-        for ability_id in range(100, 100 + wcl_tracked_ability_service.MAX_TRACKED - 1):
+        for ability_id in range(100, 100 + MAX_TRACKED - 1):
             assert (await mechanics.track(GUILD_A, ability_id, f"Ability {ability_id}")).outcome is added
         assert (await mechanics.track(GUILD_A, 999, "One too many")).outcome is TrackAbilityOutcome.FULL
         assert (await mechanics.track(GUILD_A, 100, "Renamed at the limit")).outcome is TrackAbilityOutcome.RENAMED
@@ -239,7 +239,7 @@ def test_tracked_enemies_are_scoped_to_their_guild_and_limited():
     async def test(pool):
         await pool.execute("TRUNCATE wcl_tracked_enemies")
         enemies = TrackedEnemyService(TrackedEnemyRepository(pool))
-        added, already = TrackEnemyOutcome.ADDED, TrackEnemyOutcome.ALREADY_TRACKED
+        added, already = NameListOutcome.ADDED, NameListOutcome.ALREADY_LISTED
         assert await enemies.track(GUILD_A, "Sporecaller") is added
         assert await enemies.track(GUILD_A, "Nexus-King Salhadaar") is added
         assert await enemies.track(GUILD_A, "SPORECALLER") is already
@@ -248,9 +248,9 @@ def test_tracked_enemies_are_scoped_to_their_guild_and_limited():
         assert not await enemies.untrack(GUILD_A, "Dimensius")
         assert await enemies.untrack(GUILD_A, "sporecaller")
         assert await enemies.list_tracked(GUILD_B) == ["Sporecaller"]
-        for n in range(wcl_tracked_enemy_service.MAX_TRACKED - 1):
+        for n in range(MAX_TRACKED - 1):
             assert await enemies.track(GUILD_A, f"Add {n}") is added
-        assert await enemies.track(GUILD_A, "One too many") is TrackEnemyOutcome.FULL
+        assert await enemies.track(GUILD_A, "One too many") is NameListOutcome.FULL
 
     with_pool(test)
 
@@ -259,7 +259,7 @@ def test_ignored_players_are_scoped_to_their_guild_and_limited():
     async def test(pool):
         await pool.execute("TRUNCATE wcl_ignored_players")
         ignored = IgnoredPlayerService(IgnoredPlayerRepository(pool))
-        added, already = IgnorePlayerOutcome.ADDED, IgnorePlayerOutcome.ALREADY_IGNORED
+        added, already = NameListOutcome.ADDED, NameListOutcome.ALREADY_LISTED
         assert await ignored.ignore(GUILD_A, "Tritonian") is added
         assert await ignored.ignore(GUILD_A, "aâyo") is added
         assert await ignored.ignore(GUILD_A, "TRITONIAN") is already
@@ -271,7 +271,7 @@ def test_ignored_players_are_scoped_to_their_guild_and_limited():
         assert await ignored.list_ignored(GUILD_B) == ["Tritonian"]
         for n in range(wcl_ignored_player_service.MAX_IGNORED - 1):
             assert await ignored.ignore(GUILD_A, f"Player{n}") is added
-        assert await ignored.ignore(GUILD_A, "OneTooMany") is IgnorePlayerOutcome.FULL
+        assert await ignored.ignore(GUILD_A, "OneTooMany") is NameListOutcome.FULL
 
     with_pool(test)
 

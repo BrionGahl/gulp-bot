@@ -4,6 +4,7 @@ until the process is told to stop."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import signal
 
@@ -56,11 +57,9 @@ async def _run_until_stopped(bot: GulpBot, token: str) -> None:
     loop = asyncio.get_running_loop()
     stopping = asyncio.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
-        try:
+        # No signal handlers outside Unix; Ctrl-C still stops the bot there.
+        with contextlib.suppress(NotImplementedError, RuntimeError):
             loop.add_signal_handler(sig, stopping.set)
-        except NotImplementedError, RuntimeError:
-            # No signal handlers outside Unix; Ctrl-C still stops the bot there.
-            pass
 
     async with bot:
         runner = asyncio.create_task(bot.start(token))

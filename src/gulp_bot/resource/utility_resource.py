@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 from typing import Any
@@ -10,13 +11,12 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from ..core.discord_context import GulpContext
+from ..core.discord_context import GulpContext, bot_of
 from ..core.embed import command_embed, to_discord_embed
-from ..core.permission_checks import check_is_moderator, prefix_check
 from ..mapper.help_entry_mapper import help_entries
 from ..mapper.help_text_mapper import command_help_page, help_overview
 from ..service.help_service import find_command
-from .resource_support import meta
+from .resource_support import filter_choices, meta
 
 log = logging.getLogger(__name__)
 
@@ -60,9 +60,8 @@ meta(
 
 @help_command.autocomplete("command")
 async def autocomplete_command(interaction: discord.Interaction, partial: str) -> list[app_commands.Choice[str]]:
-    tree: app_commands.CommandTree[Any] = interaction.client.tree  # type: ignore[attr-defined]
-    names = [entry.name for entry in help_entries(tree) if not entry.hidden and entry.name.startswith(partial)]
-    return [app_commands.Choice(name=name, value=name) for name in names[:25]]
+    tree: app_commands.CommandTree[Any] = bot_of(interaction).tree
+    return filter_choices([entry.name for entry in help_entries(tree) if not entry.hidden], partial)
 
 
 class RegisterButtons(discord.ui.View):
@@ -99,8 +98,9 @@ class RegisterButtons(discord.ui.View):
 
 
 @commands.hybrid_command(name="register", description="Register slash commands in this guild or globally")
-@prefix_check(check_is_moderator)
 async def register(ctx: GulpContext) -> None:
+    # Only the bot's owner, checked here rather than with a role check: the owner has to be able to run it
+    # in a server that hasn't registered any roles yet.
     bot = ctx.bot
     if not await bot.is_owner(ctx.author):
         await ctx.send("Can only be used by bot owner")
@@ -109,10 +109,9 @@ async def register(ctx: GulpContext) -> None:
     view = RegisterButtons(ctx.author.id)
     message = await ctx.send("Choose what to do with the commands:", view=view)
     await view.wait()
-    try:
+    # Only to take the buttons away: if the message is gone, so are they.
+    with contextlib.suppress(discord.HTTPException):
         await message.edit(view=None)
-    except discord.HTTPException:
-        pass
     if view.pressed is None:
         await ctx.send(":warning: You didn't interact in time - please run the command again.")
         return

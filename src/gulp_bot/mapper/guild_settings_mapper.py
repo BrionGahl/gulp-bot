@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
-from typing import Any
 
 from ..core.cron import Schedule
-from ..core.database import from_bigint, from_bigint_or_none
+from ..core.database import Row, from_bigint, from_bigint_or_none
 from ..core.embed import Embed, add_field, command_embed
 from ..core.schedule_parsing import describe_schedule, parse_stored_schedule
 from ..schema.guild_settings_schema import (
@@ -21,12 +19,10 @@ from ..schema.guild_settings_schema import (
     WclCredentials,
     WclSource,
 )
-from ..schema.wcl_settings_schema import ALL_CONSUMABLE_KINDS, ConsumableAbility, TrackedAbility
-from ..service.raid_nights_service import describe_raid_nights
+from ..schema.wcl_settings_schema import MAX_WCL_ID, ConsumableAbility, ConsumableKind, TrackedAbility
+from .raid_nights_mapper import describe_raid_nights
 
 log = logging.getLogger(__name__)
-
-Row = Mapping[str, Any]
 
 
 def guild_id_from_row(row: Row) -> int:
@@ -99,8 +95,8 @@ def _raid_voice(row: Row, guild_id: int) -> RaidVoice | None:
 
 
 def _wcl_id(value: int | None) -> int | None:
-    """A Warcraft Logs ID, which is a 32-bit number; anything else was edited in by hand and is ignored."""
-    return value if value is not None and 0 <= value <= 0xFFFFFFFF else None
+    """A Warcraft Logs ID (`MAX_WCL_ID`); anything else was edited in by hand and is ignored."""
+    return value if value is not None and 0 <= value <= MAX_WCL_ID else None
 
 
 def _wcl_source(row: Row) -> WclSource | None:
@@ -183,7 +179,7 @@ def _wcl_source_text(settings: GuildSettings) -> str:
 
 def _consumables_text(consumables: list[ConsumableAbility]) -> str:
     lines = []
-    for kind in ALL_CONSUMABLE_KINDS:
+    for kind in ConsumableKind:
         ids = [entry.ability_id for entry in consumables if entry.kind is kind]
         if ids:
             lines.append(f"{kind.plural}: {', '.join(map(str, ids))}")

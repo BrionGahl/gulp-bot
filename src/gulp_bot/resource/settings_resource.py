@@ -11,18 +11,20 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from ..core.discord_context import GulpContext, slash_context
+from ..core.discord_context import GulpContext, require_guild, slash_context
 from ..core.embed import command_embed, to_discord_embed
 from ..core.permission_checks import check_is_admin_or_moderator, check_is_administrator, prefix_check, slash_check
 from ..core.schedule_parsing import describe_schedule, next_fire_discord_timestamp, parse_weekly_schedule
 from ..exception.schedule_exception import ScheduleProblem
 from ..mapper.guild_settings_mapper import settings_overview_embed
 from ..mapper.officer_channel_mapper import officer_channel_list_description
+from ..mapper.raid_nights_mapper import describe_raid_nights
 from ..schema.guild_settings_schema import ClearableSetting, GuildIdSetting, RaidVoice, WowUtilsCredentials
+from ..service.guild_settings_service import role_conflict
 from ..service.guild_validation_service import TEXT_CHANNEL_TYPES, VOICE_CHANNEL_TYPES
-from ..service.raid_nights_service import describe_raid_nights, end_schedule, parse_raid_nights, start_schedule
+from ..service.raid_nights_service import end_schedule, parse_raid_nights, start_schedule
 from ..service.raid_notes_service import DEFAULT_RAID_NOTES_SCHEDULE
-from .resource_support import choice_value, meta, reply, require_guild, subcommand_required
+from .resource_support import choice_value, meta, reply, subcommand_required
 from .settings_wcl_resource import settings_wcl
 
 CLEAR_CHOICES = [app_commands.Choice(name=setting.label, value=setting.value) for setting in ClearableSetting]
@@ -56,7 +58,7 @@ async def register_role(ctx: GulpContext, setting: GuildIdSetting, role_id: int)
     """Registers `role_id` for `setting` after confirming, against Discord, that the role belongs to the
     server the command was used in."""
     guild_id = require_guild(ctx)
-    problem = await ctx.services.guild_validation.role_problem(guild_id, role_id)
+    problem = role_conflict(ctx.services.guild_settings.get(guild_id), setting, role_id) or await ctx.services.guild_validation.role_problem(guild_id, role_id)
     if problem is not None:
         await reply(ctx, problem)
         return
@@ -117,12 +119,6 @@ _sub(mod_role)
 @prefix_check(check_is_administrator)
 @app_commands.describe(role="Role held by the bot's developers")
 async def dev_role(ctx: GulpContext, role: discord.Role) -> None:
-    guild_id = require_guild(ctx)
-    # The role would otherwise hand developer powers to every moderator, raider or trial.
-    current = ctx.services.guild_settings.get(guild_id)
-    if role.id in (current.mod_role_id, current.raider_role_id, current.trial_role_id):
-        await reply(ctx, "That role is registered as the moderator, raider or trial role. Pick a role that only developers hold.")
-        return
     await register_role(ctx, GuildIdSetting.DEV_ROLE, role.id)
 
 
