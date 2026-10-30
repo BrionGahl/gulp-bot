@@ -313,6 +313,8 @@ def test_absences_are_scoped_found_by_week_and_cleaned_up():
 
         assert [entry.id for entry in await absences.overlapping(GUILD_A, tue, date(2026, 11, 9))] == [trip.id, out.id]
         assert [entry.id for entry in await absences.upcoming_for_member(GUILD_A, 1, thu)] == [out.id, later.id]
+        assert [entry.id for entry in await absences.upcoming(GUILD_A, thu)] == [out.id, later.id]
+        assert [entry.id for entry in await absences.upcoming(GUILD_A, tue)] == [trip.id, out.id, later.id]
         assert await absences.find(GUILD_A, other.id) is None and await absences.delete(GUILD_A, other.id) is None
         assert (await absences.delete(GUILD_A, out.id)) == out
         assert [entry.id for entry in await absences.delete_for_message(500)] == [trip.id]

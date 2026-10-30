@@ -84,6 +84,10 @@ class AbsenceService:
             await self._refresh_weeks(guild_id, removed.start, removed.end)
         return removed
 
+    async def upcoming(self, guild_id: int) -> list[Absence]:
+        """Every member's absences that haven't ended yet, earliest first."""
+        return await self._repository.upcoming(guild_id, now_in_new_york().date())
+
     async def upcoming_for_member(self, guild_id: int, user_id: int) -> list[Absence]:
         return await self._repository.upcoming_for_member(guild_id, user_id, now_in_new_york().date())
 

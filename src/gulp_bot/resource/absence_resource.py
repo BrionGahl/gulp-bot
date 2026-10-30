@@ -18,7 +18,7 @@ from ..core.discord_helpers import NO_MENTIONS
 from ..core.permission_checks import check_is_raider_or_administrator, interaction_is_admin_or_moderator, is_admin_or_moderator, slash_check
 from ..core.schedule_parsing import now_in_new_york, parse_date
 from ..exception.schedule_exception import ScheduleProblem
-from ..mapper.absence_mapper import absence_text, confirmation, member_list_text
+from ..mapper.absence_mapper import absence_text, confirmation, guild_list_text, member_list_text
 from ..schema.absence_schema import AbsenceKind, NewAbsence
 from ..service.absence_service import may_manage, nothing_to_miss, span_problem
 from .resource_support import filter_choices, meta, reply
@@ -119,11 +119,15 @@ async def remove(interaction: discord.Interaction, id: int) -> None:
     await reply(ctx, f"Removed: {absence_text(found)}." if found.user_id == ctx.author.id else f"Removed <@{found.user_id}>'s {absence_text(found)}.")
 
 
-@absence.command(name="list", description="List upcoming absences")
+@absence.command(name="list", description="List upcoming absences: your own, or everyone's for an officer")
 @slash_check(check_is_raider_or_administrator)
-@app_commands.describe(member="Officers: the member whose absences to list")
+@app_commands.describe(member="Officers: only this member's absences")
 async def list_absences(interaction: discord.Interaction, member: discord.Member | None = None) -> None:
     ctx, guild_id = await guild_context(interaction)
+    if member is None and is_admin_or_moderator(ctx, guild_id):
+        # An Officer sees everyone's, with the IDs `/absence remove` takes.
+        await reply(ctx, guild_list_text(await ctx.services.absences.upcoming(guild_id)))
+        return
     user_id = await _target(ctx, guild_id, member)
     if user_id is None:
         return

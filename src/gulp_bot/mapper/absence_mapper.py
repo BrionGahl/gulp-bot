@@ -11,9 +11,9 @@ from ..core.text import DISCORD_MAX_CHARS, clean_line, limited_lines, single_lin
 from ..schema.absence_schema import Absence, AbsenceKind, ChannelNote, NoteCategory
 from ..schema.guild_settings_schema import RaidNight
 
-# What the digest is cut to, in UTF-8 bytes (`limited_lines` counts bytes, never fewer than the characters
-# Discord counts), leaving room under Discord's limit for the "…and N more" note.
-DIGEST_MAX_BYTES = DISCORD_MAX_CHARS - 40
+# What the digest and the officers' absence list are cut to, in UTF-8 bytes (`limited_lines` counts bytes,
+# never fewer than the characters Discord counts), leaving room under Discord's limit for the "…and N more" note.
+MAX_MESSAGE_BYTES = DISCORD_MAX_CHARS - 40
 
 # The longest note shown after an absence in the digest.
 MAX_NOTE_CHARS = 80
@@ -66,7 +66,7 @@ def digest_text(tuesday: date, nights: list[RaidNight] | None, absences: list[Ab
         lines.append("Nothing this week.\n")
     for category in NoteCategory:
         lines += [f"{category.label} — <@{note.user_id}> in <#{note.channel_id}>: {single_line(note.summary)}\n" for note in notes if note.category is category]
-    return limited_lines(lines, DIGEST_MAX_BYTES).rstrip()
+    return limited_lines(lines, MAX_MESSAGE_BYTES).rstrip()
 
 
 def member_list_text(absences: list[Absence], someone_else: int | None = None) -> str:
@@ -76,6 +76,15 @@ def member_list_text(absences: list[Absence], someone_else: int | None = None) -
     if not absences:
         return "You have no upcoming absences. Add one with `/absence add`."
     return "\n".join(f"**#{absence.id}** {absence_text(absence)}" for absence in absences)
+
+
+def guild_list_text(absences: list[Absence]) -> str:
+    """Every member's upcoming absences, earliest first, as `/absence list` shows them to an Officer: each with
+    its ID (for `/absence remove`) and whose it is."""
+    if not absences:
+        return "Nobody has an upcoming absence."
+    lines = [f"**#{absence.id}** <@{absence.user_id}> {absence_text(absence)}\n" for absence in absences]
+    return limited_lines([f"**Upcoming absences** ({len(absences)})\n", *lines], MAX_MESSAGE_BYTES).rstrip()
 
 
 # --- Rows ---

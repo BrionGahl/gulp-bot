@@ -63,6 +63,15 @@ class AbsenceRepository:
         )
         return [absence_from_row(row) for row in rows]
 
+    async def upcoming(self, guild_id: int, today: date) -> list[Absence]:
+        """Every absence of `guild_id` that hasn't ended before `today`, earliest first."""
+        rows = await self._pool.fetch(
+            f"SELECT {ABSENCE_COLUMNS} FROM raid_absences WHERE guild_id = $1 AND end_date >= $2 ORDER BY start_date, user_id, id",
+            to_bigint(guild_id),
+            today,
+        )
+        return [absence_from_row(row) for row in rows]
+
     async def upcoming_for_member(self, guild_id: int, user_id: int, today: date) -> list[Absence]:
         """The member's absences that haven't ended before `today`, earliest first."""
         rows = await self._pool.fetch(

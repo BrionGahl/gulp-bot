@@ -402,7 +402,7 @@ Raiders, trials and Officers report the raid nights they'll miss, or might (late
 | --- | --- |
 | `/absence add <start> [end] [tentative] [note] [member]` | Reports an absence from `start` to `end` (one day without it). Days are `tue`, `tomorrow`, `the 12th`, `nov 12`, `11/4` or `2026-11-04`. Refused if those days have no raid night. Officers can add one for another `member` |
 | `/absence remove <id>` | Takes an absence back; the member's own are offered as they type. Officers can remove anyone's |
-| `/absence list [member]` | The member's upcoming absences. Officers can list another member's |
+| `/absence list [member]` | Your upcoming absences. Officers get everyone's, earliest first, each with its ID and member (for `/absence remove`), or one member's with `member` |
 
 Members can also just say it in their **personal officer channel**: "can't make it thursday", "out next
 week for a wedding", "might be late tues". When the channel's owner writes a message with an absence or

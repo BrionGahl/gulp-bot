@@ -9,7 +9,7 @@ from fakes import FakeContext, run
 from gulp_bot.core.raid_week import week_begins, week_end, week_start, weeks_between
 from gulp_bot.core.schedule_parsing import NEW_YORK, parse_date, parse_span
 from gulp_bot.exception.schedule_exception import ScheduleProblem
-from gulp_bot.mapper.absence_mapper import confirmation, digest_text, member_list_text, span_text
+from gulp_bot.mapper.absence_mapper import confirmation, digest_text, guild_list_text, member_list_text, span_text
 from gulp_bot.mapper.ai_model_mapper import ollama_request
 from gulp_bot.schema.absence_schema import Absence, AbsenceKind, ChannelNote, NoteCategory
 from gulp_bot.schema.guild_settings_schema import GuildSettings, RaidNights
@@ -123,6 +123,14 @@ def test_a_long_digest_still_fits_in_a_message():
     notes = [ChannelNote(n, n, 99, n, NoteCategory.FEEDBACK, "x" * 190, datetime(2026, 11, 4, tzinfo=NEW_YORK)) for n in range(40)]
     text = digest_text(date(2026, 11, 3), nights, [], notes)
     assert len(text) <= 2000 and "more." in text
+
+
+def test_an_officer_sees_every_upcoming_absence_with_its_id_and_member():
+    text = guild_list_text([absence(6, 10, note="wedding"), absence(9, 11, date(2026, 11, 10), kind=AbsenceKind.TENTATIVE)])
+    assert text == "**Upcoming absences** (2)\n**#6** <@10> out Thu Nov 5 (wedding)\n**#9** <@11> tentative Tue Nov 10"
+    assert guild_list_text([]) == "Nobody has an upcoming absence."
+    many = guild_list_text([absence(n, n, note="x" * 80) for n in range(60)])
+    assert len(many) <= 2000 and many.endswith("more.")
 
 
 def test_a_member_is_told_what_was_recorded():

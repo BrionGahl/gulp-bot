@@ -38,9 +38,9 @@ If the slash commands don't show up in a server, register them there with `?regi
 - **`/absence remove <id>`** — Take back an absence
   - **Who:** Raider, trial and moderator roles, and administrators · slash only · answers privately
   - `id`: The absence, from the list or /absence list
-- **`/absence list [member]`** — List upcoming absences
+- **`/absence list [member]`** — List upcoming absences: your own, or everyone's for an officer
   - **Who:** Raider, trial and moderator roles, and administrators · slash only · answers privately
-  - `member` (optional): Officers: the member whose absences to list
+  - `member` (optional): Officers: only this member's absences
 
 ## Utilities
 
