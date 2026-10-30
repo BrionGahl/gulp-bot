@@ -99,6 +99,10 @@ from before it.
 
 ### Release tags
 
+`.github/workflows/test.yml` runs the linter, the formatting check and every test, the database tests
+included against a Postgres service, on each pull request into `master` and each push to it. Its check is
+called **Tests**; the branch rules on `master` require it to pass before a pull request can be merged.
+
 `.github/workflows/tag.yml` tags every push to `master` as `v<commit date, UTC>-<short sha>`, e.g.
 `v2026.10.09-c97a8ec`. The tags only mark what was pushed; nothing is built or deployed by GitHub
 Actions.

@@ -1,0 +1,67 @@
+name: Tests
+
+# Runs the linter and every test, the database tests included, on each pull request into master and each
+# push to it. Required to pass before a pull request can be merged (set in the repository's branch rules,
+# on the "Tests" check).
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same pull request makes the older run pointless.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    # A throwaway database for tests/test_database.py, which is skipped without TEST_DATABASE_URL.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: gulp
+          POSTGRES_PASSWORD: gulp
+          POSTGRES_DB: gulp_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gulp -d gulp_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgres://gulp:gulp@localhost:5432/gulp_test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          # The same uv the Dockerfile uses.
+          version: "0.12.9"
+          enable-cache: true
+
+      # The Python of .python-version, and exactly the packages uv.lock pins, the dev tools included.
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run --frozen ruff check .
+
+      - name: Check formatting
+        run: uv run --frozen ruff format --check .
+
+      - name: Run tests
+        run: uv run --frozen pytest -q
