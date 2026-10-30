@@ -5,7 +5,7 @@ from datetime import date, datetime, time
 
 import pytest
 
-from gulp_bot.core.schedule_parsing import NEW_YORK, parse_date
+from gulp_bot.core.schedule_parsing import NEW_YORK, parse_date, parse_span
 from gulp_bot.exception.schedule_exception import ScheduleProblem
 from gulp_bot.mapper.absence_mapper import confirmation, digest_text, member_list_text, span_text
 from gulp_bot.mapper.ai_model_mapper import ollama_request
@@ -16,7 +16,6 @@ from gulp_bot.service.officer_channel_triage_service import (
     RESPONSE_SCHEMA,
     SYSTEM_PROMPT,
     TEMPERATURE,
-    calendar,
     read_detection,
     triage_request,
     worth_asking,
@@ -48,9 +47,23 @@ def test_a_day_is_read_as_a_member_types_it():
     # A month and day that have passed are next year's.
     assert parse_date("1/3", TODAY) == date(2027, 1, 3)
     assert parse_date("1/3/27", TODAY) == date(2027, 1, 3)
-    for bad in ["", "someday", "2/30", "13/1", "next", "next week"]:
+    # As members write them in chat.
+    assert parse_date("this thursday", TODAY) == parse_date("Thursday night!", TODAY) == parse_date("on thurs", TODAY) == date(2026, 11, 5)
+    assert parse_date("the 12th", TODAY) == parse_date("nov 12", TODAY) == parse_date("12th November", TODAY) == date(2026, 11, 12)
+    # A day of the month that has passed is next month's.
+    assert parse_date("3rd", TODAY) == date(2026, 12, 3)
+    for bad in ["", "someday", "2/30", "13/1", "next", "next week", "the 32nd", "nov 31", "next tomorrow"]:
         with pytest.raises(ScheduleProblem):
             parse_date(bad, TODAY)
+
+
+def test_weeks_are_calendar_weeks_and_the_weekend_its_saturday_and_sunday():
+    assert parse_span("this week", TODAY) == parse_span("the rest of the week", TODAY) == (TODAY, date(2026, 11, 8))
+    assert parse_span("next week", TODAY) == parse_span("all next week", TODAY) == (date(2026, 11, 9), date(2026, 11, 15))
+    assert parse_span("this weekend", TODAY) == (date(2026, 11, 7), date(2026, 11, 8))
+    assert parse_span("next weekend", TODAY) == (date(2026, 11, 7), date(2026, 11, 8))
+    assert parse_span("this weekend", date(2026, 11, 8)) == (date(2026, 11, 8), date(2026, 11, 8))
+    assert parse_span("thursday", TODAY) == (date(2026, 11, 5), date(2026, 11, 5))
 
 
 def test_an_absence_has_to_be_ahead_and_not_too_far():
@@ -119,17 +132,10 @@ def test_only_messages_that_may_matter_reach_the_model():
         assert not worth_asking(text), text
 
 
-def test_the_model_picks_days_from_a_calendar():
-    days = calendar(TODAY, TUE_THU).split("\n")
-    assert len(days) == 21
-    assert days[0] == "2026-11-04 Wed (this week, today)"
-    assert days[1] == "2026-11-05 Thu (this week, tomorrow, raid night)"
-    assert days[6] == "2026-11-10 Tue (next week, raid night)"
-    assert days[13] == "2026-11-17 Tue (in 2 weeks, raid night)"
-    request = triage_request("can't make thursday", TODAY, TUE_THU)
-    assert request.startswith("Today is Wed 2026-11-04. Raid nights: Tue, Thu, 8:00 PM – 11:00 PM Eastern.")
-    assert request.endswith("<message>\ncan't make thursday\n</message>")
-    assert "not set" in triage_request("x", TODAY, None)
+def test_the_model_is_given_the_message_and_the_weekday_only():
+    request = triage_request("can't make thursday", TODAY)
+    assert request == "Today is Wednesday.\n\n<message>\ncan't make thursday\n</message>"
+    assert "Don't work out any date" in SYSTEM_PROMPT and "copy the member's own words" in SYSTEM_PROMPT
 
 
 def test_the_answer_is_json_in_a_fixed_shape_at_temperature_zero():
@@ -138,13 +144,19 @@ def test_the_answer_is_json_in_a_fixed_shape_at_temperature_zero():
     request = ollama_request("m", SYSTEM_PROMPT, [], False, TEMPERATURE, RESPONSE_SCHEMA)
     assert request["format"] == RESPONSE_SCHEMA and request["options"]["temperature"] == 0.0
     assert RESPONSE_SCHEMA["required"] == ["absence", "topics"]
+    assert RESPONSE_SCHEMA["properties"]["absence"]["required"] == ["kind", "days", "last_day", "note"]
 
 
-def answer(kind: str = "absent", first: str | None = "2026-11-05", last: str | None = "2026-11-05", sure: bool = True, note: str | None = None, topics=()):
-    return json.dumps({"absence": {"kind": kind, "first_day": first, "last_day": last, "sure_of_days": sure, "note": note}, "topics": list(topics)})
+def answer(kind: str = "absent", days: str | None = "thursday", last: str | None = None, note: str | None = None, topics=()):
+    return json.dumps({"absence": {"kind": kind, "days": days, "last_day": last, "note": note}, "topics": list(topics)})
 
 
-def test_an_absence_on_a_raid_night_is_recorded():
+def detected(days, today, last=None):
+    found = read_detection(answer(days=days, last=last), today, TUE_THU).absence
+    return None if found is None else (found.start, found.end)
+
+
+def test_the_days_are_the_members_words_read_in_code():
     detection = read_detection(answer(note="wedding"), TODAY, TUE_THU)
     assert detection.absence is not None and not detection.unclear_absence
     assert (detection.absence.start, detection.absence.end, detection.absence.kind, detection.absence.note) == (
@@ -153,38 +165,59 @@ def test_an_absence_on_a_raid_night_is_recorded():
         AbsenceKind.ABSENT,
         "wedding",
     )
-    tentative = read_detection(answer("tentative", "2026-11-10", None), TODAY, TUE_THU).absence
+    tentative = read_detection(answer("tentative", "tuesday"), TODAY, TUE_THU).absence
     assert tentative is not None and tentative.kind is AbsenceKind.TENTATIVE and tentative.start == tentative.end == date(2026, 11, 10)
-    # A span that started already counts from today.
-    ongoing = read_detection(answer(first="2026-11-01", last="2026-11-06"), TODAY, TUE_THU).absence
-    assert ongoing is not None and ongoing.start == TODAY
+    assert detected("the 12th", TODAY) == (date(2026, 11, 12), date(2026, 11, 12))
+    assert detected("thursday", TODAY, last="monday") == (date(2026, 11, 5), date(2026, 11, 9))
+    assert detected("thursday", TODAY, last="tuesday") == (date(2026, 11, 5), date(2026, 11, 10))
 
 
-def test_a_day_that_is_surely_no_raid_night_is_ignored_quietly():
-    detection = read_detection(answer(first="2026-11-06", last="2026-11-06", sure=True), TODAY, TUE_THU)
-    assert detection.absence is None and not detection.unclear_absence
+def test_the_coming_day_is_never_pushed_a_week_ahead():
+    tuesday, monday, sunday = date(2026, 11, 3), date(2026, 11, 2), date(2026, 11, 8)
+    # Said on a raid night's Tuesday: the Thursday two days out, not the one after.
+    assert detected("thursday", tuesday) == (date(2026, 11, 5), date(2026, 11, 5))
+    assert detected("this thursday", tuesday) == (date(2026, 11, 5), date(2026, 11, 5))
+    assert detected("next thursday", tuesday) == (date(2026, 11, 5), date(2026, 11, 5))
+    assert detected("tonight", tuesday) == (tuesday, tuesday)
+    # Said on a Monday, the last day of a raid week: tomorrow's Tuesday is this week's.
+    assert detected("tuesday", monday) == (tuesday, tuesday)
+    assert detected("this week", monday) == (monday, sunday)
+    assert detected("next week", monday) == (date(2026, 11, 9), date(2026, 11, 15))
+    # On a Sunday, this week and next week are both the week starting tomorrow.
+    assert detected("this week", sunday) == (date(2026, 11, 9), date(2026, 11, 15))
+    assert detected("next week", sunday) == (date(2026, 11, 9), date(2026, 11, 15))
 
 
-def test_an_absence_that_cant_be_placed_is_unclear():
-    for unclear in [
-        answer(first=None, last=None, sure=False),
-        answer(first="2026-11-06", last="2026-11-06", sure=False),
-        answer(first="2026-11-07", last="2026-11-05"),
-        answer(first="next thursday", last=None),
-        answer(first="2027-03-02", last="2027-03-02", sure=False),
-    ]:
-        detection = read_detection(unclear, TODAY, TUE_THU)
-        assert detection.absence is None and detection.unclear_absence, unclear
+def test_the_reported_messages_land_on_the_coming_tuesday_with_or_without_raid_nights():
+    # Both were written on Thursday, October 29, 2026, and came out one and two weeks late.
+    thursday = date(2026, 10, 29)
+    for message, days in [("I will be absent next tuesday for a wedding", "next tuesday"), ("I will be out this tuesday for a wedding", "this tuesday")]:
+        assert worth_asking(message)
+        for nights in (None, TUE_THU):
+            found = read_detection(answer(days=days, note="wedding"), thursday, nights).absence
+            assert found is not None and (found.start, found.end, found.note) == (date(2026, 11, 3), date(2026, 11, 3), "wedding"), (message, nights)
 
 
-def test_nothing_is_recorded_for_no_absence_one_that_is_over_or_a_bad_answer():
-    for nothing in [answer("none", None, None), answer(first="2026-11-02", last="2026-11-03"), "not json", "[]", json.dumps({"absence": "out"})]:
+def test_days_with_no_raid_night_are_ignored_quietly():
+    for days in ["friday", "this weekend", "11/6"]:
+        detection = read_detection(answer(days=days), TODAY, TUE_THU)
+        assert detection.absence is None and not detection.unclear_absence, days
+
+
+def test_an_absence_whose_days_cant_be_read_is_unclear():
+    for days, last in [(None, None), ("soonish", None), ("thursday", "whenever"), ("next month", None), ("3/2/2027", None)]:
+        detection = read_detection(answer(days=days, last=last), TODAY, TUE_THU)
+        assert detection.absence is None and detection.unclear_absence, days
+
+
+def test_nothing_is_recorded_for_no_absence_or_a_bad_answer():
+    for nothing in [answer("none", None), "not json", "[]", json.dumps({"absence": "out"})]:
         detection = read_detection(nothing, TODAY, TUE_THU)
         assert detection.absence is None and not detection.unclear_absence and detection.notes == [], nothing
 
 
 def test_without_raid_nights_any_day_ahead_is_recorded():
-    detection = read_detection(answer(first="2026-11-06", last="2026-11-06"), TODAY, None)
+    detection = read_detection(answer(days="friday"), TODAY, None)
     assert detection.absence is not None and detection.absence.start == date(2026, 11, 6)
 
 
@@ -197,7 +230,7 @@ def test_topics_are_kept_checked_and_limited():
         {"category": "feedback", "summary": "x" * 500},
         {"category": "feedback", "summary": "One too many."},
     ]
-    detection = read_detection(answer("none", None, None, topics=topics), TODAY, TUE_THU)
+    detection = read_detection(answer("none", None, topics=topics), TODAY, TUE_THU)
     assert [(category, len(summary)) for category, summary in detection.notes] == [
         (NoteCategory.ROLE_CHANGE, len("Wants to switch to a healing spec.")),
         (NoteCategory.LOOT_ROSTER, len("Asks about the bench.")),

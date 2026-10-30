@@ -3,27 +3,27 @@ anything else the officers should know (a role or spec change, a loot or roster 
 Discord in here; times are Eastern.
 
 A cheap word check in code (`worth_asking`) decides which messages reach the model, so small talk never
-does. The model answers in JSON of a fixed shape, picking days from a calendar it is given rather than
-working dates out itself, and its answer is checked here before anything is recorded: an absence has to
-be on real days, ahead, and cover a raid night.
+does. The model answers in JSON of a fixed shape. It doesn't work out dates: it copies the member's own
+words for the days ("thursday", "next week", "the 12th"), and code turns them into dates the same way
+`/absence add` reads them (`parse_span`). So the days are never the model's guess, and an absence on days
+with no raid night can be dropped without asking. Nothing is recorded until the answer is checked: an
+absence has to be on days the bot can read, ahead, and cover a raid night.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from datetime import date, timedelta
+from datetime import date
 from typing import Any
 
-from ..core.schedule_parsing import DAY_NAMES, SHORT_DAY_NAMES
+from ..core.schedule_parsing import DAY_NAMES, parse_span
 from ..core.text import single_line, truncate_chars
+from ..exception.schedule_exception import ScheduleProblem
 from ..schema.absence_schema import AbsenceKind, DetectedAbsence, Detection, NoteCategory
 from ..schema.guild_settings_schema import RaidNights
 from .absence_service import span_problem
-from .raid_nights_service import describe_raid_nights, nights_between
-
-# How many days ahead the calendar given to the model reaches: this raid week and the next two.
-CALENDAR_DAYS = 21
+from .raid_nights_service import nights_between
 
 # The most of a message that is sent to the model.
 MAX_MESSAGE_CHARS = 1000
@@ -43,7 +43,8 @@ _ABSENCE_WORDS = re.compile(
 _TIME_WORDS = re.compile(
     r"\b(today|tonight|tomorrow|tmrw|tmr|week|weekend|raid|raids|reset|"
     + "|".join(name for names in DAY_NAMES.values() for name in names)
-    + r")\b|\b\d{1,2}/\d{1,2}\b"
+    + r"|jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sept?(ember)?|oct(ober)?|nov(ember)?|dec(ember)?"
+    + r")\b|\b\d{1,2}/\d{1,2}\b|\b\d{1,2}(st|nd|rd|th)\b"
 )
 _NOTE_WORDS = re.compile(
     r"\b(swap|switch|spec|role|heal(er|ing)?|tank(ing)?|dps|main|alt|reroll|loot|gear|bis|prio|priority|roster|bench(ed)?|sit|sitting|trial|"
@@ -54,8 +55,9 @@ SYSTEM_PROMPT = """You read a message that a member of a World of Warcraft raidi
 
 Absence: does the member say they will miss raids, might miss them, or will be late, on particular days?
 - kind "absent": they won't be there. kind "tentative": they'll be late, might not make it, or aren't sure yet. kind "none": anything else, including absences that are already over, someone else's absence, and questions about the schedule.
-- first_day and last_day: pick them from the calendar you are given, as YYYY-MM-DD. For one day, both are the same. "This week" and "next week" mean the Tuesday-to-Monday raid weeks marked in the calendar. If no day is given, or you can't tell which, set both to null.
-- sure_of_days: true only if the message names the days plainly (a weekday, a date, "tonight", "tomorrow", "next week"); false if you had to guess.
+- days: copy the member's own words for when, exactly as they wrote them. Don't work out any date. Examples: "thursday", "tonight", "tomorrow", "next tuesday", "the 12th", "11/12", "this week", "next week", "this weekend".
+- last_day: only for a range, the member's words for the last day: in "out thursday to monday", days is "thursday" and last_day is "monday"; in "thursday and friday", days is "thursday" and last_day is "friday". Otherwise null.
+- If the member gives no day at all, days is null.
 - note: a few words on why or how late, if they said ("wedding", "about 30 minutes late"); otherwise null.
 
 Topics: anything else the officers should know, each as one short, neutral sentence about the member ("Wants to switch to a healing spec."):
@@ -73,12 +75,11 @@ RESPONSE_SCHEMA: dict[str, Any] = {
             "type": "object",
             "properties": {
                 "kind": {"type": "string", "enum": ["none", "absent", "tentative"]},
-                "first_day": {"type": ["string", "null"]},
+                "days": {"type": ["string", "null"]},
                 "last_day": {"type": ["string", "null"]},
-                "sure_of_days": {"type": "boolean"},
                 "note": {"type": ["string", "null"]},
             },
-            "required": ["kind", "first_day", "last_day", "sure_of_days", "note"],
+            "required": ["kind", "days", "last_day", "note"],
         },
         "topics": {
             "type": "array",
@@ -104,35 +105,19 @@ def worth_asking(text: str) -> bool:
     return _NOTE_WORDS.search(lowered) is not None
 
 
-def calendar(today: date, nights: RaidNights | None) -> str:
-    """The days the model picks from: from today, `CALENDAR_DAYS` of them, each with its weekday, the raid
-    week it is in, and whether it is a raid night."""
-    raid_days = set() if nights is None else {night.start.date() for night in nights_between(nights, today, today + timedelta(days=CALENDAR_DAYS))}
-    lines = []
-    for offset in range(CALENDAR_DAYS):
-        day = today + timedelta(days=offset)
-        weeks_ahead = ((day - today).days + (today.weekday() + 6) % 7) // 7
-        week = ["this week", "next week"][weeks_ahead] if weeks_ahead < 2 else f"in {weeks_ahead} weeks"
-        marks = [week] + (["today"] if offset == 0 else ["tomorrow"] if offset == 1 else []) + (["raid night"] if day in raid_days else [])
-        lines.append(f"{day.isoformat()} {SHORT_DAY_NAMES[day.weekday()]} ({', '.join(marks)})")
-    return "\n".join(lines)
+def triage_request(text: str, today: date) -> str:
+    """The user message asking the model to read `text`, written on `today`. The weekday is enough for it
+    to tell an absence that is over from one ahead; the dates are worked out in code."""
+    return f"Today is {DAY_NAMES[today.weekday()][-1].capitalize()}.\n\n<message>\n{truncate_chars(text, MAX_MESSAGE_CHARS)}\n</message>"
 
 
-def triage_request(text: str, today: date, nights: RaidNights | None) -> str:
-    """The user message asking the model to read `text`, written on `today`."""
-    raid_nights = describe_raid_nights(nights) if nights is not None else "not set"
-    return (
-        f"Today is {SHORT_DAY_NAMES[today.weekday()]} {today.isoformat()}. Raid nights: {raid_nights}.\n\n"
-        f"Calendar:\n{calendar(today, nights)}\n\n<message>\n{truncate_chars(text, MAX_MESSAGE_CHARS)}\n</message>"
-    )
-
-
-def _day(value: Any) -> date | None:
-    if not isinstance(value, str):
+def _span(words: Any, today: date) -> tuple[date, date] | None:
+    """The days the member's `words` mean, counted from `today`, or `None` if they aren't words for days."""
+    if not isinstance(words, str) or not words.strip():
         return None
     try:
-        return date.fromisoformat(value.strip())
-    except ValueError:
+        return parse_span(words, today)
+    except ScheduleProblem:
         return None
 
 
@@ -145,9 +130,9 @@ def _text(value: Any, max_chars: int) -> str | None:
 
 def read_detection(answer: str, today: date, nights: RaidNights | None) -> Detection:
     """What the model's JSON `answer` says, checked: anything that doesn't hold up is dropped. An absence
-    whose days can't be read, or that the model wasn't sure of and that covers no raid night, is "unclear"
-    (the member is asked to report it with `/absence add`). One the model was sure of that covers no raid
-    night is no absence at all: there is nothing to miss."""
+    whose days aren't words the bot can read, or that it can't take (too far ahead), is "unclear": the
+    member is asked to report it with `/absence add`. One on days the bot read that cover no raid night is
+    no absence at all: there is nothing to miss."""
     try:
         parsed = json.loads(answer)
     except ValueError:
@@ -166,22 +151,20 @@ def read_detection(answer: str, today: date, nights: RaidNights | None) -> Detec
     found = parsed.get("absence")
     if not isinstance(found, dict) or found.get("kind") not in (AbsenceKind.ABSENT.value, AbsenceKind.TENTATIVE.value):
         return Detection(absence=None, unclear_absence=False, notes=notes)
-    first, last = _day(found.get("first_day")), _day(found.get("last_day"))
-    if first is None and last is not None:
-        first = last
-    if last is None:
-        last = first
-    if first is None or last is None or first > last:
+    first_span = _span(found.get("days"), today)
+    if first_span is None:
         return Detection(absence=None, unclear_absence=True, notes=notes)
-    if last < today:
-        # Over already: nothing to plan around.
-        return Detection(absence=None, unclear_absence=False, notes=notes)
-    first = max(first, today)
-    sure = found.get("sure_of_days") is True
+    first, last = first_span
+    if found.get("last_day") is not None:
+        # The last day comes on or after the first: "thursday to monday" is the Monday after that Thursday.
+        last_span = _span(found.get("last_day"), first)
+        if last_span is None:
+            return Detection(absence=None, unclear_absence=True, notes=notes)
+        last = last_span[1]
     if span_problem(first, last, today) is not None:
-        return Detection(absence=None, unclear_absence=not sure, notes=notes)
+        return Detection(absence=None, unclear_absence=True, notes=notes)
     if nights is not None and not nights_between(nights, first, last):
-        return Detection(absence=None, unclear_absence=not sure, notes=notes)
+        return Detection(absence=None, unclear_absence=False, notes=notes)
 
     absence = DetectedAbsence(first, last, AbsenceKind(found["kind"]), _text(found.get("note"), MAX_ABSENCE_NOTE_CHARS))
     return Detection(absence=absence, unclear_absence=False, notes=notes)

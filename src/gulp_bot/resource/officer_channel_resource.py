@@ -67,7 +67,7 @@ async def read(services: Services, message: discord.Message, owner: OfficerChann
     settings = services.guild_settings.get(owner.guild_id)
     today = now_in_new_york().date()
     try:
-        answer, _ = await services.ai.generate(settings.ai, SYSTEM_PROMPT, triage_request(text, today, settings.raid_nights), TEMPERATURE, RESPONSE_SCHEMA)
+        answer, _ = await services.ai.generate(settings.ai, SYSTEM_PROMPT, triage_request(text, today), TEMPERATURE, RESPONSE_SCHEMA)
     except AiError as e:
         log.info("Didn't read message %s in a personal officer channel: %s", message.id, getattr(e, "detail", str(e)))
         return

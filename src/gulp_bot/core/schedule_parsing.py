@@ -84,24 +84,85 @@ _ISO_DATE = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})$")
 _MONTH_DAY = re.compile(r"^(\d{1,2})/(\d{1,2})(?:/(\d{2}|\d{4}))?$")
 
 
+_ORDINAL = re.compile(r"^(\d{1,2})(?:st|nd|rd|th)?$")
+
+_MONTHS = {
+    name: number
+    for number, names in enumerate(
+        [
+            ("jan", "january"),
+            ("feb", "february"),
+            ("mar", "march"),
+            ("apr", "april"),
+            ("may",),
+            ("jun", "june"),
+            ("jul", "july"),
+            ("aug", "august"),
+            ("sep", "sept", "september"),
+            ("oct", "october"),
+            ("nov", "november"),
+            ("dec", "december"),
+        ],
+        start=1,
+    )
+    for name in names
+}
+
+# Words around a day that don't change which day it is: "on thursday", "this thursday", "thursday night".
+_FILLER = {"on", "this", "the", "coming", "night", "nite", "evening", "raid", "of"}
+
+
+def _words(text: str) -> list[str]:
+    """`text` lowercased, in words, without the punctuation around them ("Thursday!" is `thursday`)."""
+    return [word for word in re.split(r"[\s,!?.;:()]+", text.strip().lower()) if word]
+
+
+def _next_day_of_month(day_of_month: int, today: date, month: int | None = None) -> date:
+    """The next `day_of_month` (of `month`, if given) from `today` on. Raises `ValueError` if there is none."""
+    if month is not None:
+        this_year = date(today.year, month, day_of_month)
+        return this_year if this_year >= today else date(today.year + 1, month, day_of_month)
+    for ahead in range(13):
+        year, month_index = divmod(today.month - 1 + ahead, 12)
+        try:
+            candidate = date(today.year + year, month_index + 1, day_of_month)
+        except ValueError:
+            continue
+        if candidate >= today:
+            return candidate
+    raise ValueError(day_of_month)
+
+
 def parse_date(text: str, today: date) -> date:
-    """A day as a member types it, counted from `today`: `today`, `tomorrow`, a day of the week (`thu`, the
-    next one from today on; `next thu`, the next one after today), `11/4` (this year, or next year once it
-    has passed), `11/4/2026` or `2026-11-04`. Raises `ScheduleProblem` saying what is wrong."""
-    words = text.strip().lower().split()
+    """A day as a member types or writes it, counted from `today`: `today`, `tonight`, `tomorrow`; a day of
+    the week, the next one from today on (`thu`, `this thursday`, `thursday night`), or `next thu`, the next
+    one after today; a day of the month (`the 12th`, `nov 12`, `november 12th`), `11/4` (this year, or next
+    year once it has passed), `11/4/2026` or `2026-11-04`. Raises `ScheduleProblem` saying what is wrong."""
     shown = text.strip()
-    if words in (["today"], ["tonight"]):
+    words = _words(shown)
+    after_today = bool(words) and words[0] == "next"
+    if after_today:
+        words = words[1:]
+    words = [word for word in words if word not in _FILLER]
+
+    if words in (["today"], ["tonight"]) and not after_today:
         return today
-    if words in (["tomorrow"], ["tmrw"], ["tmr"]):
+    if words in (["tomorrow"], ["tmrw"], ["tmr"]) and not after_today:
         return today + timedelta(days=1)
-    after_today = len(words) == 2 and words[0] == "next"
-    if len(words) == 1 or after_today:
-        name = words[-1]
-        day = next((weekday for weekday, names in DAY_NAMES.items() if name in names), None)
+    if len(words) == 1:
+        day = next((weekday for weekday, names in DAY_NAMES.items() if words[0] in names), None)
         if day is not None:
             ahead = (day - today.weekday()) % 7
             return today + timedelta(days=ahead or (7 if after_today else 0))
     try:
+        if len(words) == 1 and (match := _ORDINAL.match(words[0])) is not None and not after_today:
+            return _next_day_of_month(int(match[1]), today)
+        if len(words) == 2 and not after_today:
+            month_first = words[0] in _MONTHS and _ORDINAL.match(words[1])
+            day_first = words[1] in _MONTHS and _ORDINAL.match(words[0])
+            if month_first or day_first:
+                month_word, day_word = (words[0], words[1]) if month_first else (words[1], words[0])
+                return _next_day_of_month(int(_ORDINAL.match(day_word)[1]), today, _MONTHS[month_word])  # type: ignore[index]
         if (match := _ISO_DATE.match(shown)) is not None:
             year, month, day_of_month = (int(part) for part in match.groups())
             return date(year, month, day_of_month)
@@ -109,11 +170,34 @@ def parse_date(text: str, today: date) -> date:
             month, day_of_month, year_text = int(match[1]), int(match[2]), match[3]
             if year_text is not None:
                 return date(int(year_text) + (2000 if len(year_text) == 2 else 0), month, day_of_month)
-            this_year = date(today.year, month, day_of_month)
-            return this_year if this_year >= today else date(today.year + 1, month, day_of_month)
+            return _next_day_of_month(day_of_month, today, month)
     except ValueError:
         raise ScheduleProblem(f"`{shown}` isn't a day of the calendar.") from None
     raise ScheduleProblem(f"`{shown}` isn't a day. Use `tue`, `tomorrow`, `11/4` or `2026-11-04`.")
+
+
+def parse_span(text: str, today: date) -> tuple[date, date]:
+    """The days a member means, counted from `today`: a week (`this week`, from today to Sunday; `next week`,
+    the Monday-to-Sunday week after), the weekend (`this weekend`), or one day as `parse_date` reads it.
+    Weeks are calendar weeks, the way people talk, not raid weeks; on a Sunday, both mean the week starting
+    tomorrow. Raises `ScheduleProblem` saying what is wrong."""
+    words = [word for word in _words(text) if word not in {"the", "of", "for", "all", "rest", "whole", "entire"}]
+    sunday = today + timedelta(days=6 - today.weekday())
+    coming_week = (today + timedelta(days=1), today + timedelta(days=7))
+    if words in (["this", "week"], ["week"]):
+        return coming_week if today.weekday() == 6 else (today, sunday)
+    if words == ["next", "week"]:
+        return coming_week if today.weekday() == 6 else (sunday + timedelta(days=1), sunday + timedelta(days=7))
+    if words in (["this", "weekend"], ["weekend"]):
+        if today.weekday() == 6:
+            return today, today
+        saturday = today + timedelta(days=(5 - today.weekday()) % 7)
+        return saturday, saturday + timedelta(days=1)
+    if words == ["next", "weekend"]:
+        saturday = today + timedelta(days=(5 - today.weekday()) % 7 or 7)
+        return saturday, saturday + timedelta(days=1)
+    day = parse_date(text, today)
+    return day, day
 
 
 def weekly_schedule(days: frozenset[int], at: time) -> Schedule:

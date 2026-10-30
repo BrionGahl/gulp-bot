@@ -400,19 +400,22 @@ Raiders, trials and Officers report the raid nights they'll miss, or might (late
 
 | Command | Does |
 | --- | --- |
-| `/absence add <start> [end] [tentative] [note] [member]` | Reports an absence from `start` to `end` (one day without it). Days are `tue`, `tomorrow`, `11/4` or `2026-11-04`. Refused if those days have no raid night. Officers can add one for another `member` |
+| `/absence add <start> [end] [tentative] [note] [member]` | Reports an absence from `start` to `end` (one day without it). Days are `tue`, `tomorrow`, `the 12th`, `nov 12`, `11/4` or `2026-11-04`. Refused if those days have no raid night. Officers can add one for another `member` |
 | `/absence remove <id>` | Takes an absence back; the member's own are offered as they type. Officers can remove anyone's |
 | `/absence list [member]` | The member's upcoming absences. Officers can list another member's |
 
 Members can also just say it in their **personal officer channel**: "can't make it thursday", "out next
 week for a wedding", "might be late tues". When the channel's owner writes a message with an absence or
-time word in it, or a word about roles, loot, the roster or feedback, the local model reads it, picking
-days from a calendar of the next three weeks it is given, and answers in a fixed JSON shape that the bot
-checks before recording anything:
+time word in it, or a word about roles, loot, the roster or feedback, the local model reads it and
+answers in a fixed JSON shape that the bot checks before recording anything. The model doesn't work out
+dates: it copies the member's words for the days ("thursday", "the 12th", "next week"), and the bot reads
+them the way `/absence add` does. A day of the week is the next one from today on (on a Tuesday,
+"thursday" and "next thursday" are both the Thursday two days out), and "this week" and "next week" are
+calendar weeks, Monday to Sunday:
 - An absence that covers a raid night is recorded, and the bot replies with what it noted and an **Undo**
   button that the member or an Officer can press (it keeps working after a restart).
-- An absence on a day the model was sure of that has no raid night is quietly ignored. One it couldn't
-  place gets a reply asking the member to use `/absence add`.
+- An absence on days with no raid night is quietly ignored. One whose days the bot can't read gets a
+  reply asking the member to use `/absence add`.
 - Anything else the officers should know (a **role or spec change**, a **loot or roster** question, or
   **feedback**) is kept as a one-line note for the officer digest, without a reply.
 
